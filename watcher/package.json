@@ -1,0 +1,23 @@
+{
+  "name": "universal-trader",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch ./src/index.ts",
+    "start": "bun run ./src/index.ts",
+    "test": "bun test",
+    "lint": "bunx biome check src/",
+    "format": "bunx biome format --write src/"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
