@@ -1,11 +1,11 @@
 {
   "name": "universal-trader",
-  "module": "src/index.ts",
+  "module": "src/main.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --watch ./src/index.ts",
-    "start": "bun run ./src/index.ts",
+    "dev": "bun run --watch ./src/main.ts",
+    "start": "bun run ./src/main.ts",
     "test": "bun test",
     "lint": "bunx biome check src/",
     "format": "bunx biome format --write src/"
