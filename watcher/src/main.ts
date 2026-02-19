@@ -43,7 +43,16 @@ async function main(): Promise<void> {
     // crossChainDetector,
   });
 
-  workerManager.spawnWorker('basic', path.resolve(__dirname, './workers/basic/index.ts'));
+  workerManager.spawnWorker(
+    'worker-eth',
+    path.resolve(__dirname, './workers/watcher-evm/index.ts'),
+  );
+
+  // configure workers
+  workerManager.sendRequest('worker-eth', 'init', {
+    workerName: 'worker-eth',
+    rpcUrl: 'http://eth-mainnet-rpc-url',
+  });
 
   // === 5. Wire up EventBus → WebSocket broadcast ===
   // eventBus.on('pool-update', (pool) => {

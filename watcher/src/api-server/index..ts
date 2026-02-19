@@ -26,7 +26,7 @@ interface ApiServerInput {
 const wsClients = new Set<any>();
 
 /** Broadcast to all connected WebSocket clients */
-export function broadcastEvent(event: string, data: unknown): void {
+export function broadcastEventToWebsocketClients(event: string, data: unknown): void {
   const msg = JSON.stringify({ type: 'event', event, data, timestamp: Date.now() }, bigIntReplacer);
   for (const ws of wsClients) {
     try {
@@ -74,11 +74,11 @@ export function createApiServer(input: ApiServerInput): Hono {
   // ════════════════════════════════════════════════════════════
   app.get('/playground', async (c) => {
     try {
-      const response = await workerManager.sendRequest('basic', 'pause', null);
+      const response = await workerManager.sendRequest('worker-eth', 'pause', null);
       return c.json({ response });
     } catch (error: any) {
       logger.error('Error sending request to worker:', error);
-      return c.json({ error }, 500);
+      return c.json({ error: error.message }, 500);
     }
   });
 
