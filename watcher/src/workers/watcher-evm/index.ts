@@ -1,9 +1,11 @@
 import type { ChainConfig } from '@/config/models';
 import { BaseWorker } from '../common/base-worker';
 import type { EventMessage, RequestMessage } from '@/core/communication/types';
+import { CacheService } from '@/utils/cache-service';
 
 class EVMWorker extends BaseWorker {
   private config!: ChainConfig;
+  private cache!: CacheService;
 
   async handleRequest(message: RequestMessage) {
     this.sendResponseMessage({
@@ -17,9 +19,13 @@ class EVMWorker extends BaseWorker {
   }
 
   async init(config: ChainConfig) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
     this.config = config;
     this.log.info(`Initializing...`);
+
+    // init cache
+    this.cache = new CacheService(this.config.chainId);
+    await this.cache.load();
+
     this.sendEventMessage('worker-initialized', { timestamp: Date.now() });
   }
 }
