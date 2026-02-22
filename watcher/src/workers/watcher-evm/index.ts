@@ -5,12 +5,21 @@ import { CacheService } from '@/utils/cache-service';
 import type { ChainConfig } from '@/config/models';
 import { Blockchain } from './core/blockchain';
 import { TokenManager } from './core/token-manager';
+import { PoolStatesManager } from './core/pool-states-manager';
+import { EventBus } from './core/event-bus';
+import { DexRegistry } from './core/dex-registry';
+import { BlockManager } from './core/block-manager';
 
 class EVMWorker extends BaseWorker {
   private config!: ChainConfig;
   private cache!: CacheService;
+  private eventBus!: EventBus;
+
   private blockchain!: Blockchain;
   private tokenManager!: TokenManager;
+  private dexRegistry!: DexRegistry;
+  private blockManager!: BlockManager;
+  private poolStatesManager!: PoolStatesManager;
 
   async handleRequest(message: RequestMessage) {
     this.sendResponseMessage({
@@ -25,7 +34,9 @@ class EVMWorker extends BaseWorker {
 
   async init(config: ChainConfig) {
     this.config = config;
-    this.log.info(`Initializing...`);
+
+    // init event bus
+    this.eventBus = new EventBus({ logger: createLogger(`[${this.workerId}.event-bus]`) });
 
     // init cache
     this.cache = new CacheService(this.config.chainId);
@@ -46,8 +57,40 @@ class EVMWorker extends BaseWorker {
       blockchain: this.blockchain,
       inputTokens: this.config.tokens,
     });
-    const registeredTokens = await this.tokenManager.batchRegisterTokens();
-    console.log(`Registered ${registeredTokens.length} tokens at startup for chain ${this.config.name}`);
+    await this.tokenManager.batchRegisterTokens();
+    const tradingPairs = this.tokenManager.createTradingPairs(); // setup trading pairs to monitor
+
+    // create dex registry and register adapters
+    this.dexRegistry = new DexRegistry({
+      blockchain: this.blockchain,
+      tokenManager: this.tokenManager,
+      logger: createLogger(`[${this.workerId}.dex-registry]`),
+    });
+    this.dexRegistry.setupDexAdapters(this.config);
+
+    // initialize PoolStatesManager
+    this.poolStatesManager = new PoolStatesManager({
+      eventBus: this.eventBus,
+      dexRegistry: this.dexRegistry,
+      tokenManager: this.tokenManager,
+      logger: createLogger(`[${this.workerId}.pool-states-manager]`),
+    });
+
+    // Discover and register pools for trading pairs
+    await this.poolStatesManager.discoverAndRegisterPools(tradingPairs);
+
+    // Initialize BlockManager
+    this.blockManager = new BlockManager({
+      blockchain: this.blockchain,
+      eventBus: this.eventBus,
+      poolStatesManager: this.poolStatesManager,
+      logger: createLogger(`[${this.workerId}.block-manager]`),
+    });
+    await this.blockManager.init();
+
+    // start listening for block and pool events
+    this.blockManager.listenBlockEvents();
+    this.blockManager.listenPoolEvents();
 
     this.sendEventMessage('worker-initialized', { timestamp: Date.now() });
   }
