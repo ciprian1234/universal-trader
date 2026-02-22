@@ -10,22 +10,15 @@
 // ================================================================================================
 
 import path from 'path';
-import { resolveConfig, getChainRpcUrl } from './config/index.ts';
+import { appConfig } from './config/index.ts';
 import { EventBus } from './core/event-bus.ts';
 import { WorkerManager } from './core/communication/worker-manager.ts';
 // import { CrossChainDetector } from './orchestrator/cross-chain-detector.ts';
-import { startApiServer, broadcastEvent } from './api-server/index..ts';
-import { createLogger } from './utils';
+import { startApiServer } from './api-server/index..ts';
+import { log } from './utils';
 import { GlobalDataStore } from './core/global-data-store.ts';
 
-const log = createLogger('[Main]');
-
 async function main(): Promise<void> {
-  // === 1. Load config ===
-  const config = resolveConfig();
-  log.info(`Enabled chains: ${config.enabledChainIds.join(', ')}`);
-
-  // === 2. Create core components (all on main thread) ===
   const store = new GlobalDataStore();
   const eventBus = new EventBus();
   const workerManager = new WorkerManager();
@@ -37,16 +30,13 @@ async function main(): Promise<void> {
   // });
 
   // === 3. Start API Server ===
-  const { server } = startApiServer(config.adminPort, {
+  const { server } = startApiServer(appConfig.apiServerPort, {
     store,
     workerManager,
     // crossChainDetector,
   });
 
-  workerManager.spawnWorker(
-    'worker-eth',
-    path.resolve(__dirname, './workers/watcher-evm/index.ts'),
-  );
+  workerManager.spawnWorker('worker-eth', path.resolve(__dirname, './workers/watcher-evm/index.ts'));
 
   // configure workers
   workerManager.sendRequest('worker-eth', 'init', {
@@ -118,8 +108,8 @@ async function main(): Promise<void> {
 
   // log.info('═══════════════════════════════════════════════');
   // log.info('   Universal Trader — Running');
-  // log.info(`   Admin API: http://localhost:${config.adminPort}`);
-  // log.info(`   Chains: ${config.enabledChainIds.join(', ')}`);
+  // log.info(`   Admin API: http://localhost:${appConfig.apiServerPort}`);
+  // log.info(`   Chains: ${appConfig.enabledPlatforms.join(', ')}`);
   // log.info(`   Pools: ${store.size}`);
   // log.info('═══════════════════════════════════════════════');
 }

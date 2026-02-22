@@ -2,27 +2,35 @@
 // ETHEREUM MAINNET CHAIN CONFIGURATION
 // ================================================================================================
 
-import type { ChainConfig } from '../types.ts';
+import { ethers } from 'ethers';
+import type { ChainConfig } from '../models.ts';
 
 const ethereum: ChainConfig = {
+  id: 'ethereum',
+  workerName: 'ethereum',
+  platformType: 'chain',
+  name: 'Ethereum',
   chainId: 1,
-  chainName: 'Ethereum',
   nativeToken: 'ETH',
   wrappedNativeTokenAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-  preferredBorrowTokens: ['WETH', 'USDC', 'USDT', 'WBTC'],
-  rpcEnvVar: 'ETH_RPC_URL_WS',
+  preferredBorrowTokens: ['WETH', 'USDC', 'USDT', 'DAI', 'WBTC'],
+  providerRpcUrl: process.env.PLATFORM_ETHEREUM_RPC_URL_WS!,
+
+  // enabled
+  enabled: true,
+  internalArbitrageEnabled: true,
 
   // Gas
-  fetchBlockDataInterval: 5,
-  minPriorityFee: 50_000_000n, // 0.05 gwei
-  maxPriorityFee: 100_000_000_000n, // 100 gwei
+  gasDataFetchInterval: 5,
+  minPriorityFee: ethers.parseUnits('0.05', 'gwei'), // 0.05 gwei
+  maxPriorityFee: ethers.parseUnits('100', 'gwei'), // 100 gwei
 
   tokens: [
     { address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', symbol: 'WETH' },
+    { address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', symbol: 'WBTC' },
     { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', symbol: 'USDC' },
     { address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', symbol: 'USDT' },
-    // { address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', symbol: 'WBTC' },
-    // { address: '0x6B175474E89094C44Da98b954EedeAC495271d0F', symbol: 'DAI' },
+    { address: '0x6B175474E89094C44Da98b954EedeAC495271d0F', symbol: 'DAI' },
   ],
 
   dexConfigs: [
@@ -55,9 +63,22 @@ const ethereum: ChainConfig = {
 
   arbitrage: {
     minGrossProfitUSD: 50,
-    maxSlippage: 50,
+    maxSlippageBps: 500, // 5%
     minLiquidityUSD: 10_000,
     maxHops: 3,
+  },
+
+  // flash loan arbitrage contract address
+  arbitrageContractAddress: process.env.PLATFORM_ETHEREUM_ARBITRAGE_CONTRACT_ADDRESS!,
+
+  // wallet private key for signing transactions
+  walletPrivateKey: process.env.PLATFORM_ETHEREUM_WALLET_PRIVATE_KEY!,
+
+  // Flashbots
+  flashbotsEnabled: process.env.PLATFORM_ETHEREUM_USE_FLASHBOTS === 'true',
+  flashbots: {
+    relayUrl: process.env.PLATFORM_ETHEREUM_FLASHBOTS_RELAY_URL!,
+    authSignerKey: process.env.PLATFORM_ETHEREUM_FLASHBOTS_AUTH_KEY,
   },
 };
 

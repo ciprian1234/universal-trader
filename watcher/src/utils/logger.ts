@@ -56,7 +56,7 @@ function write(level: LogLevel, context: string, args: unknown[]): void {
 
   const ts = timestamp();
   const color = COLORS[level];
-  const pad = context.padEnd(24);
+  const pad = context.padEnd(15);
   const msg = formatArgs(args);
 
   const line = `${COLORS.dim}${ts}${COLORS.reset} ${color}${level.padEnd(5)}${COLORS.reset} ${pad} ${msg}`;

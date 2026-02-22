@@ -1,74 +1,32 @@
-// ================================================================================================
-// APP CONFIG — resolves enabled chains from environment
-// ================================================================================================
+import { ChainConfigSchema, ExchangeConfigSchema, type AppConfig, type PlatformConfig } from './models.ts';
+import * as platforms from './platforms/index.ts';
+import { log } from '../utils/logger.ts';
 
-import type { AppConfig, ChainConfig } from './types.ts';
-import * as chains from './chains/index.ts';
+if (!process.env.APP_CONFIG_ENABLED_PLATFORMS) throw new Error('APP_CONFIG_ENABLED_PLATFORMS env var is not set!');
+const enabledPlatforms = process.env.APP_CONFIG_ENABLED_PLATFORMS.split(',').map((s) => s.trim());
 
-export type { AppConfig, ChainConfig, DexConfig, TokenConfig } from './types.ts';
-
-// All known chain configs
-const ALL_CHAINS: Record<number, ChainConfig> = {
-  1: chains.ethereum,
-  42161: chains.arbitrum,
-  8453: chains.base,
+export const appConfig: AppConfig = {
+  apiServerPort: parseInt(process.env.APP_CONFIG_API_SERVER_PORT ?? '4040', 10),
+  logLevel: process.env.APP_CONFIG_LOG_LEVEL ?? 'info',
+  enabledPlatforms,
+  platforms: loadConfigs(enabledPlatforms),
 };
 
-/** Parse ENABLED_CHAINS env var (default: "1") */
-function parseEnabledChains(): number[] {
-  const env = process.env.ENABLED_CHAINS ?? '1';
-  return env
-    .split(',')
-    .map((s) => parseInt(s.trim(), 10))
-    .filter((n) => !isNaN(n) && ALL_CHAINS[n] !== undefined);
-}
-
-/** Resolve the full application config from environment */
-export function resolveConfig(): AppConfig {
-  const enabledChainIds = parseEnabledChains();
-
-  // Build chains map with only enabled chains that have RPC URLs
-  const resolvedChains: Record<number, ChainConfig> = {};
-  for (const id of enabledChainIds) {
-    const chain = ALL_CHAINS[id];
-    if (!chain) continue;
-
-    // Verify RPC URL is set
-    const rpcUrl = process.env[chain.rpcEnvVar];
-    if (!rpcUrl) {
-      console.warn(
-        `⚠️  Chain ${chain.chainName} (${id}) enabled but ${chain.rpcEnvVar} not set — skipping`,
-      );
-      continue;
+function loadConfigs(enabledPlatforms: string[]): Record<string, PlatformConfig> {
+  const configs: Record<string, PlatformConfig> = {};
+  for (const platformName of enabledPlatforms) {
+    log.info(`Loading config for platform: ${platformName}`);
+    const platformConfig = (platforms as any)[platformName];
+    if (!platformConfig) throw new Error(`Platform "${platformName}" is enabled but no but no config found!`);
+    // validate config data with zod
+    let parsedConfig: PlatformConfig;
+    if (platformConfig.platformType === 'chain') {
+      parsedConfig = ChainConfigSchema.parse(platformConfig);
+    } else {
+      parsedConfig = ExchangeConfigSchema.parse(platformConfig);
     }
-
-    resolvedChains[id] = chain;
+    configs[platformName] = parsedConfig;
+    log.info(`✅ Loaded config for platform: ${platformName}`);
   }
-
-  // Flash contract addresses per chain
-  const flashContracts: Record<number, string> = {};
-  for (const id of enabledChainIds) {
-    const addr =
-      process.env[`FLASH_CONTRACT_${id}`] ?? process.env.FLASH_ARBITRAGE_CONTRACT_ADDRESS;
-    if (addr) flashContracts[id] = addr;
-  }
-
-  return {
-    enabledChainIds: Object.keys(resolvedChains).map(Number),
-    adminPort: parseInt(process.env.ADMIN_PORT ?? '4040', 10),
-    flashContracts,
-    flashbots:
-      process.env.FLASHBOTS_RELAY_URL && process.env.FLASHBOTS_AUTH_KEY
-        ? {
-            relayUrl: process.env.FLASHBOTS_RELAY_URL,
-            authSignerKey: process.env.FLASHBOTS_AUTH_KEY,
-          }
-        : undefined,
-    chains: resolvedChains,
-  };
-}
-
-/** Get RPC URL for a chain from env */
-export function getChainRpcUrl(chain: ChainConfig): string {
-  return process.env[chain.rpcEnvVar] ?? '';
+  return configs;
 }

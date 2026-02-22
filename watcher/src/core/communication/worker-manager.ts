@@ -2,6 +2,7 @@
 import type { BunMessageEvent } from 'bun';
 import { createLogger } from '../../utils/logger.ts';
 import type { EventMessage, Message, RequestMessage, ResponseMessage } from './types.ts';
+import { broadcastEventToWebsocketClients } from '@/api-server/index..ts';
 
 const logger = createLogger('[WorkerManager]');
 
@@ -117,7 +118,8 @@ export class WorkerManager {
   }
 
   private handleEvent(message: EventMessage): void {
-    logger.info(`Received event from worker:`, message);
+    // hook here GlobalDataStore and broadcast to WebSocket clients
+    // broadcastEventToWebsocketClients(message.name, message.data);
     // for (const handler of this.eventHandlers) {
     //   handler(message);
     // }
