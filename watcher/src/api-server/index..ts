@@ -14,7 +14,7 @@ import type { GlobalDataStore } from '@/core/global-data-store.ts';
 import type { WorkerManager } from '../core/communication/worker-manager.ts';
 // import type { CrossChainDetector } from '../../orchestrator/cross-chain-detector.ts';
 
-const logger = createLogger('[api-server]');
+const log = createLogger('[main.server]');
 
 interface ApiServerInput {
   store: GlobalDataStore;
@@ -77,7 +77,7 @@ export function createApiServer(input: ApiServerInput): Hono {
       const response = await workerManager.sendRequest('worker-eth', 'pause', null);
       return c.json({ response });
     } catch (error: any) {
-      logger.error('Error sending request to worker:', error);
+      log.error('Error sending request to worker:', error);
       return c.json({ error: error.message }, 500);
     }
   });
@@ -90,7 +90,7 @@ export function createApiServer(input: ApiServerInput): Hono {
     paused = true;
     workerManager.pauseAll();
     broadcastEvent('status', { paused: true });
-    logger.info('⏸️  Arbitrage PAUSED');
+    log.info('⏸️  Arbitrage PAUSED');
     return json(c, { paused: true });
   });
 
@@ -98,7 +98,7 @@ export function createApiServer(input: ApiServerInput): Hono {
     paused = false;
     workerManager.resumeAll();
     broadcastEvent('status', { paused: false });
-    logger.info('▶️  Arbitrage RESUMED');
+    log.info('▶️  Arbitrage RESUMED');
     return json(c, { paused: false });
   });
 
@@ -174,14 +174,14 @@ export function createApiServer(input: ApiServerInput): Hono {
   app.post('/pools/:address/disable', (c) => {
     const addr = c.req.param('address');
     // if (!store.setDisabled(addr, true)) return c.json({ error: 'Pool not found' }, 404);
-    logger.info(`🚫 Pool ${addr} DISABLED`);
+    log.info(`🚫 Pool ${addr} DISABLED`);
     return json(c, { disabled: true, address: addr });
   });
 
   app.post('/pools/:address/enable', (c) => {
     const addr = c.req.param('address');
     // if (!store.setDisabled(addr, false)) return c.json({ error: 'Pool not found' }, 404);
-    logger.info(`✅ Pool ${addr} ENABLED`);
+    log.info(`✅ Pool ${addr} ENABLED`);
     return json(c, { disabled: false, address: addr });
   });
 
@@ -273,7 +273,7 @@ export function startApiServer(
     websocket: {
       open(ws) {
         wsClients.add(ws);
-        logger.info('🔌 Admin WS client connected');
+        log.info('🔌 Admin WS client connected');
 
         // Send current status on connect
         ws.send(
@@ -293,13 +293,13 @@ export function startApiServer(
       },
       close(ws) {
         wsClients.delete(ws);
-        logger.info('🔌 Admin WS client disconnected');
+        log.info('🔌 Admin WS client disconnected');
       },
     },
   });
 
-  logger.info(`🖥️  Admin API on http://localhost:${port}`);
-  logger.info(`🔌 Admin WS on ws://localhost:${port}`);
+  log.info(`🖥️  Admin API on http://localhost:${port}`);
+  log.info(`🔌 Admin WS on ws://localhost:${port}`);
 
   return { server, app };
 }

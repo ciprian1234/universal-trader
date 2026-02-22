@@ -4,7 +4,7 @@ import { createLogger } from '../../utils/logger.ts';
 import type { EventMessage, Message, RequestMessage, ResponseMessage } from './types.ts';
 import { broadcastEventToWebsocketClients } from '@/api-server/index..ts';
 
-const logger = createLogger('[WorkerManager]');
+const logger = createLogger('[main.WorkerManager]');
 
 let requestIdCounter = 0;
 
@@ -72,7 +72,7 @@ export class WorkerManager {
     if (!managed) throw new Error(`Worker "${workerId}" not found`);
     const correlationId = `${workerId}-${requestIdCounter++}`;
 
-    logger.info(`Sending request "${requestName}" to workerId: "${workerId}"`);
+    // logger.info(`Sending request "${requestName}" to workerId: "${workerId}"`);
 
     return new Promise<T>((resolve, reject) => {
       // Set up timeout
@@ -107,8 +107,7 @@ export class WorkerManager {
 
   private handleResponse(message: ResponseMessage): void {
     const pending = this.pendingRequests.get(message.correlationId);
-    if (!pending)
-      return logger.warn(`No pending request for correlationId: ${message.correlationId}`);
+    if (!pending) return logger.warn(`No pending request for correlationId: ${message.correlationId}`);
 
     clearTimeout(pending.timer);
     this.pendingRequests.delete(message.correlationId);

@@ -7,9 +7,8 @@ import type { ChainConfig } from '../models.ts';
 
 const ethereum: ChainConfig = {
   id: 'ethereum',
-  workerName: 'ethereum',
   platformType: 'chain',
-  name: 'Ethereum',
+  name: 'Ethereum Mainnet',
   chainId: 1,
   nativeToken: 'ETH',
   wrappedNativeTokenAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',

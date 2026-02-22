@@ -56,7 +56,7 @@ function write(level: LogLevel, context: string, args: unknown[]): void {
 
   const ts = timestamp();
   const color = COLORS[level];
-  const pad = context.padEnd(15);
+  const pad = context.padEnd(22);
   const msg = formatArgs(args);
 
   const line = `${COLORS.dim}${ts}${COLORS.reset} ${color}${level.padEnd(5)}${COLORS.reset} ${pad} ${msg}`;
@@ -84,4 +84,4 @@ export function createLogger(context: string): Logger {
 }
 
 /** Global logger shorthand */
-export const log = createLogger('[Global]');
+export const log = createLogger('[main]');

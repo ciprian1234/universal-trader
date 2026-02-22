@@ -22,7 +22,6 @@ export const DexConfigSchema = z.object({
 
 export const PlatformConfigSchema = z.object({
   id: z.string(), // unique identifier, e.g. 'ethereum', 'arbitrum', 'binance'
-  workerName: z.string(),
   platformType: z.string(), // 'chain', 'exchange'
   name: z.string(), // e.g. 'ethereum', 'arbitrum', 'binance'
   enabled: z.boolean(),

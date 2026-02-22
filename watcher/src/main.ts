@@ -15,8 +15,8 @@ import { EventBus } from './core/event-bus.ts';
 import { WorkerManager } from './core/communication/worker-manager.ts';
 // import { CrossChainDetector } from './orchestrator/cross-chain-detector.ts';
 import { startApiServer } from './api-server/index..ts';
-import { log } from './utils';
 import { GlobalDataStore } from './core/global-data-store.ts';
+import { log } from './utils';
 
 async function main(): Promise<void> {
   const store = new GlobalDataStore();
@@ -36,13 +36,13 @@ async function main(): Promise<void> {
     // crossChainDetector,
   });
 
-  workerManager.spawnWorker('worker-eth', path.resolve(__dirname, './workers/watcher-evm/index.ts'));
-
-  // configure workers
-  workerManager.sendRequest('worker-eth', 'init', {
-    workerName: 'worker-eth',
-    rpcUrl: 'http://eth-mainnet-rpc-url',
-  });
+  // go through each enabled platform and spawn corresponding workers
+  for (const [platformName, platformConfig] of Object.entries(appConfig.platforms)) {
+    if (!platformConfig.enabled) continue;
+    workerManager.spawnWorker(platformConfig.id, path.resolve(__dirname, './workers/watcher-evm/index.ts'));
+    await workerManager.sendRequest(platformConfig.id, 'init', platformConfig);
+    log.info(`✅ Worker "${platformConfig.id}" (${platformConfig.name}) initialized`);
+  }
 
   // === 5. Wire up EventBus → WebSocket broadcast ===
   // eventBus.on('pool-update', (pool) => {
