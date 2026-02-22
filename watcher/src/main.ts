@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     log.info('Shutting down...');
     // crossChainDetector.stop();
-    // workerManager.stopAll();
+    await workerManager.terminateAll(); // Gracefully terminate all workers
     server.stop();
     log.info('Goodbye.');
     process.exit(0);

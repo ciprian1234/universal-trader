@@ -127,7 +127,7 @@ export class WorkerManager {
   /**
    * Terminate a specific worker
    */
-  terminateWorker(workerId: string): void {
+  async terminateWorker(workerId: string): Promise<void> {
     const managed = this.workers.get(workerId);
     if (!managed) return logger.warn(`Worker "${workerId}" not found for termination`);
 
@@ -140,8 +140,9 @@ export class WorkerManager {
       }
     }
 
-    managed.worker.terminate();
-    // globalStore.updateWorkerStatus(workerId, 'stopped');
+    // send stop command to allow graceful cleanup in the worker
+    await this.sendRequest(workerId, 'stop', null);
+    managed.worker.terminate(); // Terminate the worker
     this.workers.delete(workerId);
     logger.info(`Terminated worker "${workerId}"`);
   }
@@ -149,8 +150,8 @@ export class WorkerManager {
   /**
    * Terminate all workers
    */
-  terminateAll(): void {
-    for (const [id] of this.workers) this.terminateWorker(id);
+  async terminateAll(): Promise<void> {
+    for (const [id] of this.workers) await this.terminateWorker(id);
   }
 
   getWorkerIds(): string[] {

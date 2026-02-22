@@ -43,9 +43,22 @@ export abstract class BaseWorker {
           this.sendResponseMessage({ correlationId, data: { success: true } });
         })
         .catch((error) => {
+          this.isInitialized = false;
           this.log.error(`init`, error);
           this.sendResponseMessage({ correlationId, error: { message: error.message } });
         });
+    } else if (name === 'stop') {
+      this.log.info('🛑 Stoping...');
+      this.stop()
+        .then(() => {
+          this.sendResponseMessage({ correlationId, data: { success: true } });
+          this.log.info('✅ Stopped successfully');
+        })
+        .catch((error) => {
+          this.log.error(`❌ Error during worker termination:`, error);
+          this.sendResponseMessage({ correlationId, error: { message: error.message } });
+        });
+      // note: we don't call self.termintate() since main thread will call worker.terminate() after receiving the stop response
     } else {
       // call the concrete worker's request handler
       this.handleRequest(message).catch((error) => {
@@ -82,4 +95,5 @@ export abstract class BaseWorker {
   abstract handleRequest(message: RequestMessage): Promise<void>;
   abstract handleEvent(event: EventMessage): Promise<void>;
   abstract init(config: unknown): Promise<void>;
+  abstract stop(): Promise<void>;
 }

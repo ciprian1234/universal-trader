@@ -94,6 +94,28 @@ class EVMWorker extends BaseWorker {
 
     this.sendEventMessage('worker-initialized', { timestamp: Date.now() });
   }
+
+  async stop() {
+    this.log.info('💾 Saving cache to disk...');
+    await this.cache.save(); // do not force save if cache is not dirty
+
+    // Cleanup Prisma
+    // await this.storage.cleanup();
+
+    // await this.flashArbitrageHandler.shutdown();
+
+    // Cleanup all services
+    this.eventBus.cleanup();
+
+    // Cleanup BlockManager
+    this.blockManager.cleanup();
+
+    // Cleanup GasManager
+    // this.gasManager.cleanup();
+
+    // Cleanup Blockchain
+    this.blockchain.cleanup();
+  }
 }
 
 new EVMWorker();
