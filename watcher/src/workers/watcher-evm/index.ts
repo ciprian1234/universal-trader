@@ -19,6 +19,7 @@ class EVMWorker extends BaseWorker {
   async init(config: ChainConfig) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     this.config = config;
+    this.log.info(`Initializing...`);
     this.sendEventMessage('worker-initialized', { timestamp: Date.now() });
   }
 }

@@ -1,13 +1,14 @@
 import type { EventMessage, Message, RequestMessage } from '@/core/communication/types';
-import { context } from './worker-config.ts';
 import { createLogger } from '@/utils';
 import type { BunMessageEvent } from 'bun';
+import type { PlatformConfig } from '@/config/models.ts';
 
 // Each worker has its own isolated scope. (`self` refers to the worker's global scope)
 declare const self: Worker;
 
 export abstract class BaseWorker {
   isInitialized = false;
+  workerId = 'unidentified-worker';
   log = createLogger(`worker`);
 
   constructor() {
@@ -30,8 +31,10 @@ export abstract class BaseWorker {
       this.sendResponseMessage({ correlationId, error: { message: `Worker not initialized` } });
     } else if (name == 'init') {
       // base init logic (e.g. set worker name in context, setup logger)
-      context.workerName = (data as { workerName: string }).workerName || context.workerName;
-      this.log = createLogger(`[${context.workerName}]`); // Update logger with worker name
+      const config = data as PlatformConfig;
+      if (!config.id) throw new Error(`Missing "id" from init config`);
+      this.workerId = config.id;
+      this.log = createLogger(`[${config.id}]`); // Update logger with worker name
 
       // call init from the concrete worker class
       this.init(data)
