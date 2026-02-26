@@ -2,33 +2,30 @@
  * 🦄 UNISWAP V2 ADAPTER: High-performance V2 DEX adapter with optimized calculations
  */
 import { ethers } from 'ethers';
-import { BaseDexAdapter } from '../base';
-import type { DexType, TradeQuote, PoolEvent } from '../interfaces';
+import type { TradeQuote, PoolEvent, DexAdapter } from '../interfaces';
 import { TokenManager } from '../token-manager';
 import { Blockchain } from '../blockchain';
 import { dexPoolId, type DexV2PoolState } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
-
-export interface UniswapV2Config {
-  name: string; // Exchange name
-  factoryAddress: string;
-  routerAddress: string;
-}
+import type { DexV2Config } from '@/config/models';
+import { createLogger } from '@/utils';
 
 // ================================================================================================
 // UNISWAP V2 ADAPTER
 // ================================================================================================
 
-export class UniswapV2Adapter extends BaseDexAdapter {
+export class DexV2Adapter implements DexAdapter {
   readonly name: string;
-  readonly type: DexType = 'uniswap-v2';
-  readonly factoryAddress: string;
-  readonly routerAddress: string;
+  readonly protocol = 'v2';
+  readonly config: DexV2Config;
   readonly feeBasisPoints: number = 30; // 0.3% fee (30 bps) (denominated by 10,000)
 
-  private factoryContract: ethers.Contract;
-  // private routerContract: ethers.Contract;
+  private readonly factoryContract: ethers.Contract;
+  private readonly blockchain: Blockchain;
+  private readonly tokenManager: TokenManager;
+
+  private readonly logger = createLogger('DexV2Adapter');
 
   // ABI definitions
   public readonly FACTORY_ABI = [
@@ -54,11 +51,11 @@ export class UniswapV2Adapter extends BaseDexAdapter {
     'function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
   ];
 
-  constructor(config: UniswapV2Config, blockchain: Blockchain, tokenManager: TokenManager) {
-    super(config, blockchain, tokenManager);
+  constructor(config: DexV2Config, blockchain: Blockchain, tokenManager: TokenManager) {
     this.name = config.name;
-    this.factoryAddress = config.factoryAddress;
-    this.routerAddress = config.routerAddress;
+    this.config = config;
+    this.blockchain = blockchain;
+    this.tokenManager = tokenManager;
 
     // Initialize contracts
     this.factoryContract = this.blockchain.initContract(config.factoryAddress, this.FACTORY_ABI);
@@ -139,8 +136,8 @@ export class UniswapV2Adapter extends BaseDexAdapter {
 
     pool.reserve0 = reserves.reserve0;
     pool.reserve1 = reserves.reserve1;
-    pool.spotPrice0to1 = UniswapV2Adapter.calculateSpotPrice(reserves.reserve0, reserves.reserve1, token0, token1, true);
-    pool.spotPrice1to0 = UniswapV2Adapter.calculateSpotPrice(reserves.reserve0, reserves.reserve1, token0, token1, false);
+    pool.spotPrice0to1 = DexV2Adapter.calculateSpotPrice(reserves.reserve0, reserves.reserve1, token0, token1, true);
+    pool.spotPrice1to0 = DexV2Adapter.calculateSpotPrice(reserves.reserve0, reserves.reserve1, token0, token1, false);
     return pool;
   }
 
@@ -273,8 +270,8 @@ export class UniswapV2Adapter extends BaseDexAdapter {
 
     // Update derived fields
     const { token0, token1 } = pool.tokenPair;
-    pool.spotPrice0to1 = UniswapV2Adapter.calculateSpotPrice(event.reserve0!, event.reserve1!, token0, token1, true);
-    pool.spotPrice1to0 = UniswapV2Adapter.calculateSpotPrice(event.reserve0!, event.reserve1!, token0, token1, false);
+    pool.spotPrice0to1 = DexV2Adapter.calculateSpotPrice(event.reserve0!, event.reserve1!, token0, token1, true);
+    pool.spotPrice1to0 = DexV2Adapter.calculateSpotPrice(event.reserve0!, event.reserve1!, token0, token1, false);
 
     // calculate liquidityUSD (requires external price feed)
     try {

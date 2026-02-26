@@ -2,35 +2,32 @@
  * 🦄 UNISWAP V3 ADAPTER: High-performance V3 DEX adapter with concentrated liquidity
  */
 import { ethers } from 'ethers';
-import { BaseDexAdapter } from '../base';
-import type { DexType, TradeQuote, PoolEvent } from '../interfaces';
+import type { TradeQuote, PoolEvent, DexAdapter } from '../interfaces';
 import { TokenManager } from '../token-manager';
 import { Blockchain } from '../blockchain';
 import { sqrtPriceX96ToPrice, calculateVirtualReserves, simulateSwap } from './lib/sqrtPriceMath';
 import { dexPoolId, type DexV3PoolState } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
-
-export interface UniswapV3Config {
-  name: string; // Exchange name
-  factoryAddress: string;
-  quoterAddress: string;
-  routerAddress: string;
-}
+import type { DexV3Config } from '@/config/models';
+import { createLogger } from '@/utils/logger';
 
 // ================================================================================================
 // UNISWAP V3 ADAPTER
 // ================================================================================================
 
-export class UniswapV3Adapter extends BaseDexAdapter {
+export class DexV3Adapter implements DexAdapter {
   readonly name: string;
-  readonly type: DexType = 'uniswap-v3';
-  readonly factoryAddress: string;
-  readonly routerAddress: string;
+  readonly protocol = 'v3';
+  readonly config: DexV3Config;
 
-  private factoryContract: ethers.Contract;
-  private quoterContract: ethers.Contract | null = null;
+  private readonly blockchain: Blockchain;
+  private readonly tokenManager: TokenManager;
+  private readonly factoryContract: ethers.Contract;
+  private readonly quoterContract: ethers.Contract | null = null;
   // private routerContract: ethers.Contract;
+
+  private readonly logger = createLogger('DexV3Adapter');
 
   // Standard fee tiers in V3
   private readonly FEE_TIERS = [100, 500, 3000, 10000]; // 0.01%, 0.05%, 0.3%, 1% (in v3 basis points are denominated by 1,000,000)
@@ -65,11 +62,11 @@ export class UniswapV3Adapter extends BaseDexAdapter {
     'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)',
   ];
 
-  constructor(config: UniswapV3Config, blockchain: Blockchain, tokenManager: TokenManager) {
-    super(config, blockchain, tokenManager);
+  constructor(config: DexV3Config, blockchain: Blockchain, tokenManager: TokenManager) {
     this.name = config.name;
-    this.factoryAddress = config.factoryAddress;
-    this.routerAddress = config.routerAddress;
+    this.config = config;
+    this.blockchain = blockchain;
+    this.tokenManager = tokenManager;
 
     // Initialize contracts
     this.factoryContract = this.blockchain.initContract(config.factoryAddress, this.FACTORY_ABI);
@@ -185,8 +182,8 @@ export class UniswapV3Adapter extends BaseDexAdapter {
     pool.sqrtPriceX96 = slot0.sqrtPriceX96;
     pool.tick = slot0.tick;
     pool.liquidity = liquidity;
-    pool.spotPrice0to1 = UniswapV3Adapter.calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, true);
-    pool.spotPrice1to0 = UniswapV3Adapter.calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, false);
+    pool.spotPrice0to1 = DexV3Adapter.calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, true);
+    pool.spotPrice1to0 = DexV3Adapter.calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, false);
     await this.fetchInitializedTicksMulticall3(pool); // fetch initialized ticks for multi-tick simulation
     return pool;
   }
@@ -231,7 +228,7 @@ export class UniswapV3Adapter extends BaseDexAdapter {
       if (amountOut <= 0n) throw new Error(`❌ Quoter contract invalid amountOut: ${amountOut}`);
 
       // Calculate prices
-      const spotPrice = UniswapV3Adapter.calculateSpotPrice(
+      const spotPrice = DexV3Adapter.calculateSpotPrice(
         poolState.sqrtPriceX96!,
         poolState.tokenPair.token0,
         poolState.tokenPair.token1,
@@ -299,8 +296,8 @@ export class UniswapV3Adapter extends BaseDexAdapter {
 
     // Update derived fields
     const { token0, token1 } = pool.tokenPair;
-    pool.spotPrice0to1 = UniswapV3Adapter.calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
-    pool.spotPrice1to0 = UniswapV3Adapter.calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
+    pool.spotPrice0to1 = DexV3Adapter.calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
+    pool.spotPrice1to0 = DexV3Adapter.calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
 
     // calculate liquidityUSD (requires external price feed)
     try {

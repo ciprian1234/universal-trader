@@ -1,9 +1,10 @@
-import { DexAdapterFactory } from './adapters/dexAdapterFactory';
 import type { DexAdapter } from './interfaces';
 import { TokenManager } from '../core/token-manager';
 import { Blockchain } from '../core/blockchain';
 import type { Logger } from '@/utils';
-import type { ChainConfig } from '@/config/models';
+import type { ChainConfig, DexConfig } from '@/config/models';
+import { DexV2Adapter } from './adapters/uniswap-v2';
+import { DexV3Adapter } from './adapters/uniswap-v3';
 
 type DexRegistryInput = {
   logger: Logger;
@@ -32,19 +33,34 @@ export class DexRegistry {
   setupDexAdapters(chainConfig: ChainConfig) {
     this.logger.info('🔧 Setting up DEX adapters...');
 
-    // Register all DEXes
-    let count = 0;
+    // Register all DEXes defined in the chain config
     for (const dexConfig of chainConfig.dexConfigs) {
       try {
-        const dexAdapter = DexAdapterFactory.create(dexConfig, this.blockchain, this.tokenManager);
+        const dexAdapter = this.createDexAdapter(dexConfig, this.blockchain, this.tokenManager);
         this.registerDexAdapter(dexAdapter);
-        count++;
       } catch (error) {
         this.logger.warn(`❌ Failed to register DEX adapter for ${dexConfig.name}: ${(error as Error).message}`);
       }
     }
 
-    this.logger.info(`✅ Configured ${count}/${chainConfig.dexConfigs.length} DEX adapters`);
+    this.logger.info(`✅ Configured ${this.adapters.size}/${chainConfig.dexConfigs.length} DEX adapters`);
+  }
+
+  /**
+   * Factory method to create a DexAdapter instance based on DexConfig
+   */
+  createDexAdapter(dexConfig: DexConfig, blockchain: Blockchain, tokenManager: TokenManager): DexAdapter {
+    switch (dexConfig.protocol) {
+      case 'v2':
+        return new DexV2Adapter(dexConfig, blockchain, tokenManager);
+      case 'v3':
+        return new DexV3Adapter(dexConfig, blockchain, tokenManager);
+      case 'v4':
+        throw new Error(`Unsupported DEX type: ${dexConfig.protocol} (not implemented yet)`);
+      // return new DexV4Adapter(dexConfig, blockchain, tokenManager);
+      default:
+        throw new Error(`Unsupported DEX config: ${dexConfig}`);
+    }
   }
 
   /**
@@ -54,7 +70,7 @@ export class DexRegistry {
     if (this.adapters.has(adapter.name)) throw new Error(`DEX adapter '${adapter.name}' is already registered`);
     this.adapters.set(adapter.name, adapter);
     this.logger.info(
-      `✅ Registered DEX adapter: (🔧${adapter.type}) ${adapter.name.padEnd(15)} (RouterAddress: ${adapter.routerAddress})`,
+      `✅ Registered DEX adapter: (🔧${adapter.name}) ${adapter.name.padEnd(15)} (RouterAddress: ${adapter.config.routerAddress})`,
     );
   }
 

@@ -2,12 +2,10 @@
  * 🦄 UNISWAP V4 ADAPTER: Support for V4 Singleton Architecture and Hooks
  */
 import { ethers, AbiCoder } from 'ethers';
-import { BaseDexAdapter } from '../base';
-import type { DexType, PoolState, TradeQuote, PoolEvent, Token } from '../interfaces';
+import type { TradeQuote, DexAdapter, V4SwapEvent } from '../interfaces';
 import { TokenManager } from '../token-manager';
 import { Blockchain } from '../blockchain';
 import {
-  Q96,
   getAmount0Delta,
   getAmount1Delta,
   getNextSqrtPriceFromAmount0RoundingUp,
@@ -15,14 +13,10 @@ import {
   sqrtPriceX96ToPrice,
   calculateVirtualReserves,
 } from './lib/sqrtPriceMath';
-
-export interface UniswapV4Config {
-  name: string;
-  poolManagerAddress: string; // The Singleton Contract
-  stateViewAddress: string; // State Viewer Contract
-  routerAddress: string; // Router address for swaps
-  quoterAddress: string;
-}
+import type { DexV4Config } from '@/config/models';
+import { dexPoolId, type DexV4PoolState } from '@/shared/data-model/layer1';
+import { getCanonicalPairId, type TokenOnChain } from '@/shared/data-model/token';
+import { createLogger } from '@/utils/logger';
 
 // ================================================================================================
 // Types specific to Uniswap V4
@@ -39,15 +33,18 @@ export type PoolKey = {
 // UNISWAP V4 ADAPTER
 // ================================================================================================
 
-export class UniswapV4Adapter extends BaseDexAdapter {
+export class DexV4Adapter implements DexAdapter {
   readonly name: string;
-  readonly type: DexType = 'uniswap-v4'; // Assuming you add 'uniswap-v4' to DexType
-  readonly poolManagerAddress: string;
-  readonly routerAddress: string;
-  readonly stateViewAddress: string;
-  private poolManagerContract: ethers.Contract;
-  private stateViewContract: ethers.Contract;
-  private quoterContract: ethers.Contract | null = null;
+  readonly protocol = 'v4';
+  readonly config: DexV4Config;
+
+  private readonly blockchain: Blockchain;
+  private readonly tokenManager: TokenManager;
+  private readonly poolManagerContract: ethers.Contract;
+  private readonly stateViewContract: ethers.Contract;
+  private readonly quoterContract: ethers.Contract | null = null;
+
+  private readonly logger = createLogger('DexV4Adapter');
 
   // Standard fee tier / tick spacing combos often used as defaults
   // Fee is uint24, TickSpacing is int24
@@ -235,12 +232,12 @@ export class UniswapV4Adapter extends BaseDexAdapter {
     },
   ];
 
-  constructor(config: UniswapV4Config, blockchain: Blockchain, tokenManager: TokenManager) {
-    super(config, blockchain, tokenManager);
+  constructor(config: DexV4Config, blockchain: Blockchain, tokenManager: TokenManager) {
     this.name = config.name;
-    this.poolManagerAddress = config.poolManagerAddress;
-    this.routerAddress = config.routerAddress;
-    this.stateViewAddress = config.stateViewAddress;
+    this.config = config;
+    this.blockchain = blockchain;
+    this.tokenManager = tokenManager;
+
     // Initialize contracts
     this.poolManagerContract = this.blockchain.initContract(config.poolManagerAddress, this.POOL_MANAGER_ABI);
     this.quoterContract = this.blockchain.initContract(config.quoterAddress, this.QUOTER_ABI);
@@ -261,10 +258,10 @@ export class UniswapV4Adapter extends BaseDexAdapter {
    * Note: V4 pools are defined by a PoolKey (Tokens + Fee + TickSpacing + Hooks).
    * This logic assumes standard no-hook pools.
    */
-  async discoverPools(token0: string, token1: string): Promise<PoolState[]> {
+  async discoverPools(token0: string, token1: string): Promise<DexV4PoolState[]> {
     const symbol0 = this.tokenManager.getToken(token0)?.symbol || token0;
     const symbol1 = this.tokenManager.getToken(token1)?.symbol || token1;
-    const pools: PoolState[] = [];
+    const pools: DexV4PoolState[] = [];
 
     // // Convert WETH to address(0) if needed
     // const currency0 = this.isWETH(token0) ? ethers.ZeroAddress : token0;
@@ -315,7 +312,7 @@ export class UniswapV4Adapter extends BaseDexAdapter {
    * Note: In V4, we don't have a specific pool contract, we interact with PoolManager
    */
   // @ts-ignore - Signature mismatch with base due to extra poolKey params needed for initialization logic
-  async initPool(id, poolKeyData?: any): Promise<PoolState> {
+  async initPool(id, poolKeyData?: any): Promise<DexV4PoolState> {
     // Use provided key or basic recovery (Tokens must be known contextually or passed in)
     if (!poolKeyData) {
       throw new Error('PoolKey data required to initialize V4 Pool State structure');
@@ -326,18 +323,19 @@ export class UniswapV4Adapter extends BaseDexAdapter {
 
     if (!token0 || !token1) throw new Error(`Tokens not found: ${poolKeyData.currency0}, ${poolKeyData.currency1}`);
 
-    const poolState: PoolState = {
-      id,
-      tokenPair: { token0, token1, pairKey: `${token0.symbol}-${token1.symbol}` },
-      dexName: this.name,
-      dexType: this.type,
-      routerAddress: this.routerAddress,
-      // Metadata specific to V4 for key reconstruction
-      meta: {
-        tickSpacing: poolKeyData.tickSpacing,
-        hooks: poolKeyData.hooks,
-      },
-      fee: poolKeyData.fee,
+    const poolState: DexV4PoolState = {
+      id: dexPoolId(this.blockchain.chainId, id), // TODO: ensure its correct
+      poolKey: id, // TODO: ensure its correct
+      address: this.config.poolManagerAddress, // V4 uses PoolManager for all pools
+      protocol: 'v4',
+      pairId: getCanonicalPairId(token0, token1),
+      venue: { name: this.name, type: 'dex', chainId: this.blockchain.chainId },
+      tokenPair: { token0, token1, key: `${token0.symbol}-${token1.symbol}` },
+
+      tickSpacing: poolKeyData.tickSpacing,
+      // hooks: poolKeyData.hooks,
+
+      feeBps: poolKeyData.fee,
 
       sqrtPriceX96: 0n,
       tick: 0,
@@ -355,7 +353,7 @@ export class UniswapV4Adapter extends BaseDexAdapter {
   /**
    * Update pool state via Singleton PoolManager
    */
-  async updatePool(pool: PoolState): Promise<PoolState> {
+  async updatePool(pool: DexV4PoolState): Promise<DexV4PoolState> {
     const { token0, token1 } = pool.tokenPair;
     const poolKey = pool.id;
 
@@ -374,8 +372,8 @@ export class UniswapV4Adapter extends BaseDexAdapter {
     pool.tick = Number(slot0.tick); // Convert BigInt to number for tick
     pool.liquidity = liquidity;
 
-    pool.spotPrice0to1 = UniswapV4Adapter.calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, true);
-    pool.spotPrice1to0 = UniswapV4Adapter.calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, false);
+    pool.spotPrice0to1 = DexV4Adapter.calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, true);
+    pool.spotPrice1to0 = DexV4Adapter.calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, false);
 
     return pool;
   }
@@ -396,7 +394,7 @@ export class UniswapV4Adapter extends BaseDexAdapter {
   /**
    * 💰 GET SPOT PRICE: Get current spot price from sqrtPriceX96
    */
-  static calculateSpotPrice(sqrtPriceX96: bigint, token0: Token, token1: Token, zeroForOne: boolean): number {
+  static calculateSpotPrice(sqrtPriceX96: bigint, token0: TokenOnChain, token1: TokenOnChain, zeroForOne: boolean): number {
     const price = sqrtPriceX96ToPrice(sqrtPriceX96, token0.decimals, token1.decimals);
     if (zeroForOne)
       return price; // Price of token0 in token1
@@ -406,9 +404,9 @@ export class UniswapV4Adapter extends BaseDexAdapter {
   /**
    * 💰 GET TRADE QUOTE: Calculate V4 trade quote
    */
-  async getTradeQuote(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote> {
+  async getTradeQuote(pool: DexV4PoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote> {
     if (!this.quoterContract) throw new Error('Quoter contract not supported');
-    const { token0, token1 } = poolState.tokenPair;
+    const { token0, token1 } = pool.tokenPair;
 
     // Ensure Key logic matches discovery
     const [currency0, currency1] =
@@ -420,9 +418,9 @@ export class UniswapV4Adapter extends BaseDexAdapter {
     const params = {
       currency0: currency0,
       currency1: currency1,
-      fee: poolState.fee,
-      tickSpacing: poolState.meta?.tickSpacing || 60,
-      hooks: poolState.meta?.hooks || ethers.ZeroAddress,
+      fee: pool.feeBps,
+      tickSpacing: pool.tickSpacing || 60,
+      hooks: pool.hooks || ethers.ZeroAddress,
       hookData: '0x', // Empty bytes
     };
 
@@ -434,14 +432,14 @@ export class UniswapV4Adapter extends BaseDexAdapter {
       const amountOut = result[0]; // first return value
 
       // Calculate execution metrics
-      const spotPrice = poolState.spotPrice0to1!; // Base assumption
+      const spotPrice = pool.spotPrice0to1!; // Base assumption
       const normalizedIn = parseFloat(ethers.formatUnits(amountIn, zeroForOne ? token0.decimals : token1.decimals));
       const normalizedOut = parseFloat(ethers.formatUnits(amountOut, zeroForOne ? token1.decimals : token0.decimals));
 
       const executionPrice = normalizedOut / normalizedIn;
 
       return {
-        poolState,
+        poolState: pool,
         amountIn,
         amountOut,
         executionPrice,
@@ -459,12 +457,12 @@ export class UniswapV4Adapter extends BaseDexAdapter {
    * V4 calculation logic for standard pools is identical to V3's concentrated liquidity math.
    * However, hooks can alter this behavior. This assumes NO hooks affecting swap logic.
    */
-  simulateSwap(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
-    const sqrtPriceX96 = poolState.sqrtPriceX96!;
-    const liquidity = poolState.liquidity!;
+  simulateSwap(pool: DexV4PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+    const sqrtPriceX96 = pool.sqrtPriceX96!;
+    const liquidity = pool.liquidity!;
 
     // TBD: check how hooks affect swap calculations
-    const hooks = poolState.meta?.hooks || ethers.ZeroAddress;
+    const hooks = pool.hooks || ethers.ZeroAddress;
     if (hooks !== ethers.ZeroAddress) {
       this.logger.warn('⚠️ Pool uses hooks - simulation accuracy not guaranteed');
     }
@@ -473,7 +471,7 @@ export class UniswapV4Adapter extends BaseDexAdapter {
     if (liquidity <= 0n) throw new Error(`Insufficient liquidity`);
 
     // Fee calculations in V4 can be dynamic via hooks, but we assume static fee here
-    const feePpm = BigInt(poolState.fee);
+    const feePpm = BigInt(pool.feeBps);
     const amountInAfterFee = (amountIn * (1_000_000n - feePpm)) / 1_000_000n;
 
     if (zeroForOne) {
@@ -488,8 +486,8 @@ export class UniswapV4Adapter extends BaseDexAdapter {
   /**
    * 💰 GET FEE PERCENT: Get V4 pool fee percentage
    */
-  getFeePercent(poolState: PoolState): number {
-    return Number(poolState.fee) / 10000; // Convert from basis points to percentage (3000 bps = 0.3%)
+  getFeePercent(pool: DexV4PoolState): number {
+    return Number(pool.feeBps) / 10000; // Convert from basis points to percentage (3000 bps = 0.3%)
   }
 
   // ================================================================================================
@@ -499,8 +497,8 @@ export class UniswapV4Adapter extends BaseDexAdapter {
   /**
    * 🔄 UPDATE POOL STATE FROM EVENT: Fast V4 state updates
    */
-  updatePoolFromEvent(pool: PoolState, event: PoolEvent): PoolState {
-    if (!event.sqrtPriceX96 || !event.liquidity) throw new Error(`❌ Invalid PoolEvent for: ${event.dexName} - ${event.poolId}`);
+  updatePoolFromEvent(pool: DexV4PoolState, event: V4SwapEvent): DexV4PoolState {
+    if (!event.sqrtPriceX96 || !event.liquidity) throw new Error(`❌ Invalid PoolEvent for: ${pool.id}`);
     pool.latestEventMeta = { ...event.meta };
 
     // virtual reserves are directly from event
@@ -516,8 +514,8 @@ export class UniswapV4Adapter extends BaseDexAdapter {
 
     // Update derived fields
     const { token0, token1 } = pool.tokenPair;
-    pool.spotPrice0to1 = UniswapV4Adapter.calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
-    pool.spotPrice1to0 = UniswapV4Adapter.calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
+    pool.spotPrice0to1 = DexV4Adapter.calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
+    pool.spotPrice1to0 = DexV4Adapter.calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
 
     // calculate liquidityUSD (requires external price feed)
     try {

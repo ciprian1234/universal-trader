@@ -2,8 +2,6 @@
 // TOKEN IDENTITY
 // ════════════════════════════════════════════════════════════
 
-export type VenueKey = string;
-
 export interface TokenBase {
   symbol: string; // canonical: "ETH", "USDC"
   name: string; // full token name, e.g. "USD Coin"

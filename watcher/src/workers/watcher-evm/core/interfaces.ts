@@ -2,7 +2,8 @@
 // NETWORK GAS FEE INTERFACES
 // ================================================================================================
 
-import type { DexPoolState, EventMetadata } from '@/shared/data-model/layer1';
+import type { DexConfig } from '@/config/models';
+import type { DexPoolState, DexProtocol, EventMetadata } from '@/shared/data-model/layer1';
 import type { TokenOnChain } from '@/shared/data-model/token';
 
 // ════════════════════════════════════════════════════════════
@@ -100,8 +101,6 @@ export interface TokenPrice {
   lastUpdated: number;
   source: string; // DEX name or oracle
 }
-
-export type DexType = 'uniswap-v2' | 'uniswap-v3' | 'uniswap-v4' | 'curvestable' | 'balancerweighted';
 
 // ================================================================================================
 // TRADING INTERFACES
@@ -206,9 +205,8 @@ export interface ArbitrageOpportunity {
 
 export interface DexAdapter {
   readonly name: string;
-  readonly type: DexType;
-  readonly factoryAddress: string;
-  readonly routerAddress: string;
+  readonly protocol: DexProtocol;
+  readonly config: DexConfig;
 
   readonly FACTORY_ABI: string[];
   readonly POOL_ABI: string[];
@@ -223,31 +221,6 @@ export interface DexAdapter {
   simulateSwap(poolState: DexPoolState, amountIn: bigint, zeroForOne: boolean): bigint;
   getTradeQuote(poolState: DexPoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote>;
   getFeePercent(poolState: DexPoolState): number;
-}
-
-// ================================================================================================
-// CONFIGURATION INTERFACES
-// ================================================================================================
-
-export interface DexConfig {
-  name: string;
-  type: DexType;
-  chainId: number;
-
-  factoryAddress: string;
-  routerAddress?: string;
-  quoterAddress?: string;
-
-  fee?: number | number[];
-  isActive: boolean;
-
-  // Event monitoring
-  startBlock?: number;
-  eventBatchSize?: number;
-
-  // Performance tuning
-  maxPoolsToMonitor?: number;
-  priceUpdateIntervalMs?: number;
 }
 
 // ================================================================================================
