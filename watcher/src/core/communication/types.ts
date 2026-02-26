@@ -68,4 +68,5 @@ export interface ResponseMessage extends Message {
 
 export interface EventMessage extends Message {
   type: 'event';
+  sender: string; // e.g. "main", "watcher-ethereum",
 }

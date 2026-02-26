@@ -48,7 +48,6 @@ export abstract class BaseWorker {
           this.sendResponseMessage({ correlationId, error: { message: error.message } });
         });
     } else if (name === 'stop') {
-      this.log.info('🛑 Stoping...');
       this.stop()
         .then(() => {
           this.sendResponseMessage({ correlationId, data: { success: true } });
@@ -88,7 +87,7 @@ export abstract class BaseWorker {
    * Helper to send EventMessage to main thread
    */
   sendEventMessage(name: string, data: unknown): void {
-    self.postMessage({ type: 'event', name, data });
+    self.postMessage({ type: 'event', sender: this.workerId, name, data });
   }
 
   // abstract methods that concrete workers must implement

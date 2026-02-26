@@ -32,11 +32,26 @@ class EVMWorker extends BaseWorker {
     throw new Error(`EVMWorker does not handle events yet. Received event: ${event.name}`);
   }
 
+  setupEventPipeline() {
+    // send event to main thread
+    this.eventBus.onPoolEventsBatch((data) => {
+      // events are already applied to poolStates by the time they are emitted => so send the updated pool states
+      const updatedPoolStates = data.events
+        .map((event) => this.poolStatesManager.getPoolState(event.poolId))
+        .filter((state) => state !== null);
+      this.sendEventMessage('pool-update-batch', {
+        blockData: data.blockData,
+        updatedPoolStates,
+      });
+    });
+  }
+
   async init(config: ChainConfig) {
     this.config = config;
 
-    // init event bus
+    // init event bus and setup event pipeline
     this.eventBus = new EventBus({ logger: createLogger(`[${this.workerId}.event-bus]`) });
+    this.setupEventPipeline();
 
     // init cache
     this.cache = new CacheService(this.config.chainId);
@@ -70,6 +85,7 @@ class EVMWorker extends BaseWorker {
 
     // initialize PoolStatesManager
     this.poolStatesManager = new PoolStatesManager({
+      chainId: this.config.chainId,
       eventBus: this.eventBus,
       dexRegistry: this.dexRegistry,
       tokenManager: this.tokenManager,
@@ -81,6 +97,7 @@ class EVMWorker extends BaseWorker {
 
     // Initialize BlockManager
     this.blockManager = new BlockManager({
+      chainId: this.config.chainId,
       blockchain: this.blockchain,
       eventBus: this.eventBus,
       poolStatesManager: this.poolStatesManager,
@@ -91,8 +108,6 @@ class EVMWorker extends BaseWorker {
     // start listening for block and pool events
     this.blockManager.listenBlockEvents();
     this.blockManager.listenPoolEvents();
-
-    this.sendEventMessage('worker-initialized', { timestamp: Date.now() });
   }
 
   async stop() {

@@ -6,8 +6,8 @@
 // ================================================================================================
 
 import { EventEmitter } from 'events';
-import type { PoolState, PoolEvent, ArbitrageOpportunity } from '../shared/types.ts';
 import { createLogger } from '../utils/logger.ts';
+import type { ArbitrageOpportunity, PoolEvent, PoolState } from './types.ts';
 
 export interface BlockEntry {
   number: number;
@@ -33,10 +33,6 @@ export class EventBus extends EventEmitter {
 
   emitPoolUpdate(pool: PoolState, previousState?: PoolState): void {
     this.emit('pool-update', { current: pool, previous: previousState });
-  }
-
-  emitPoolEventsBatch(chainId: number, events: PoolEvent[]): void {
-    this.emit('poolEventsBatch', { chainId, events });
   }
 
   emitArbitrageOpportunity(opportunity: ArbitrageOpportunity): void {

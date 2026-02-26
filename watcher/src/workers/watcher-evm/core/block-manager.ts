@@ -1,11 +1,21 @@
 import { ethers } from 'ethers';
-import type { PoolState, PoolEvent } from './interfaces';
+import type {
+  PoolEvent,
+  V2SyncEvent,
+  V3BurnEvent,
+  V3MintEvent,
+  V3SwapEvent,
+  V4ModifyLiquidityEvent,
+  V4SwapEvent,
+} from './interfaces';
 import { EventBus } from './event-bus';
 import { PoolStatesManager } from './pool-states-manager';
 import { Blockchain } from './blockchain';
 import type { Logger } from '@/utils';
+import { dexPoolId, type EventMetadata } from '@/shared/data-model/layer1';
 
 type BlockManagerInput = {
+  chainId: number;
   blockchain: Blockchain;
   eventBus: EventBus;
   poolStatesManager: PoolStatesManager;
@@ -18,6 +28,7 @@ export interface BlockEntry {
 }
 
 export class BlockManager {
+  private readonly chainId: number;
   private readonly logger: Logger;
   private readonly blockchain: Blockchain;
   private readonly eventBus: EventBus;
@@ -82,6 +93,7 @@ export class BlockManager {
   };
 
   constructor(input: BlockManagerInput) {
+    this.chainId = input.chainId;
     this.blockchain = input.blockchain;
     this.eventBus = input.eventBus;
     this.poolStatesManager = input.poolStatesManager;
@@ -233,172 +245,153 @@ export class BlockManager {
    * 🔍 PARSE LOG: Convert raw log to PoolEvent
    */
   private parseLog(log: ethers.Log): PoolEvent {
-    const poolAddress = log.address.toLowerCase();
-    const poolState = this.poolStatesManager.getPoolState(poolAddress);
-    if (!poolState) throw new Error(`Recieved PoolEvent for unregistered pool: ${poolAddress}`);
+    const eventMetadata = {
+      blockNumber: log.blockNumber,
+      blockReceivedTimestamp: this.currentBlock.receivedTimestamp,
+      transactionHash: log.transactionHash,
+      transactionIndex: log.transactionIndex,
+      logIndex: log.index,
+    };
 
     const topic = log.topics[0];
-    if (topic === this.EVENT_TOPICS.V2_SYNC) return this.parseV2Sync(log, poolState);
-    else if (topic === this.EVENT_TOPICS.V3_SWAP) return this.parseV3Swap(log, poolState);
-    else if (topic === this.EVENT_TOPICS.V3_MINT) return this.parseV3Mint(log, poolState);
-    else if (topic === this.EVENT_TOPICS.V3_BURN) return this.parseV3Burn(log, poolState);
-    else if (topic === this.EVENT_TOPICS.V4_SWAP) return this.parseV4Swap(log, poolState);
-    else if (topic === this.EVENT_TOPICS.V4_MODIFY_LIQUIDITY) return this.parseV4ModifyLiquidity(log, poolState);
-    else throw new Error(`Unknown event topic: ${topic} for pool ${poolAddress}`);
+    if (topic === this.EVENT_TOPICS.V2_SYNC) return this.parseV2Sync(log, eventMetadata);
+    else if (topic === this.EVENT_TOPICS.V3_SWAP) return this.parseV3Swap(log, eventMetadata);
+    else if (topic === this.EVENT_TOPICS.V3_MINT) return this.parseV3Mint(log, eventMetadata);
+    else if (topic === this.EVENT_TOPICS.V3_BURN) return this.parseV3Burn(log, eventMetadata);
+    else if (topic === this.EVENT_TOPICS.V4_SWAP) return this.parseV4Swap(log, eventMetadata);
+    else if (topic === this.EVENT_TOPICS.V4_MODIFY_LIQUIDITY) return this.parseV4ModifyLiquidity(log, eventMetadata);
+    else throw new Error(`Unknown event topic: ${topic} from address: ${log.address}`);
   }
 
   // ================================================================================================
   // EVENT PARSERS
   // ================================================================================================
 
-  private parseV2Sync(log: ethers.Log, poolState: PoolState): PoolEvent {
-    const iface = this.EVENT_INTERFACES.V2_SYNC;
-    const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
-    if (!parsed) throw new Error('Failed to parse V2 Sync');
+  private parseV2Sync(log: ethers.Log, meta: EventMetadata): V2SyncEvent {
+    const sourceAddress = log.address.toLowerCase();
+    const parsed = this.EVENT_INTERFACES.V2_SYNC.parseLog({ topics: log.topics, data: log.data });
+    if (!parsed) throw new Error(`Failed to parse V2 Sync for: ${sourceAddress}`);
 
     return {
-      type: 'v2-sync',
-      dexName: poolState.dexName,
-      dexType: poolState.dexType,
-      poolId: poolState.id,
-      tokenPair: poolState.tokenPair,
+      protocol: 'v2',
+      name: 'sync',
+      sourceAddress,
+      poolId: dexPoolId(this.chainId, sourceAddress),
       reserve0: parsed.args.reserve0,
       reserve1: parsed.args.reserve1,
-      meta: {
-        blockNumber: log.blockNumber,
-        blockReceiveTimestamp: this.currentBlock.receivedTimestamp,
-        transactionHash: log.transactionHash,
-        transactionIndex: log.transactionIndex,
-        logIndex: log.index,
-        timestamp: Date.now(),
-      },
+      meta,
     };
   }
 
-  private parseV3Swap(log: ethers.Log, poolState: PoolState): PoolEvent {
-    const iface = this.EVENT_INTERFACES.V3_SWAP;
-    const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
-    if (!parsed) throw new Error('Failed to parse V3 Swap');
-
-    const { sqrtPriceX96, liquidity, tick } = parsed.args;
+  private parseV3Swap(log: ethers.Log, meta: EventMetadata): V3SwapEvent {
+    const sourceAddress = log.address.toLowerCase();
+    const parsed = this.EVENT_INTERFACES.V3_SWAP.parseLog({ topics: log.topics, data: log.data });
+    if (!parsed) throw new Error(`Failed to parse V3 Swap for: ${sourceAddress}`);
 
     return {
-      type: 'v3-swap',
-      dexName: poolState.dexName,
-      dexType: poolState.dexType,
-      poolId: poolState.id,
-      tokenPair: poolState.tokenPair,
-      sqrtPriceX96,
-      liquidity,
-      tick,
-      meta: {
-        blockNumber: log.blockNumber,
-        blockReceiveTimestamp: this.currentBlock.receivedTimestamp,
-        transactionHash: log.transactionHash,
-        transactionIndex: log.transactionIndex,
-        logIndex: log.index,
-        timestamp: Date.now(),
-      },
+      // event identification
+      protocol: 'v3',
+      name: 'swap',
+      sourceAddress,
+      poolId: dexPoolId(this.chainId, sourceAddress),
+
+      // event data
+      sqrtPriceX96: parsed.args.sqrtPriceX96,
+      liquidity: parsed.args.liquidity,
+      tick: parsed.args.tick,
+      amount0: parsed.args.amount0,
+      amount1: parsed.args.amount1,
+      meta,
     };
   }
 
-  private parseV3Mint(log: ethers.Log, poolState: PoolState): PoolEvent {
-    const iface = this.EVENT_INTERFACES.V3_MINT;
-    const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+  private parseV3Mint(log: ethers.Log, meta: EventMetadata): V3MintEvent {
+    const sourceAddress = log.address.toLowerCase();
+    const parsed = this.EVENT_INTERFACES.V3_MINT.parseLog({ topics: log.topics, data: log.data });
     if (!parsed) throw new Error('Failed to parse V3 Mint');
-    this.logger.info('V3 Mint event parsing:', parsed.args);
-    // const updatedPool = await this.getPoolState(pool.poolId);
 
-    // For Mint/Burn, we need to fetch current pool state to get updated sqrtPriceX96
     return {
-      type: 'v3-mint',
-      dexName: poolState.dexName,
-      dexType: poolState.dexType,
-      poolId: poolState.id,
-      tokenPair: poolState.tokenPair,
-      meta: {
-        blockNumber: log.blockNumber,
-        blockReceiveTimestamp: this.currentBlock.receivedTimestamp,
-        transactionHash: log.transactionHash,
-        transactionIndex: log.transactionIndex,
-        logIndex: log.index,
-        timestamp: Date.now(),
-      },
+      // event identification
+      protocol: 'v3',
+      name: 'mint',
+      sourceAddress,
+      poolId: dexPoolId(this.chainId, sourceAddress),
+
+      // event data
+      tickLower: parsed.args.tickLower,
+      tickUpper: parsed.args.tickUpper,
+      amount: parsed.args.amount, // liquidity added
+      amount0: parsed.args.amount0,
+      amount1: parsed.args.amount1,
+      meta,
     };
   }
 
-  private parseV3Burn(log: ethers.Log, poolState: PoolState): PoolEvent {
-    const iface = this.EVENT_INTERFACES.V3_BURN;
-    const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+  private parseV3Burn(log: ethers.Log, meta: EventMetadata): V3BurnEvent {
+    const sourceAddress = log.address.toLowerCase();
+    const parsed = this.EVENT_INTERFACES.V3_BURN.parseLog({ topics: log.topics, data: log.data });
     if (!parsed) throw new Error('Failed to parse V3 Burn');
-    this.logger.info('V3 Burn event parsing:', parsed.args);
-    // For Mint/Burn, we need to fetch current pool state to get updated sqrtPriceX96
-    // const updatedPool = await this.getPoolState(poolState.poolId);
 
     return {
-      type: 'v3-burn',
-      dexName: poolState.dexName,
-      dexType: poolState.dexType,
-      poolId: poolState.id,
-      tokenPair: poolState.tokenPair,
-      meta: {
-        blockNumber: log.blockNumber,
-        blockReceiveTimestamp: this.currentBlock.receivedTimestamp,
-        transactionHash: log.transactionHash,
-        transactionIndex: log.transactionIndex,
-        logIndex: log.index,
-        timestamp: Date.now(),
-      },
+      // event identification
+      protocol: 'v3',
+      name: 'burn',
+      sourceAddress,
+      poolId: dexPoolId(this.chainId, sourceAddress),
+
+      // event data
+      tickLower: parsed.args.tickLower,
+      tickUpper: parsed.args.tickUpper,
+      amount: parsed.args.amount, // liquidity removed
+      amount0: parsed.args.amount0,
+      amount1: parsed.args.amount1,
+      meta,
     };
   }
 
-  private parseV4Swap(log: ethers.Log, poolState: PoolState): PoolEvent {
-    const iface = this.EVENT_INTERFACES.V4_SWAP;
-    const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+  private parseV4Swap(log: ethers.Log, meta: EventMetadata): V4SwapEvent {
+    const sourceAddress = log.address.toLowerCase();
+    const parsed = this.EVENT_INTERFACES.V4_SWAP.parseLog({ topics: log.topics, data: log.data });
     if (!parsed) throw new Error('Failed to parse V4 Swap');
 
-    const { poolId, amount0, amount1, sqrtPriceX96, liquidity, tick, fee } = parsed.args;
-
     return {
-      type: 'v4-swap',
-      dexName: poolState.dexName,
-      dexType: 'uniswap-v4',
-      poolId: poolState.id,
-      tokenPair: poolState.tokenPair,
-      sqrtPriceX96,
-      liquidity,
-      tick,
-      // fee, // V4 has dynamic fees (TODO!!!!)
+      // event identification
+      protocol: 'v4',
+      name: 'swap',
+      sourceAddress,
+      poolId: dexPoolId(this.chainId, parsed.args.poolId.toLowerCase()), // for v4 poolId is emitted in the event
+
+      // event data
+      sqrtPriceX96: parsed.args.sqrtPriceX96,
+      liquidity: parsed.args.liquidity,
+      tick: parsed.args.tick,
       meta: {
         blockNumber: log.blockNumber,
-        blockReceiveTimestamp: this.currentBlock.receivedTimestamp,
+        blockReceivedTimestamp: this.currentBlock.receivedTimestamp,
         transactionHash: log.transactionHash,
         transactionIndex: log.transactionIndex,
         logIndex: log.index,
-        timestamp: Date.now(),
       },
     };
   }
 
-  private parseV4ModifyLiquidity(log: ethers.Log, poolState: PoolState): PoolEvent {
-    const iface = this.EVENT_INTERFACES.V4_MODIFY_LIQUIDITY;
-    const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+  private parseV4ModifyLiquidity(log: ethers.Log, meta: EventMetadata): V4ModifyLiquidityEvent {
+    const sourceAddress = log.address.toLowerCase();
+    const parsed = this.EVENT_INTERFACES.V4_MODIFY_LIQUIDITY.parseLog({ topics: log.topics, data: log.data });
     if (!parsed) throw new Error('Failed to parse V4 ModifyLiquidity');
 
     return {
-      type: 'v4-modify-liquidity',
-      dexName: poolState.dexName,
-      dexType: 'uniswap-v4',
-      poolId: poolState.id,
-      tokenPair: poolState.tokenPair,
-      meta: {
-        blockNumber: log.blockNumber,
-        blockReceiveTimestamp: this.currentBlock.receivedTimestamp,
-        transactionHash: log.transactionHash,
-        transactionIndex: log.transactionIndex,
-        logIndex: log.index,
-        timestamp: Date.now(),
-      },
+      // event identification
+      protocol: 'v4',
+      name: 'modify-liquidity',
+      sourceAddress,
+      poolId: dexPoolId(this.chainId, parsed.args.poolId.toLowerCase()), // for v4 poolId is emitted in the event
+
+      // event data
+      tickLower: parsed.args.tickLower,
+      tickUpper: parsed.args.tickUpper,
+      liquidityDelta: parsed.args.liquidityDelta, // positive = add, negative = remove
+      meta,
     };
   }
 

@@ -2,11 +2,14 @@
  * 🦄 UNISWAP V3 ADAPTER: High-performance V3 DEX adapter with concentrated liquidity
  */
 import { ethers } from 'ethers';
-import { BaseDexAdapter, DexUtils } from '../base';
-import type { DexType, PoolState, TradeQuote, PoolEvent, Token } from '../interfaces';
+import { BaseDexAdapter } from '../base';
+import type { DexType, TradeQuote, PoolEvent } from '../interfaces';
 import { TokenManager } from '../token-manager';
 import { Blockchain } from '../blockchain';
 import { sqrtPriceX96ToPrice, calculateVirtualReserves, simulateSwap } from './lib/sqrtPriceMath';
+import { dexPoolId, type DexV3PoolState } from '@/shared/data-model/layer1';
+import { getCanonicalPairId, type TokenOnChain } from '@/shared/data-model/token';
+import { calculatePriceImpact } from './lib/math';
 
 export interface UniswapV3Config {
   name: string; // Exchange name
@@ -81,10 +84,10 @@ export class UniswapV3Adapter extends BaseDexAdapter {
   /**
    * 🔍 FIND POOLS: Find all V3 pools for a token pair across all fee tiers
    */
-  async discoverPools(token0: string, token1: string): Promise<PoolState[]> {
+  async discoverPools(token0: string, token1: string): Promise<DexV3PoolState[]> {
     const symbol0 = this.tokenManager.getToken(token0)?.symbol || token0;
     const symbol1 = this.tokenManager.getToken(token1)?.symbol || token1;
-    const pools: PoolState[] = [];
+    const pools: DexV3PoolState[] = [];
 
     try {
       // Check all fee tiers
@@ -115,8 +118,8 @@ export class UniswapV3Adapter extends BaseDexAdapter {
   /**
    * 🏗 INIT POOL: Initialize V3 pool state with static data (called once when pool is first discovered)
    */
-  async initPool(id: string): Promise<PoolState> {
-    const poolAddress = id.toLowerCase();
+  async initPool(address: string): Promise<DexV3PoolState> {
+    const poolAddress = address.toLowerCase();
 
     // init pool contract
     const contract = this.blockchain.initContract(poolAddress, this.POOL_ABI);
@@ -140,13 +143,14 @@ export class UniswapV3Adapter extends BaseDexAdapter {
     const token1 = this.tokenManager.getToken(token1Address);
     if (!token0 || !token1) throw new Error(`Tokens not found for addresses: ${token0Address}, ${token1Address}`);
 
-    const poolState: PoolState = {
-      id: poolAddress,
-      tokenPair: { token0, token1, pairKey: `${token0.symbol}-${token1.symbol}` },
-      dexName: this.name,
-      dexType: this.type,
-      routerAddress: this.routerAddress,
-      fee: fee, // Fee in basis points (500, 3000, 10000)
+    const poolState: DexV3PoolState = {
+      id: dexPoolId(this.blockchain.chainId, poolAddress),
+      address: poolAddress,
+      tokenPair: { token0, token1, key: `${token0.symbol}-${token1.symbol}` },
+      venue: { name: this.name, type: 'dex', chainId: this.blockchain.chainId },
+      protocol: 'v3',
+      pairId: getCanonicalPairId(token0, token1),
+      feeBps: fee, // Fee in basis points (500, 3000, 10000)
       tickSpacing: tickSpacing, // Tick spacing for the pool
 
       // init dynamic fields to zero (updated later)
@@ -166,15 +170,14 @@ export class UniswapV3Adapter extends BaseDexAdapter {
   /**
    * Update pool state with dynamic data
    */
-  async updatePool(pool: PoolState): Promise<PoolState> {
+  async updatePool(pool: DexV3PoolState): Promise<DexV3PoolState> {
     const { token0, token1 } = pool.tokenPair;
-    const poolAddress = pool.id;
 
-    const contract = this.blockchain.getContract(poolAddress);
-    if (!contract) throw new Error(`Pool contract not found for address: ${poolAddress}`);
+    const contract = this.blockchain.getContract(pool.address);
+    if (!contract) throw new Error(`Pool contract not found for address: ${pool.address}`);
 
     const [slot0, liquidity] = await Promise.all([contract.slot0(), contract.liquidity()]);
-    if (!slot0 || !liquidity) throw new Error(`Failed to fetch slot0 or liquidity for pool ${poolAddress}`);
+    if (!slot0 || !liquidity) throw new Error(`Failed to fetch slot0 or liquidity for pool ${pool.address}`);
 
     const { reserve0, reserve1 } = calculateVirtualReserves(slot0.sqrtPriceX96, liquidity);
     pool.reserve0 = reserve0;
@@ -195,7 +198,7 @@ export class UniswapV3Adapter extends BaseDexAdapter {
   /**
    * 💰 GET SPOT PRICE: Get current spot price from sqrtPriceX96
    */
-  static calculateSpotPrice(sqrtPriceX96: bigint, token0: Token, token1: Token, zeroForOne: boolean): number {
+  static calculateSpotPrice(sqrtPriceX96: bigint, token0: TokenOnChain, token1: TokenOnChain, zeroForOne: boolean): number {
     const price = sqrtPriceX96ToPrice(sqrtPriceX96, token0.decimals, token1.decimals);
     if (zeroForOne)
       return price; // Price of token0 in token1
@@ -205,7 +208,7 @@ export class UniswapV3Adapter extends BaseDexAdapter {
   /**
    * 💰 GET TRADE QUOTE: Calculate V3 trade quote using quoter contract
    */
-  async getTradeQuote(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote> {
+  async getTradeQuote(poolState: DexV3PoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote> {
     if (!this.quoterContract) throw new Error('Quoter contract not supported in this adapter instance');
     if (amountIn <= 0n) throw new Error(`Invalid trade amount: ${amountIn} (must be > 0)`);
     if (poolState.liquidity! <= 0n) throw new Error(`Insufficient liquidity in pool: ${poolState.id}`);
@@ -220,7 +223,7 @@ export class UniswapV3Adapter extends BaseDexAdapter {
       const amountOut = await this.quoterContract.quoteExactInputSingle.staticCall(
         tokenIn,
         tokenOut,
-        poolState.fee,
+        poolState.feeBps,
         amountIn,
         0, // No price limit
       );
@@ -239,7 +242,7 @@ export class UniswapV3Adapter extends BaseDexAdapter {
       const normalizedAmountOut = parseFloat(ethers.formatUnits(amountOut, zeroForOne ? token1.decimals : token0.decimals));
 
       const executionPrice = normalizedAmountOut / normalizedAmountIn;
-      const priceImpact = DexUtils.calculatePriceImpact(spotPrice, executionPrice);
+      const priceImpact = calculatePriceImpact(spotPrice, executionPrice);
 
       // In V3, slippage is generally close to price impact due to concentrated liquidity
       const slippage = priceImpact;
@@ -262,15 +265,15 @@ export class UniswapV3Adapter extends BaseDexAdapter {
    * 🧮 SIMULATE V3 SWAP (Using Uniswap V3 SqrtPriceMath)
    * Based on: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
    */
-  simulateSwap(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+  simulateSwap(poolState: DexV3PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
     return simulateSwap(poolState, amountIn, zeroForOne);
   }
 
   /**
    * 💰 GET FEE PERCENT: Get V3 pool fee percentage
    */
-  getFeePercent(poolState: PoolState): number {
-    return Number(poolState.fee) / 10000; // Convert from basis points to percentage (3000 bps = 0.3%)
+  getFeePercent(poolState: DexV3PoolState): number {
+    return Number(poolState.feeBps) / 10000; // Convert from basis points to percentage (3000 bps = 0.3%)
   }
 
   // ================================================================================================
@@ -280,12 +283,10 @@ export class UniswapV3Adapter extends BaseDexAdapter {
   /**
    * 🔄 UPDATE POOL STATE FROM EVENT: Fast V3 state updates
    */
-  updatePoolFromEvent(pool: PoolState, event: PoolEvent): PoolState {
-    if (!event.sqrtPriceX96 || !event.liquidity) throw new Error(`❌ Invalid PoolEvent for: ${event.dexName} - ${event.poolId}`);
-    pool.latestEventMeta = { ...event.meta };
+  updatePoolFromEvent(pool: DexV3PoolState, event: PoolEvent): DexV3PoolState {
+    if (event.protocol !== 'v3' || event.name !== 'swap') return pool; // Only handle swap events for state updates (sync events not emitted in V3)
 
-    // virtual reserves are directly from event
-    // V3 specific data from Swap event
+    // calculate virtual reserves based on new sqrtPriceX96 and liquidity
     const { reserve0, reserve1 } = calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
 
     // Update V3 specific state if available
@@ -294,6 +295,7 @@ export class UniswapV3Adapter extends BaseDexAdapter {
     pool.sqrtPriceX96 = event.sqrtPriceX96!;
     pool.tick = event.tick!;
     pool.liquidity = event.liquidity!;
+    pool.latestEventMeta = event.meta;
 
     // Update derived fields
     const { token0, token1 } = pool.tokenPair;
@@ -318,7 +320,7 @@ export class UniswapV3Adapter extends BaseDexAdapter {
    * Fetch initialized ticks around the current tick for multi-tick simulation.
    * Called during pool update, not during simulation.
    */
-  async fetchInitializedTicks(pool: PoolState, tickRange: number = 200): Promise<void> {
+  async fetchInitializedTicks(pool: DexV3PoolState, tickRange: number = 200): Promise<void> {
     const contract = this.blockchain.getContract(pool.id);
     if (!contract) return;
 
@@ -348,17 +350,15 @@ export class UniswapV3Adapter extends BaseDexAdapter {
     }
 
     const results = await Promise.all(tickPromises);
-    pool.initializedTicks = results
-      .filter((r): r is { tick: number; liquidityNet: bigint } => r !== null)
-      .sort((a, b) => a.tick - b.tick);
+    pool.ticks = results.filter((r): r is { tick: number; liquidityNet: bigint } => r !== null).sort((a, b) => a.tick - b.tick);
 
-    this.logger.debug(`Fetched ${pool.initializedTicks.length} initialized ticks for pool ${pool.id}`);
+    this.logger.debug(`Fetched ${pool.ticks.length} initialized ticks for pool ${pool.id}`);
   }
 
   /**
    * Fetch initialized ticks around the current tick using Multicall3 (single RPC call).
    */
-  async fetchInitializedTicksMulticall3(pool: PoolState, tickRange: number = 10): Promise<void> {
+  async fetchInitializedTicksMulticall3(pool: DexV3PoolState, tickRange: number = 10): Promise<void> {
     const contract = this.blockchain.getContract(pool.id);
     if (!contract) return;
 
@@ -423,9 +423,9 @@ export class UniswapV3Adapter extends BaseDexAdapter {
       }
     }
 
-    pool.initializedTicks = initializedTicks.sort((a, b) => a.tick - b.tick);
+    pool.ticks = initializedTicks.sort((a, b) => a.tick - b.tick);
     this.logger.debug(
-      `Fetched ${pool.initializedTicks.length} initialized ticks for pool ${pool.id} (${tickValues.length} ticks in 1 RPC call)`,
+      `Fetched ${pool.ticks.length} initialized ticks for pool ${pool.id} (${tickValues.length} ticks in 1 RPC call)`,
     );
   }
 }

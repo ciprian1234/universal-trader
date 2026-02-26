@@ -3,6 +3,7 @@ import type { BunMessageEvent } from 'bun';
 import { createLogger } from '../../utils/logger.ts';
 import type { EventMessage, Message, RequestMessage, ResponseMessage } from './types.ts';
 import { broadcastEventToWebsocketClients } from '@/api-server/index..ts';
+import type { EventBus } from '../event-bus.ts';
 
 const logger = createLogger('[main.WorkerManager]');
 
@@ -14,7 +15,12 @@ interface ManagedWorker {
   scriptPath: string;
 }
 
+type WorkerManagerInput = {
+  eventBus: EventBus;
+};
+
 export class WorkerManager {
+  private eventBus: EventBus;
   private workers: Map<string, ManagedWorker> = new Map();
   private pendingRequests: Map<
     string,
@@ -26,7 +32,9 @@ export class WorkerManager {
   > = new Map();
   DEFAULT_TIMEOUT_MS = 10_000;
 
-  constructor() {}
+  constructor(input: WorkerManagerInput) {
+    this.eventBus = input.eventBus;
+  }
 
   /**
    * Spawn a new worker from a script file
@@ -117,11 +125,8 @@ export class WorkerManager {
   }
 
   private handleEvent(message: EventMessage): void {
-    // hook here GlobalDataStore and broadcast to WebSocket clients
-    // broadcastEventToWebsocketClients(message.name, message.data);
-    // for (const handler of this.eventHandlers) {
-    //   handler(message);
-    // }
+    if (message.name === 'pool-update') this.eventBus.emitPoolUpdate(message.data as any);
+    // else console.error(`Unhandled event from worker ${message.}: ${message.name}`);
   }
 
   /**

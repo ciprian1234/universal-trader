@@ -2,6 +2,88 @@
 // NETWORK GAS FEE INTERFACES
 // ================================================================================================
 
+import type { DexPoolState, EventMetadata } from '@/shared/data-model/layer1';
+import type { TokenOnChain } from '@/shared/data-model/token';
+
+// ════════════════════════════════════════════════════════════
+// POOL EVENTS — worker-internal, never crosses to main thread
+// ════════════════════════════════════════════════════════════
+
+interface PoolEventBase {
+  poolId: string;
+  protocol: 'v2' | 'v3' | 'v4';
+  name: 'sync' | 'swap' | 'mint' | 'burn' | 'modify-liquidity';
+  sourceAddress: string; // event address (lowercase)
+  meta: EventMetadata;
+}
+
+// ── V2 ──────────────────────────────────────────────────────
+
+export interface V2SyncEvent extends PoolEventBase {
+  protocol: 'v2';
+  name: 'sync';
+  reserve0: bigint;
+  reserve1: bigint;
+}
+
+// ── V3 ──────────────────────────────────────────────────────
+
+export interface V3SwapEvent extends PoolEventBase {
+  protocol: 'v3';
+  name: 'swap';
+  sqrtPriceX96: bigint;
+  tick: number;
+  liquidity: bigint;
+  amount0: bigint;
+  amount1: bigint;
+}
+
+export interface V3MintEvent extends PoolEventBase {
+  protocol: 'v3';
+  name: 'mint';
+  tickLower: number;
+  tickUpper: number;
+  amount: bigint; // liquidity added
+  amount0: bigint;
+  amount1: bigint;
+}
+
+export interface V3BurnEvent extends PoolEventBase {
+  protocol: 'v3';
+  name: 'burn';
+  tickLower: number;
+  tickUpper: number;
+  amount: bigint; // liquidity removed
+  amount0: bigint;
+  amount1: bigint;
+}
+
+// ── V4 ──────────────────────────────────────────────────────
+
+export interface V4SwapEvent extends PoolEventBase {
+  protocol: 'v4';
+  name: 'swap';
+  sqrtPriceX96: bigint;
+  tick: number;
+  liquidity: bigint;
+}
+
+export interface V4ModifyLiquidityEvent extends PoolEventBase {
+  protocol: 'v4';
+  name: 'modify-liquidity';
+  tickLower: number;
+  tickUpper: number;
+  liquidityDelta: bigint; // positive = add, negative = remove
+}
+
+// ── Union ───────────────────────────────────────────────────
+
+export type PoolEvent = V2SyncEvent | V3SwapEvent | V3MintEvent | V3BurnEvent | V4SwapEvent | V4ModifyLiquidityEvent;
+
+// ================================================================================================
+// Gas Tx Settings
+// ================================================================================================
+
 export interface GasTxSettings {
   gasLimit: bigint;
   maxFeePerGas: bigint;
@@ -12,78 +94,11 @@ export interface GasTxSettings {
 // TOKEN INTERFACES
 // ================================================================================================
 
-export interface Token {
-  address: string;
-  symbol: string;
-  name: string;
-  decimals: number;
-}
-
-export interface TokenPair {
-  token0: Token;
-  token1: Token;
-  pairKey: string; // "WETH-USDC"
-}
-
 export interface TokenPrice {
-  token: Token;
+  token: TokenOnChain;
   priceUSD: number;
   lastUpdated: number;
   source: string; // DEX name or oracle
-}
-
-// ================================================================================================
-// DEX POOL INTERFACES
-// ================================================================================================
-export interface PoolState {
-  id: string; // unique pool identifier (address for Uniswap V2/V3, poolKeyHash for Uniswap V4)
-  tokenPair: TokenPair;
-
-  // DEX info
-  dexName: string;
-  dexType: DexType;
-  fee: number;
-
-  // V2 specific
-  reserve0?: bigint;
-  reserve1?: bigint;
-
-  // V3/V4 specific
-  sqrtPriceX96?: bigint;
-  tick?: number;
-  liquidity?: bigint;
-  feeGrowthGlobal0X128?: bigint; // not used currently
-  feeGrowthGlobal1X128?: bigint; // not used currently
-
-  // derived fields
-  spotPrice0to1: number; // spot price of token0 in terms of token1
-  spotPrice1to0: number; // spot price of token1 in terms of token0
-
-  // USD valuations (note those values are only for reference - in arbitrage we use pool spot prices directly)
-  // token0PriceInUSD?: number; // requires external price feed
-  // token1PriceInUSD?: number; // requires external price feed
-  // token0LiquidityInUSD?: number; // requires external price feed
-  // token1LiquidityInUSD?: number; // requires external price feed
-  totalLiquidityInUSD: number; // we filter out pools below a certain USD liquidity threshold
-
-  // other pool metadata
-  routerAddress: string;
-  meta?: {
-    tickSpacing?: number;
-    hooks?: string;
-  };
-
-  // Latest event metadata
-  latestEventMeta?: EventMetadata;
-
-  // V3 tick data for multi-tick simulation
-  initializedTicks?: TickData[]; // sorted array of initialized ticks with their liquidityNet
-  tickSpacing?: number;
-}
-
-export interface TickData {
-  tick: number;
-  liquidityNet: bigint; // net liquidity change when crossing this tick
 }
 
 export type DexType = 'uniswap-v2' | 'uniswap-v3' | 'uniswap-v4' | 'curvestable' | 'balancerweighted';
@@ -93,7 +108,7 @@ export type DexType = 'uniswap-v2' | 'uniswap-v3' | 'uniswap-v4' | 'curvestable'
 // ================================================================================================
 
 export interface TradeQuote {
-  poolState: PoolState;
+  poolState: DexPoolState;
   amountIn: bigint;
   amountOut: bigint;
   executionPrice: number;
@@ -144,9 +159,9 @@ export interface GasAnalysis {
 // }
 
 export interface SwapStep {
-  pool: PoolState;
-  tokenIn: Token;
-  tokenOut: Token;
+  pool: DexPoolState;
+  tokenIn: TokenOnChain;
+  tokenOut: TokenOnChain;
   amountIn: bigint;
   amountOut: bigint;
   spotPrice: number;
@@ -164,7 +179,7 @@ export interface ArbitrageOpportunity {
 
   // Path structure
   steps: SwapStep[];
-  borrowToken: Token; // First token in = last token out
+  borrowToken: TokenOnChain; // First token in = last token out
   borrowAmount: bigint;
 
   // Profitability
@@ -199,50 +214,16 @@ export interface DexAdapter {
   readonly POOL_ABI: string[];
 
   // Pool management
-  discoverPools(token0: string, token1: string): Promise<PoolState[]>;
-  initPool(id: string): Promise<PoolState>;
-  updatePool(pool: PoolState): Promise<PoolState>;
-  updatePoolFromEvent(pool: PoolState, event: PoolEvent): PoolState;
+  discoverPools(token0: string, token1: string): Promise<DexPoolState[]>;
+  initPool(id: string): Promise<DexPoolState>;
+  updatePool(pool: DexPoolState): Promise<DexPoolState>;
+  updatePoolFromEvent(pool: DexPoolState, event: PoolEvent): DexPoolState;
 
   // Price
-  simulateSwap(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): bigint;
-  getTradeQuote(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote>;
-  getFeePercent(poolState: PoolState): number;
+  simulateSwap(poolState: DexPoolState, amountIn: bigint, zeroForOne: boolean): bigint;
+  getTradeQuote(poolState: DexPoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote>;
+  getFeePercent(poolState: DexPoolState): number;
 }
-
-// ================================================================================================
-// EVENT INTERFACES
-// ================================================================================================
-export interface EventMetadata {
-  blockNumber: number;
-  transactionHash: string;
-  transactionIndex: number;
-  logIndex: number;
-  timestamp: number;
-  blockReceiveTimestamp: number;
-}
-
-export interface PoolEvent {
-  type: 'v2-sync' | 'v3-swap' | 'v3-mint' | 'v3-burn' | 'v4-swap' | 'v4-modify-liquidity';
-  poolId: string;
-  dexName: string;
-  dexType: DexType;
-  tokenPair: TokenPair;
-
-  // V2 specific
-  reserve0?: bigint;
-  reserve1?: bigint;
-
-  // V3/V4 specific (TODO: validate)
-  sqrtPriceX96?: bigint;
-  tick?: number;
-  liquidity?: bigint;
-
-  // event metadata
-  meta: EventMetadata;
-}
-
-export type EventCallback = (event: PoolEvent) => Promise<void>;
 
 // ================================================================================================
 // CONFIGURATION INTERFACES
@@ -275,8 +256,8 @@ export interface DexConfig {
 
 export interface TradeOptimizer {
   findOptimalTradeAmount(
-    entryPool: PoolState,
-    exitPool: PoolState,
+    entryPool: DexPoolState,
+    exitPool: DexPoolState,
     entryAdapter: DexAdapter,
     exitAdapter: DexAdapter,
     zeroForOne: boolean,

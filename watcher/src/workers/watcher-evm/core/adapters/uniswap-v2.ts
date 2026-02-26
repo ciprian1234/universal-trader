@@ -2,10 +2,13 @@
  * 🦄 UNISWAP V2 ADAPTER: High-performance V2 DEX adapter with optimized calculations
  */
 import { ethers } from 'ethers';
-import { BaseDexAdapter, DexUtils } from '../base';
-import type { DexType, PoolState, TradeQuote, PoolEvent, Token } from '../interfaces';
+import { BaseDexAdapter } from '../base';
+import type { DexType, TradeQuote, PoolEvent } from '../interfaces';
 import { TokenManager } from '../token-manager';
 import { Blockchain } from '../blockchain';
+import { dexPoolId, type DexV2PoolState } from '@/shared/data-model/layer1';
+import { getCanonicalPairId, type TokenOnChain } from '@/shared/data-model/token';
+import { calculatePriceImpact } from './lib/math';
 
 export interface UniswapV2Config {
   name: string; // Exchange name
@@ -69,7 +72,7 @@ export class UniswapV2Adapter extends BaseDexAdapter {
   /**
    * 🔍 FIND POOLS: Find all V2 pools for a token pair
    */
-  async discoverPools(token0: string, token1: string): Promise<PoolState[]> {
+  async discoverPools(token0: string, token1: string): Promise<DexV2PoolState[]> {
     const symbol0 = this.tokenManager.getToken(token0)?.symbol || token0;
     const symbol1 = this.tokenManager.getToken(token1)?.symbol || token1;
     try {
@@ -87,8 +90,8 @@ export class UniswapV2Adapter extends BaseDexAdapter {
   /**
    * 🏗 INIT POOL: Initialize V2 pool state with static data (called once when pool is first discovered)
    */
-  async initPool(id: string): Promise<PoolState> {
-    const poolAddress = id.toLowerCase();
+  async initPool(address: string): Promise<DexV2PoolState> {
+    const poolAddress = address.toLowerCase();
 
     // init pool contract
     const contract = this.blockchain.initContract(poolAddress, this.POOL_ABI);
@@ -103,12 +106,13 @@ export class UniswapV2Adapter extends BaseDexAdapter {
     if (!token0 || !token1) throw new Error(`Tokens not found for addresses: ${token0Address}, ${token1Address}`);
 
     return {
-      id: poolAddress,
-      tokenPair: { token0, token1, pairKey: `${token0.symbol}-${token1.symbol}` },
-      dexName: this.name,
-      dexType: this.type,
-      routerAddress: this.routerAddress,
-      fee: this.feeBasisPoints, // Convert to basis points (0.3% = 30 bps (denominated by 10,000))
+      id: dexPoolId(this.blockchain.chainId, poolAddress),
+      address: poolAddress,
+      venue: { name: this.name, type: 'dex', chainId: this.blockchain.chainId },
+      protocol: 'v2',
+      pairId: getCanonicalPairId(token0, token1),
+      tokenPair: { token0, token1, key: `${token0.symbol}-${token1.symbol}` },
+      feeBps: this.feeBasisPoints, // Convert to basis points (0.3% = 30 bps (denominated by 10,000))
 
       // init dynamic fields to zero (updated later)
       reserve0: 0n,
@@ -122,15 +126,13 @@ export class UniswapV2Adapter extends BaseDexAdapter {
   /**
    * 📊 GET POOL STATE: Fetch current pool state
    */
-  async updatePool(pool: PoolState): Promise<PoolState> {
-    const poolAddress = pool.id;
-
-    const contract = this.blockchain.getContract(poolAddress);
-    if (!contract) throw new Error(`Pool contract not found: ${poolAddress}`);
+  async updatePool(pool: DexV2PoolState): Promise<DexV2PoolState> {
+    const contract = this.blockchain.getContract(pool.address);
+    if (!contract) throw new Error(`Pool contract not found: ${pool.address}`);
 
     // Fetch reserves
     const reserves = await contract.getReserves();
-    if (!reserves) throw new Error(`Failed to fetch reserves for pool: ${poolAddress}`);
+    if (!reserves) throw new Error(`Failed to fetch reserves for pool: ${pool.address}`);
 
     // derived fields
     const { token0, token1 } = pool.tokenPair;
@@ -152,7 +154,13 @@ export class UniswapV2Adapter extends BaseDexAdapter {
    * If zeroForOne is true, returns price of token0 in token1 (token1/token0).
    * If false, returns price of token1 in token0 (token0/token1).
    */
-  static calculateSpotPrice(reserve0: bigint, reserve1: bigint, token0: Token, token1: Token, zeroForOne: boolean): number {
+  static calculateSpotPrice(
+    reserve0: bigint,
+    reserve1: bigint,
+    token0: TokenOnChain,
+    token1: TokenOnChain,
+    zeroForOne: boolean,
+  ): number {
     if (!reserve0 || !reserve1) throw new Error('Invalid reserves');
     if (zeroForOne) {
       const norm0 = parseFloat(ethers.formatUnits(reserve0, token0.decimals));
@@ -168,7 +176,7 @@ export class UniswapV2Adapter extends BaseDexAdapter {
   /**
    * 💰 GET TRADE QUOTE: Calculate V2 trade quote with perfect math
    */
-  async getTradeQuote(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote> {
+  async getTradeQuote(poolState: DexV2PoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote> {
     if (amountIn <= 0n) throw new Error(`Invalid trade amount: ${amountIn} (must be > 0)`);
     const { token0, token1 } = poolState.tokenPair;
 
@@ -180,7 +188,7 @@ export class UniswapV2Adapter extends BaseDexAdapter {
     if (amountIn > reserveIn) throw new Error(`Trade amount exceeds available liquidity in pool: ${poolState.id}`);
 
     // Convert fee to basis points for precision
-    const feeRateBasisPoints = BigInt(this.feeBasisPoints); // 30n
+    const feeRateBasisPoints = BigInt(poolState.feeBps); // 30n
     const keepRateBasisPoints = 10000n - feeRateBasisPoints; // 9970n
 
     // V2 constant product formula with fee
@@ -198,7 +206,7 @@ export class UniswapV2Adapter extends BaseDexAdapter {
     const normalizedAmountIn = parseFloat(ethers.formatUnits(amountIn, zeroForOne ? token0.decimals : token1.decimals));
     const normalizedAmountOut = parseFloat(ethers.formatUnits(amountOut, zeroForOne ? token1.decimals : token0.decimals));
     const executionPrice = normalizedAmountOut / normalizedAmountIn;
-    const priceImpact = DexUtils.calculatePriceImpact(spotPrice, executionPrice);
+    const priceImpact = calculatePriceImpact(spotPrice, executionPrice);
 
     // Calculate slippage (for V2, slippage equals price impact)
     const slippage = priceImpact;
@@ -217,7 +225,7 @@ export class UniswapV2Adapter extends BaseDexAdapter {
   /**
    * 💰 GET TRADE QUOTE: Calculate V2 trade quote with perfect math
    */
-  simulateSwap(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+  simulateSwap(poolState: DexV2PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
     if (amountIn <= 0n) throw new Error(`Invalid trade amount: ${amountIn} (must be > 0)`);
 
     // Set reserves based on direction
@@ -231,7 +239,7 @@ export class UniswapV2Adapter extends BaseDexAdapter {
       );
 
     // Convert fee to basis points for precision
-    const feeRateBasisPoints = BigInt(this.feeBasisPoints); // 30n
+    const feeRateBasisPoints = BigInt(poolState.feeBps); // 30n
     const keepRateBasisPoints = 10000n - feeRateBasisPoints; // 9970n
 
     // V2 constant product formula with fee
@@ -245,8 +253,8 @@ export class UniswapV2Adapter extends BaseDexAdapter {
   /**
    * 💰 GET FEE PERCENT: Get V2 pool fee percentage
    */
-  getFeePercent(poolState: PoolState): number {
-    return poolState.fee / 100; // Convert from basis points to percentage (30 bps = 0.3%)
+  getFeePercent(poolState: DexV2PoolState): number {
+    return poolState.feeBps / 100; // Convert from basis points to percentage (30 bps = 0.3%)
   }
 
   // ================================================================================================
@@ -257,10 +265,11 @@ export class UniswapV2Adapter extends BaseDexAdapter {
    * 🔄 UPDATE POOL STATE FROM EVENT: Fast V2 state updates
    * Only allow sync events!!!
    */
-  updatePoolFromEvent(pool: PoolState, event: PoolEvent): PoolState {
-    if (!event.reserve0 || !event.reserve1) throw new Error(`❌ Invalid sync event for: ${event.dexName} - ${event.poolId}`);
+  updatePoolFromEvent(pool: DexV2PoolState, event: PoolEvent): DexV2PoolState {
+    if (event.protocol !== 'v2' || event.name !== 'sync') throw new Error(`Invalid event type: ${event.protocol} ${event.name}`);
     pool.reserve0 = event.reserve0;
     pool.reserve1 = event.reserve1;
+    pool.latestEventMeta = event.meta;
 
     // Update derived fields
     const { token0, token1 } = pool.tokenPair;
@@ -278,7 +287,6 @@ export class UniswapV2Adapter extends BaseDexAdapter {
       pool.totalLiquidityInUSD = 0;
     }
 
-    pool.latestEventMeta = { ...event.meta };
     return pool;
   }
 }

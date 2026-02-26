@@ -21,7 +21,7 @@ import { log } from './utils';
 async function main(): Promise<void> {
   const store = new GlobalDataStore();
   const eventBus = new EventBus();
-  const workerManager = new WorkerManager();
+  const workerManager = new WorkerManager({ eventBus });
   // const crossChainDetector = new CrossChainDetector(store, {
   //   minSpreadBps: 20,
   //   estimatedCostBps: 10,

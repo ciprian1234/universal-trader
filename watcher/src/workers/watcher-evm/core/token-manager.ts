@@ -4,8 +4,8 @@
 import { ethers } from 'ethers';
 import { Blockchain } from './blockchain';
 import type { Logger } from '@/utils';
-import type { Token, TokenPair } from './interfaces';
 import type { TokenConfig } from '@/config/models';
+import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 
 export interface TokenManagerConfig {
   logger: Logger;
@@ -20,7 +20,7 @@ export interface TokenManagerConfig {
 export class TokenManager {
   private readonly logger: Logger;
   private blockchain: Blockchain;
-  private tokens: Map<string, Token> = new Map();
+  private tokens: Map<string, TokenOnChain> = new Map();
   private inputTokens: Array<TokenConfig>; // Configured input tokens to register at startup
 
   // Token metadata cache
@@ -45,7 +45,7 @@ export class TokenManager {
   /**
    * 📝 REGISTER TOKEN: Add token to manager with metadata
    */
-  async registerToken(address: string): Promise<Token> {
+  async registerToken(address: string): Promise<TokenOnChain> {
     const normalizedAddress = address.toLowerCase();
 
     // Check if already registered
@@ -58,7 +58,8 @@ export class TokenManager {
     try {
       const [name, symbol, decimals] = await Promise.all([contract.name(), contract.symbol(), contract.decimals()]);
 
-      const token: Token = {
+      const token: TokenOnChain = {
+        chainId: this.blockchain.chainId,
         address: normalizedAddress,
         symbol,
         name,
@@ -77,10 +78,10 @@ export class TokenManager {
   /**
    * 📦 BATCH REGISTER: Register multiple tokens efficiently
    */
-  async batchRegisterTokens(): Promise<Token[]> {
+  async batchRegisterTokens(): Promise<TokenOnChain[]> {
     const results = await Promise.allSettled(this.inputTokens.map(({ address }) => this.registerToken(address)));
 
-    const registeredTokens: Token[] = [];
+    const registeredTokens: TokenOnChain[] = [];
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       if (result.status === 'fulfilled') registeredTokens.push(result.value);
@@ -94,21 +95,21 @@ export class TokenManager {
   /**
    * 🔍 GET TOKEN: Retrieve token information
    */
-  getToken(address: string): Token | undefined {
+  getToken(address: string): TokenOnChain | undefined {
     return this.tokens.get(address.toLowerCase());
   }
 
   /**
    * Get all registered tokens as array
    */
-  getAllTokensArray(): Token[] {
+  getAllTokensArray(): TokenOnChain[] {
     return Array.from(this.tokens.values());
   }
 
   /*
    * Get all tokens
    */
-  getAllTokens() {
+  getAllTokens(): Map<string, TokenOnChain> {
     return this.tokens;
   }
 
@@ -137,7 +138,7 @@ export class TokenManager {
   /**
    * 🔍 FIND TOKEN BY SYMBOL: Find token by symbol (case-insensitive)
    */
-  findTokenBySymbol(symbol: string): Token | undefined {
+  findTokenBySymbol(symbol: string): TokenOnChain | undefined {
     for (const token of this.tokens.values()) {
       if (token.symbol === symbol) return token;
     }
@@ -156,9 +157,9 @@ export class TokenManager {
   // UTILITY METHODS
   // ================================================================================================
 
-  createTradingPairs(): TokenPair[] {
+  createTradingPairs(): TokenPairOnChain[] {
     const allTokens = this.getAllTokensArray();
-    const pairs: TokenPair[] = [];
+    const pairs: TokenPairOnChain[] = [];
 
     // Create pairs for major tokens
     const majorTokens = allTokens.filter((token) => ['WETH', 'WBTC', 'USDC'].includes(token.symbol));
@@ -172,7 +173,7 @@ export class TokenManager {
           pairs.push({
             token0: tokenA,
             token1: tokenB,
-            pairKey: `${tokenA.symbol}-${tokenB.symbol}`,
+            key: `${tokenA.symbol}-${tokenB.symbol}`,
           });
         }
       }
