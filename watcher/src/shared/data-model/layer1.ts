@@ -1,10 +1,10 @@
-import type { PairId, TokenOnChain, TokenBase, TokenPairOnChain } from './token';
+import type { PairId, TokenBase, TokenPairOnChain } from './token';
 
 // ════════════════════════════════════════════════════════════
 // VENUE IDENTIFICATION
 // ════════════════════════════════════════════════════════════
 
-export const DEX_VENUE_NAMES = ['uniswap-v2', 'uniswap-v3', 'uniswap-v4', 'sushiswap-v2'] as const;
+export const DEX_VENUE_NAMES = ['uniswap-v2', 'uniswap-v3', 'uniswap-v4', 'pancakeswap-v2', 'sushiswap-v2'] as const;
 export const CEX_VENUE_NAMES = ['binance', 'coinbase', 'kraken'] as const;
 export type DexVenueName = (typeof DEX_VENUE_NAMES)[number];
 export type CexVenueName = (typeof CEX_VENUE_NAMES)[number];
@@ -12,18 +12,18 @@ export type CexVenueName = (typeof CEX_VENUE_NAMES)[number];
 export type VenueType = 'dex' | 'cex';
 export type DexProtocol = 'v2' | 'v3' | 'v4';
 
-export interface DexVenueId {
+export interface DexVenue {
   type: 'dex';
   name: DexVenueName; // supported DEXes
   chainId: number;
 }
 
-export interface CexVenueId {
+export interface CexVenue {
   type: 'cex';
   name: CexVenueName; // supported CEXes
 }
 
-export type VenueId = DexVenueId | CexVenueId;
+export type Venue = DexVenue | CexVenue;
 
 // ════════════════════════════════════════════════════════════
 // LAYER 1: VENUE-SPECIFIC STATE
@@ -31,7 +31,7 @@ export type VenueId = DexVenueId | CexVenueId;
 
 export interface VenueState {
   id: string; // globally unique id: "1:0xabc..." for DEX, "binance:ETHUSDC" for CEX
-  venue: VenueId;
+  venue: Venue;
   pairId: PairId;
 }
 
@@ -39,7 +39,7 @@ export interface VenueState {
 
 export interface DexPoolState extends VenueState {
   address: string; // pool address (for v2 and v3), in v4 we store PoolManager address here and the actual pool is identified by poolKey
-  venue: DexVenueId;
+  venue: DexVenue;
   protocol: DexProtocol;
   tokenPair: TokenPairOnChain;
   feeBps: number;
@@ -99,7 +99,7 @@ interface TickData {
 // ── CEX ─────────────────────────────────────────────────────
 
 export interface CexMarketState extends VenueState {
-  venue: CexVenueId;
+  venue: CexVenue;
   baseToken: TokenBase; // e.g. ETH
   quoteToken: TokenBase; // e.g. USDC
   exchangeSymbol: string; // raw: "ETHUSDC"
@@ -131,7 +131,7 @@ export interface IVenueStateStore {
   size: number;
 
   getByChain(chainId: number): DexPoolState[];
-  getByVenue(venue: VenueId): VenueState[]; // all pools on "uniswap:v3:1"
+  getByVenue(venue: Venue): VenueState[]; // all pools on "uniswap:v3:1"
   getByToken(chainId: number, tokenAddress: string): DexPoolState[];
   getByPairId(pairId: PairId): VenueState[];
   getDexPoolsByPairId(pairId: PairId): DexPoolState[];
