@@ -14,7 +14,7 @@ import {
   calculateVirtualReserves,
 } from './lib/sqrtPriceMath';
 import type { DexV4Config } from '@/config/models';
-import { dexPoolId, type DexV4PoolState } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexV4PoolState, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain } from '@/shared/data-model/token';
 import { createLogger } from '@/utils/logger';
 
@@ -34,7 +34,7 @@ export type PoolKey = {
 // ================================================================================================
 
 export class DexV4Adapter implements DexAdapter {
-  readonly name: string;
+  readonly name: DexVenueName;
   readonly protocol = 'v4';
   readonly config: DexV4Config;
 

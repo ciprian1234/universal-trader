@@ -5,7 +5,7 @@ import { ethers } from 'ethers';
 import type { TradeQuote, PoolEvent, DexAdapter } from '../interfaces';
 import { TokenManager } from '../token-manager';
 import { Blockchain } from '../blockchain';
-import { dexPoolId, type DexV2PoolState } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexV2PoolState, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
 import type { DexV2Config } from '@/config/models';
@@ -16,7 +16,7 @@ import { createLogger } from '@/utils';
 // ================================================================================================
 
 export class DexV2Adapter implements DexAdapter {
-  readonly name: string;
+  readonly name: DexVenueName;
   readonly protocol = 'v2';
   readonly config: DexV2Config;
   readonly feeBasisPoints: number = 30; // 0.3% fee (30 bps) (denominated by 10,000)

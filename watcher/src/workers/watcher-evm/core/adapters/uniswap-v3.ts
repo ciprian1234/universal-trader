@@ -6,7 +6,7 @@ import type { TradeQuote, PoolEvent, DexAdapter } from '../interfaces';
 import { TokenManager } from '../token-manager';
 import { Blockchain } from '../blockchain';
 import { sqrtPriceX96ToPrice, calculateVirtualReserves, simulateSwap } from './lib/sqrtPriceMath';
-import { dexPoolId, type DexV3PoolState } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexV3PoolState, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
 import type { DexV3Config } from '@/config/models';
@@ -17,7 +17,7 @@ import { createLogger } from '@/utils/logger';
 // ================================================================================================
 
 export class DexV3Adapter implements DexAdapter {
-  readonly name: string;
+  readonly name: DexVenueName;
   readonly protocol = 'v3';
   readonly config: DexV3Config;
 

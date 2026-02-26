@@ -4,21 +4,23 @@ import type { PairId, TokenOnChain, TokenBase, TokenPairOnChain } from './token'
 // VENUE IDENTIFICATION
 // ════════════════════════════════════════════════════════════
 
+export const DEX_VENUE_NAMES = ['uniswap-v2', 'uniswap-v3', 'uniswap-v4', 'sushiswap-v2'] as const;
+export const CEX_VENUE_NAMES = ['binance', 'coinbase', 'kraken'] as const;
+export type DexVenueName = (typeof DEX_VENUE_NAMES)[number];
+export type CexVenueName = (typeof CEX_VENUE_NAMES)[number];
+
 export type VenueType = 'dex' | 'cex';
 export type DexProtocol = 'v2' | 'v3' | 'v4';
 
-interface VenueIdBase {
-  type: VenueType; // "dex" or "cex"
-  name: string; // name lowercase, e.g. 'uniswap-v2', 'uniswap-v3', 'sushiswap-v2', 'binance'
-}
-
-export interface DexVenueId extends VenueIdBase {
+export interface DexVenueId {
   type: 'dex';
+  name: DexVenueName; // supported DEXes
   chainId: number;
 }
 
-export interface CexVenueId extends VenueIdBase {
+export interface CexVenueId {
   type: 'cex';
+  name: CexVenueName; // supported CEXes
 }
 
 export type VenueId = DexVenueId | CexVenueId;

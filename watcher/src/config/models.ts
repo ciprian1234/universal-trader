@@ -2,6 +2,7 @@
 // MULTI-CHAIN CONFIGURATION
 // ================================================================================================
 
+import { DEX_VENUE_NAMES } from '@/shared/data-model/layer1';
 import { z } from 'zod';
 
 export const TokenConfigSchema = z.object({
@@ -13,7 +14,7 @@ export const TokenConfigSchema = z.object({
 // ── DEX Config Schemas (protocol-specific) ──────────────────
 
 const DexConfigBase = z.object({
-  name: z.string(), // "uniswap-v2", "sushiswap-v2", "uniswap-v3"
+  name: z.enum(DEX_VENUE_NAMES),
   routerAddress: z.string().length(42),
 });
 
