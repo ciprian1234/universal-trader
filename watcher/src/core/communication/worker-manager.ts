@@ -125,7 +125,7 @@ export class WorkerManager {
   }
 
   private handleEvent(message: EventMessage): void {
-    if (message.name === 'pool-update') this.eventBus.emitPoolUpdate(message.data as any);
+    if (message.name === 'venue-state-batch') this.eventBus.emitPoolUpdate(message.data as any);
     // else console.error(`Unhandled event from worker ${message.}: ${message.name}`);
   }
 

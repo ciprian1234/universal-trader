@@ -158,7 +158,7 @@ export class DexV3Adapter implements DexAdapter {
       reserve1: 0n,
       spotPrice0to1: 0,
       spotPrice1to0: 0,
-      totalLiquidityInUSD: 0,
+      // totalLiquidityInUSD: 0,
     };
 
     return poolState;
@@ -307,7 +307,7 @@ export class DexV3Adapter implements DexAdapter {
       // pool.totalLiquidityInUSD = v0 + v1; // note: liquidity calculated from virtual reserves
     } catch (error) {
       // this.logger.warn(`❌ Failed to calculate USD liquidity for pool ${event.poolId.value}: ${(error as Error).message}`);
-      pool.totalLiquidityInUSD = 0;
+      // pool.totalLiquidityInUSD = 0;
     }
 
     return pool;

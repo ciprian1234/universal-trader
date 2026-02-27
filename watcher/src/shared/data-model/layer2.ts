@@ -1,4 +1,4 @@
-import type { PairId } from './token';
+import type { CanonicalPairId } from './token';
 import type { CexVenue, DexVenue, Venue } from './layer1';
 
 // ════════════════════════════════════════════════════════════
@@ -35,7 +35,7 @@ type VenuePricing = DexVenuePricing | CexVenuePricing;
 // ════════════════════════════════════════════════════════════
 
 interface TradingPair {
-  id: PairId; // "ETH:USDC"
+  id: CanonicalPairId; // "ETH:USDC"
   baseSymbol: string; // "ETH"
   quoteSymbol: string; // "USDC"
   venues: VenuePricing[]; // ← reads naturally: "a trading pair has venues with pricing"
@@ -51,11 +51,11 @@ interface TradingPair {
 // ════════════════════════════════════════════════════════════
 
 interface IPairIndex {
-  getPair(pairId: PairId): TradingPair | undefined;
+  getPair(pairId: CanonicalPairId): TradingPair | undefined;
   getAllPairs(): TradingPair[];
   getPairsForSymbol(symbol: string): TradingPair[];
 
-  getBestPrice(pairId: PairId): { bid: number; ask: number; mid: number } | undefined;
+  getBestPrice(pairId: CanonicalPairId): { bid: number; ask: number; mid: number } | undefined;
 
   pairCount: number;
   totalVenueCount: number;

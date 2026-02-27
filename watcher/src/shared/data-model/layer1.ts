@@ -1,4 +1,4 @@
-import type { PairId, TokenBase, TokenPairOnChain } from './token';
+import type { CanonicalPairId, TokenBase, TokenPairOnChain } from './token';
 
 // ════════════════════════════════════════════════════════════
 // VENUE IDENTIFICATION
@@ -32,14 +32,14 @@ export type Venue = DexVenue | CexVenue;
 export interface VenueState {
   id: string; // globally unique id: "1:0xabc..." for DEX, "binance:ETHUSDC" for CEX
   venue: Venue;
-  pairId: PairId;
+  pairId: CanonicalPairId;
 }
 
 // ── DEX ─────────────────────────────────────────────────────
 
 export interface DexPoolState extends VenueState {
-  address: string; // pool address (for v2 and v3), in v4 we store PoolManager address here and the actual pool is identified by poolKey
   venue: DexVenue;
+  address: string; // pool address (for v2 and v3), in v4 we store PoolManager address here and the actual pool is identified by poolKey
   protocol: DexProtocol;
   tokenPair: TokenPairOnChain;
   feeBps: number;
@@ -51,7 +51,7 @@ export interface DexPoolState extends VenueState {
   // derived fields (updated on each updatePool)
   spotPrice0to1: number; // price of token0 in terms of token1
   spotPrice1to0: number; // price of token1 in terms of token0
-  totalLiquidityInUSD: number;
+  // totalLiquidityInUSD removed — belongs in Layer 2 VenuePricing.liquidityUSD
 
   // Metadata of the latest event that caused a state update
   latestEventMeta?: EventMetadata;
@@ -133,9 +133,9 @@ export interface IVenueStateStore {
   getByChain(chainId: number): DexPoolState[];
   getByVenue(venue: Venue): VenueState[]; // all pools on "uniswap:v3:1"
   getByToken(chainId: number, tokenAddress: string): DexPoolState[];
-  getByPairId(pairId: PairId): VenueState[];
-  getDexPoolsByPairId(pairId: PairId): DexPoolState[];
-  getCexMarketsByPairId(pairId: PairId): CexMarketState[];
+  getByPairId(pairId: CanonicalPairId): VenueState[];
+  getDexPoolsByPairId(pairId: CanonicalPairId): DexPoolState[];
+  getCexMarketsByPairId(pairId: CanonicalPairId): CexMarketState[];
 
   onChange(listener: VenueChangeListener): () => void;
 }

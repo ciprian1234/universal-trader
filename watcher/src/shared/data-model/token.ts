@@ -28,9 +28,9 @@ export type TokenPairOnChain = {
  * Canonical sorted symbol pair key. Always alphabetically sorted.
  * Examples: "ETH:USDC", "BTC:USDT", "ARB:ETH"
  */
-export type PairId = string;
+export type CanonicalPairId = string;
 
-export function getCanonicalPairId(tokenA: Token, tokenB: Token): PairId {
+export function getCanonicalPairId(tokenA: Token, tokenB: Token): CanonicalPairId {
   const symbols = [tokenA.symbol, tokenB.symbol].sort();
   return symbols.join(':');
 }
