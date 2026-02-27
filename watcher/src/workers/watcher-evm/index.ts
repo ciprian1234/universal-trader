@@ -81,7 +81,7 @@ class EVMWorker extends BaseWorker {
       tokenManager: this.tokenManager,
       logger: createLogger(`[${this.workerId}.dex-registry]`),
     });
-    this.dexRegistry.setupDexAdapters(this.config);
+    this.dexRegistry.init(this.config);
 
     // initialize PoolStatesManager
     this.poolStatesManager = new PoolStatesManager({

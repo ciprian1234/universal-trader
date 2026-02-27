@@ -13,7 +13,6 @@ export type PoolStatesManagerInput = {
   eventBus: EventBus;
   dexRegistry: DexRegistry;
   tokenManager: TokenManager;
-  watchedPairs?: TokenPairOnChain[]; // Optional pairs to monitor
 };
 
 export class PoolStatesManager {
@@ -25,7 +24,6 @@ export class PoolStatesManager {
 
   private poolStates: Map<string, DexPoolState> = new Map();
   private latestPoolEventMeta: Map<string, EventMetadata> = new Map();
-  private watchedPairs: TokenPairOnChain[] = [];
 
   constructor(input: PoolStatesManagerInput) {
     this.chainId = input.chainId;
@@ -101,42 +99,15 @@ export class PoolStatesManager {
   // INITIALIZATION AND MANAGEMENT
   // ================================================================================================
   async discoverAndRegisterPools(watchedPairs: TokenPairOnChain[]): Promise<void> {
-    this.watchedPairs = watchedPairs;
-
-    this.logger.info('🎯 Discovering and registering pools for watched trading pairs...');
-    this.logger.info('📋 MONITORED TRADING PAIRS:');
-    this.watchedPairs.forEach((pair, index) => {
-      this.logger.info(`   ${(index + 1).toString().padStart(2)}. ${pair.key}`);
-      this.logger.info(`       • ${pair.token0.symbol} (${pair.token0.address})`);
-      this.logger.info(`       • ${pair.token1.symbol} (${pair.token1.address})`);
-    });
-
-    for (const pair of this.watchedPairs) {
-      for (const [dexName, adapter] of this.dexRegistry.getAll().entries()) {
-        // Get all pools from a DEX for a given token pair
-        try {
-          const pools = await adapter.discoverPools(pair.token0.address, pair.token1.address);
-          for (const pool of pools) {
-            // set pool state
-            const poolKey = pool.id;
-            this.poolStates.set(poolKey, pool);
-
-            // Log pool registration
-            this.logger.info(
-              `✅ Registered pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps
-                .toString()
-                .padEnd(5)}) (id: ${pool.id})`,
-            );
-          }
-        } catch (error) {
-          this.logger.warn(`❌ Failed to register ${pair.key} on ${dexName}:`, error);
-        }
+    const discoveredPools = await this.dexRegistry.discoverAllPools(watchedPairs);
+    for (const pool of discoveredPools) {
+      const poolId = pool.id;
+      if (this.poolStates.has(pool.id)) {
+        this.logger.warn(`⚠️ Pool with ID ${poolId} already exists, skipping registration`);
+        continue;
       }
+      this.poolStates.set(poolId, pool);
     }
-
-    this.logger.info(`✅ DISCOVERY COMPLETE:`);
-    this.logger.info(`   🏗️  DEXes: ${this.dexRegistry.getAll().size}`);
-    this.logger.info(`   🗄️  Pool States: ${this.poolStates.size}`);
   }
 
   async updateAll(): Promise<void> {
@@ -193,7 +164,7 @@ export class PoolStatesManager {
       // calculate liquidityUSD (requires external price feed)
 
       // update pool state
-      pool.totalLiquidityInUSD = totalLiquidityInUSD;
+      // pool.totalLiquidityInUSD = totalLiquidityInUSD;
       this.poolStates.set(key, pool);
     }
   }
@@ -305,7 +276,7 @@ export class PoolStatesManager {
     this.logger.info(`💧 ${pool.venue.name} ${s0}-${s1} (feeBP: ${pool.feeBps}) - Pool ID: ${pool.id}`);
     this.logger.info(`   📈 Price: ${s0} = ${pool.spotPrice0to1}${s1}`);
     this.logger.info(`   📉 Price: ${s1} = ${pool.spotPrice1to0}${s0}`);
-    this.logger.info(`   💰 Total Liquidity in USD: $${pool.totalLiquidityInUSD?.toFixed(2)}`);
+    // this.logger.info(`   💰 Total Liquidity in USD: $${pool.totalLiquidityInUSD?.toFixed(2)}`);
 
     if (pool.protocol === 'v3') {
       this.logger.info(`   🧱 Current Tick: ${pool.tick} (tickSpacing: ${pool.tickSpacing})`);

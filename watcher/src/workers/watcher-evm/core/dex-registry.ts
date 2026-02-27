@@ -1,10 +1,12 @@
-import type { DexAdapter } from './interfaces';
 import { TokenManager } from '../core/token-manager';
 import { Blockchain } from '../core/blockchain';
 import type { Logger } from '@/utils';
 import type { ChainConfig, DexConfig } from '@/config/models';
-import { DexV2Adapter } from './adapters/uniswap-v2';
-import { DexV3Adapter } from './adapters/uniswap-v3';
+import * as DEX_V2 from './adapters/uniswap-v2';
+import * as DEX_V3 from './adapters/uniswap-v3';
+import * as DEX_V4 from './adapters/uniswap-v4';
+import type { DexPoolState, DexVenueName } from '@/shared/data-model/layer1';
+import type { TokenPairOnChain } from '@/shared/data-model/token';
 
 type DexRegistryInput = {
   logger: Logger;
@@ -16,7 +18,9 @@ export class DexRegistry {
   private readonly logger: Logger;
   private blockchain: Blockchain;
   private tokenManager: TokenManager;
-  private adapters: Map<string, DexAdapter> = new Map();
+
+  // list of all DEXes supported by the worker, populated during init() based on chain config
+  private readonly venueConfigs: Map<DexVenueName, DexConfig> = new Map();
 
   constructor(input: DexRegistryInput) {
     this.logger = input.logger;
@@ -24,67 +28,78 @@ export class DexRegistry {
     this.tokenManager = input.tokenManager;
   }
 
-  // ================================================================================================
-  // ADAPTER MANAGEMENT
-  // ================================================================================================
   /**
-   * 🏗️ SETUP DEX ADAPTERS: Register all supported DEX adapters
+   * Dex registry initialization
    */
-  setupDexAdapters(chainConfig: ChainConfig) {
-    this.logger.info('🔧 Setting up DEX adapters...');
+  init(chainConfig: ChainConfig) {
+    this.logger.info('🔧 Initializing DEX registry...');
 
     // Register all DEXes defined in the chain config
-    for (const dexConfig of chainConfig.dexConfigs) {
-      try {
-        const dexAdapter = this.createDexAdapter(dexConfig, this.blockchain, this.tokenManager);
-        this.registerDexAdapter(dexAdapter);
-      } catch (error) {
-        this.logger.warn(`❌ Failed to register DEX adapter for ${dexConfig.name}: ${(error as Error).message}`);
+    for (const config of chainConfig.dexConfigs) {
+      if (config.protocol === 'v2') {
+        this.blockchain.initContract(config.factoryAddress, DEX_V2.FACTORY_ABI);
+        this.blockchain.initContract(config.routerAddress, DEX_V2.ROUTER_ABI);
+      } else if (config.protocol === 'v3') {
+        this.blockchain.initContract(config.factoryAddress, DEX_V3.FACTORY_ABI);
+        this.blockchain.initContract(config.quoterAddress, DEX_V3.QUOTER_ABI);
+        this.blockchain.initContract(config.routerAddress, DEX_V3.ROUTER_ABI);
+      } else if (config.protocol === 'v4') {
+        this.blockchain.initContract(config.poolManagerAddress, DEX_V4.POOL_MANAGER_ABI);
+        this.blockchain.initContract(config.stateViewAddress, DEX_V4.STATE_VIEW_ABI);
+      } else {
+        this.logger.warn(`Unsupported DEX config`, { config });
+        continue;
+      }
+      this.venueConfigs.set(config.name, config);
+    }
+
+    this.logger.info(`✅ Configured DEX venues: ${[...this.venueConfigs.keys()].join(', ')}`);
+  }
+
+  async discoverAllPools(watchedPairs: TokenPairOnChain[]) {
+    this.logger.info('🔍 Discovering all pools for configured DEX venues...');
+    this.logger.info('📋 TRADING PAIRS:');
+    watchedPairs.forEach((pair, index) => {
+      this.logger.info(`   ${(index + 1).toString().padStart(2)}. ${pair.key}`);
+      this.logger.info(`       • ${pair.token0.symbol} (${pair.token0.address})`);
+      this.logger.info(`       • ${pair.token1.symbol} (${pair.token1.address})`);
+    });
+
+    const allPools: DexPoolState[] = [];
+    for (const [venueName, config] of this.venueConfigs.entries()) {
+      const ctx = {
+        blockchain: this.blockchain,
+        tokenManager: this.tokenManager,
+        config,
+      };
+      for (const pair of watchedPairs) {
+        try {
+          let foundPoolsForPair: DexPoolState[] = [];
+          if (config.protocol === 'v2') {
+            foundPoolsForPair = await DEX_V2.discoverPools(ctx, pair);
+          } else if (config.protocol === 'v3') {
+            foundPoolsForPair = await DEX_V3.discoverPools(ctx, pair);
+          } else if (config.protocol === 'v4') {
+            foundPoolsForPair = await DEX_V4.discoverPools(ctx, pair);
+          }
+          if (foundPoolsForPair.length === 0) continue;
+          allPools.push(...foundPoolsForPair);
+          foundPoolsForPair.forEach((pool) => {
+            this.logger.info(
+              `✅ Found pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps
+                .toString()
+                .padEnd(5)}) (id: ${pool.id})`,
+            );
+          });
+        } catch (error) {
+          this.logger.error(`Error discovering pools for pair ${pair.key} on venue ${venueName}`, {
+            error: (error as Error).message,
+          });
+          continue;
+        }
       }
     }
-
-    this.logger.info(`✅ Configured ${this.adapters.size}/${chainConfig.dexConfigs.length} DEX adapters`);
-  }
-
-  /**
-   * Factory method to create a DexAdapter instance based on DexConfig
-   */
-  createDexAdapter(dexConfig: DexConfig, blockchain: Blockchain, tokenManager: TokenManager): DexAdapter {
-    switch (dexConfig.protocol) {
-      case 'v2':
-        return new DexV2Adapter(dexConfig, blockchain, tokenManager);
-      case 'v3':
-        return new DexV3Adapter(dexConfig, blockchain, tokenManager);
-      case 'v4':
-        throw new Error(`Unsupported DEX type: ${dexConfig.protocol} (not implemented yet)`);
-      // return new DexV4Adapter(dexConfig, blockchain, tokenManager);
-      default:
-        throw new Error(`Unsupported DEX config: ${dexConfig}`);
-    }
-  }
-
-  /**
-   * 🔧 REGISTER DEX ADAPTER
-   */
-  registerDexAdapter(adapter: DexAdapter): void {
-    if (this.adapters.has(adapter.name)) throw new Error(`DEX adapter '${adapter.name}' is already registered`);
-    this.adapters.set(adapter.name, adapter);
-    this.logger.info(
-      `✅ Registered DEX adapter: (🔧${adapter.name}) ${adapter.name.padEnd(15)} (RouterAddress: ${adapter.config.routerAddress})`,
-    );
-  }
-
-  /**
-   * 🔍 GET ADAPTER
-   */
-  getAdapter(dexName: string): DexAdapter | undefined {
-    return this.adapters.get(dexName);
-  }
-
-  /**
-   * 📋 GET ALL ADAPTERS
-   */
-  getAll(): Map<string, DexAdapter> {
-    return this.adapters;
+    this.logger.info(`✅ Pool discovery complete, found ${allPools.length} pools`);
+    return allPools;
   }
 }

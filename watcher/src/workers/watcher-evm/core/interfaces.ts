@@ -2,8 +2,7 @@
 // NETWORK GAS FEE INTERFACES
 // ================================================================================================
 
-import type { DexConfig } from '@/config/models';
-import type { DexPoolState, DexProtocol, EventMetadata } from '@/shared/data-model/layer1';
+import type { DexPoolState, EventMetadata } from '@/shared/data-model/layer1';
 import type { TokenOnChain } from '@/shared/data-model/token';
 
 // ════════════════════════════════════════════════════════════
@@ -200,39 +199,15 @@ export interface ArbitrageOpportunity {
 }
 
 // ================================================================================================
-// DEX ADAPTER INTERFACE
-// ================================================================================================
-
-export interface DexAdapter {
-  readonly name: string;
-  readonly protocol: DexProtocol;
-  readonly config: DexConfig;
-
-  readonly FACTORY_ABI: string[];
-  readonly POOL_ABI: string[];
-
-  // Pool management
-  discoverPools(token0: string, token1: string): Promise<DexPoolState[]>;
-  initPool(id: string): Promise<DexPoolState>;
-  updatePool(pool: DexPoolState): Promise<DexPoolState>;
-  updatePoolFromEvent(pool: DexPoolState, event: PoolEvent): DexPoolState;
-
-  // Price
-  simulateSwap(poolState: DexPoolState, amountIn: bigint, zeroForOne: boolean): bigint;
-  getTradeQuote(poolState: DexPoolState, amountIn: bigint, zeroForOne: boolean): Promise<TradeQuote>;
-  getFeePercent(poolState: DexPoolState): number;
-}
-
-// ================================================================================================
 // TRADE OPTIMIZER INTERFACE
 // ================================================================================================
 
-export interface TradeOptimizer {
-  findOptimalTradeAmount(
-    entryPool: DexPoolState,
-    exitPool: DexPoolState,
-    entryAdapter: DexAdapter,
-    exitAdapter: DexAdapter,
-    zeroForOne: boolean,
-  ): Promise<bigint>;
-}
+// export interface TradeOptimizer {
+//   findOptimalTradeAmount(
+//     entryPool: DexPoolState,
+//     exitPool: DexPoolState,
+//     entryAdapter: DexAdapter,
+//     exitAdapter: DexAdapter,
+//     zeroForOne: boolean,
+//   ): Promise<bigint>;
+// }
