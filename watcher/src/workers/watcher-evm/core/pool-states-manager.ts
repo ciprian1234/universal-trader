@@ -112,24 +112,17 @@ export class PoolStatesManager {
 
   async updateAll(): Promise<void> {
     this.logger.info('🔄 Updating all pool states...');
-
-    for (const [key, pool] of this.poolStates.entries()) {
+    for (const [id, pool] of this.poolStates.entries()) {
       try {
-        const adapter = this.dexRegistry.getAdapter(pool.venue.name);
-        if (!adapter) {
-          this.logger.warn(`❌ No adapter found for DEX ${pool.venue.name} while updating pool ${key}`);
-          continue;
-        }
-
-        const updatedPoolState = await adapter.updatePool(pool);
-        this.poolStates.set(key, updatedPoolState);
+        const updatedPoolState = await this.dexRegistry.updatePool(pool);
+        this.poolStates.set(id, updatedPoolState);
 
         // Log pool initialization
         this.logger.info(
           `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
         );
       } catch (error) {
-        this.logger.warn(`❌ Failed to update pool ${key}:`, { error });
+        this.logger.warn(`❌ Failed to update pool ${id}:`, { error });
       }
     }
     this.logger.info(`✅ Updated ${this.poolStates.size} pool states`);
@@ -176,9 +169,6 @@ export class PoolStatesManager {
     const pool = this.poolStates.get(event.poolId);
     if (!pool) return this.logger.warn(`Received event for unknown poolId: ${event.poolId}`);
 
-    // Get DEX adapter
-    const adapter = this.dexRegistry.getAdapter(pool.venue.name)!;
-
     // check if event is newer
     if (!this.isEventNewer(event.meta, pool.latestEventMeta)) {
       this.logger.warn(`⚠️ Skipping outdated event received for ${event.poolId}`);
@@ -186,13 +176,13 @@ export class PoolStatesManager {
     }
 
     // log event details
-    const feePercent = adapter.getFeePercent(pool);
+    const feePercent = this.dexRegistry.getFeePercent(pool);
     const eventDetails = `📊 ${pool.venue.name} ${pool.tokenPair.key} (fee: ${feePercent}%) update event`;
     const deltaMs = Date.now() - event.meta.blockReceivedTimestamp;
     this.logger.info(`${eventDetails.padEnd(60)} 🔗 ${event.meta.blockNumber} (+${deltaMs}ms)`);
 
     // Update pool state from event
-    const updatedState = adapter.updatePoolFromEvent(pool, event);
+    const updatedState = this.dexRegistry.updatePoolFromEvent(pool, event);
 
     // Update latest event timestamp
     this.latestPoolEventMeta.set(pool.id, event.meta); // set blockchain timestamp (not local)

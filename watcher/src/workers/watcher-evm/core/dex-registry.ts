@@ -5,8 +5,9 @@ import type { ChainConfig, DexConfig } from '@/config/models';
 import * as DEX_V2 from './adapters/uniswap-v2';
 import * as DEX_V3 from './adapters/uniswap-v3';
 import * as DEX_V4 from './adapters/uniswap-v4';
-import type { DexPoolState, DexVenueName } from '@/shared/data-model/layer1';
+import type { DexPoolState, DexV2PoolState, DexV3PoolState, DexV4PoolState, DexVenueName } from '@/shared/data-model/layer1';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
+import type { PoolEvent, V2SyncEvent, V4SwapEvent } from './interfaces';
 
 type DexRegistryInput = {
   logger: Logger;
@@ -26,6 +27,11 @@ export class DexRegistry {
     this.logger = input.logger;
     this.blockchain = input.blockchain;
     this.tokenManager = input.tokenManager;
+  }
+  private requireConfig(venueName: DexVenueName) {
+    const config = this.venueConfigs.get(venueName);
+    if (!config) throw new Error(`No config for venue: ${venueName}`);
+    return config;
   }
 
   /**
@@ -101,5 +107,30 @@ export class DexRegistry {
     }
     this.logger.info(`✅ Pool discovery complete, found ${allPools.length} pools`);
     return allPools;
+  }
+
+  // ================================================================================================
+  // DEX ADAPTERS ROUTING LOGIC
+  // ================================================================================================
+  async updatePool(pool: DexPoolState): Promise<DexPoolState> {
+    const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
+    if (pool.protocol === 'v2') return DEX_V2.updatePool(ctx, pool as DexV2PoolState);
+    if (pool.protocol === 'v3') return DEX_V3.updatePool(ctx, pool as DexV3PoolState);
+    if (pool.protocol === 'v4') return DEX_V4.updatePool(ctx, pool as DexV4PoolState);
+    throw new Error(`Unsupported DEX updatePool for protocol: ${pool.protocol}`);
+  }
+
+  getFeePercent(pool: DexPoolState): number {
+    if (pool.protocol === 'v2') return DEX_V2.getFeePercent(pool as DexV2PoolState);
+    if (pool.protocol === 'v3') return DEX_V3.getFeePercent(pool as DexV3PoolState);
+    if (pool.protocol === 'v4') return DEX_V4.getFeePercent(pool as DexV4PoolState);
+    throw new Error(`Unsupported DEX getFeePercent for protocol: ${pool.protocol}`);
+  }
+
+  updatePoolFromEvent(pool: DexPoolState, poolEvent: PoolEvent): DexPoolState {
+    if (pool.protocol === 'v2') return DEX_V2.updatePoolFromEvent(pool as DexV2PoolState, poolEvent as V2SyncEvent);
+    if (pool.protocol === 'v3') return DEX_V3.updatePoolFromEvent(pool as DexV3PoolState, poolEvent);
+    if (pool.protocol === 'v4') return DEX_V4.updatePoolFromEvent(pool as DexV4PoolState, poolEvent as V4SwapEvent);
+    throw new Error(`Unsupported DEX updatePoolFromEvent for protocol: ${pool.protocol}`);
   }
 }
