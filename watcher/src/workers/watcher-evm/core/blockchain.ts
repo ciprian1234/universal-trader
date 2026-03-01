@@ -140,7 +140,7 @@ export class Blockchain {
    */
   initContract(address: string, abi: ethers.InterfaceAbi): ethers.Contract {
     const key = address.toLowerCase();
-    if (this.contracts.has(key)) throw new Error(`Contract at address ${address} already initialized`);
+    if (this.contracts.has(key)) return this.contracts.get(key)!;
 
     // Create base contract
     const contract = new ethers.Contract(address, abi, this.provider);
@@ -154,10 +154,9 @@ export class Blockchain {
   /**
    * GET CONTRACT: Return cached contract instance
    */
-  getContract(address: string): ethers.Contract {
+  getContract(address: string): ethers.Contract | null {
     const key = address.toLowerCase();
-    if (!this.contracts.has(key)) throw new Error(`Contract at address ${address} not initialized`);
-    return this.contracts.get(key)!;
+    return this.contracts.get(key) ?? null;
   }
 
   /**

@@ -35,14 +35,18 @@ class EVMWorker extends BaseWorker {
   setupEventPipeline() {
     // send event to main thread
     this.eventBus.onPoolEventsBatch((data) => {
-      // events are already applied to poolStates by the time they are emitted => so send the updated pool states
-      const updatedPoolStates = data.events
-        .map((event) => this.poolStatesManager.getPoolState(event.poolId))
-        .filter((state) => state !== null);
-      this.sendEventMessage('pool-update-batch', {
-        blockData: data.blockData,
-        updatedPoolStates,
-      });
+      try {
+        // // events are already applied to poolStates by the time they are emitted => so send the updated pool states
+        // const updatedPoolStates = data.events
+        //   .map((event) => this.poolStatesManager.getPoolState(event.poolId))
+        //   .filter((state) => state !== null);
+        // this.sendEventMessage('pool-update-batch', {
+        //   blockData: data.blockData,
+        //   updatedPoolStates,
+        // });
+      } catch (error) {
+        this.log.error(`Error in poolEventsBatch handler: ${error instanceof Error ? error.stack : String(error)}`);
+      }
     });
   }
 
@@ -70,10 +74,12 @@ class EVMWorker extends BaseWorker {
     this.tokenManager = new TokenManager({
       logger: createLogger(`[${this.workerId}.token-manager]`),
       blockchain: this.blockchain,
-      inputTokens: this.config.tokens,
     });
-    await this.tokenManager.batchRegisterTokens();
+    await this.tokenManager.loadTrustedTokens('coingecko'); // load trusted tokens from cache (coingecko or uniswap token lists)
+    this.config.tokens.forEach((symbol) => this.tokenManager.ensureTokenRegistered(symbol, 'symbol')); // register configured input tokens at startup
     const tradingPairs = this.tokenManager.createTradingPairs(); // setup trading pairs to monitor
+
+    // throw new Error('EVMWorker initialization not complete. Please implement the rest of the init method.');
 
     // create dex registry and register adapters
     this.dexRegistry = new DexRegistry({

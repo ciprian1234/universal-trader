@@ -7,7 +7,7 @@
 
 import { EventEmitter } from 'events';
 import { createLogger } from '../utils/logger.ts';
-import type { ArbitrageOpportunity, PoolEvent, PoolState } from './types.ts';
+// import type { ArbitrageOpportunity, PoolEvent, PoolState } from './types.ts';
 
 export interface BlockEntry {
   number: number;
@@ -31,13 +31,9 @@ export class EventBus extends EventEmitter {
     this.emit('newBlock', block);
   }
 
-  emitPoolUpdate(pool: PoolState, previousState?: PoolState): void {
-    this.emit('pool-update', { current: pool, previous: previousState });
-  }
-
-  emitArbitrageOpportunity(opportunity: ArbitrageOpportunity): void {
-    this.emit('arbitrage-opportunity', opportunity);
-  }
+  // emitArbitrageOpportunity(opportunity: ArbitrageOpportunity): void {
+  //   this.emit('arbitrage-opportunity', opportunity);
+  // }
 
   emitAppEvent(name: string, data?: unknown): void {
     this.emit('app-event', { name, data });
@@ -50,15 +46,15 @@ export class EventBus extends EventEmitter {
     return () => this.off('newBlock', cb);
   }
 
-  onPoolUpdate(cb: (info: { current: PoolState; previous?: PoolState }) => void): () => void {
-    this.on('pool-update', cb);
-    return () => this.off('pool-update', cb);
-  }
+  // onPoolUpdate(cb: (info: { current: PoolState; previous?: PoolState }) => void): () => void {
+  //   this.on('pool-update', cb);
+  //   return () => this.off('pool-update', cb);
+  // }
 
-  onPoolEventsBatch(cb: (data: { chainId: number; events: PoolEvent[] }) => void): () => void {
-    this.on('poolEventsBatch', cb);
-    return () => this.off('poolEventsBatch', cb);
-  }
+  // onPoolEventsBatch(cb: (data: { chainId: number; events: PoolEvent[] }) => void): () => void {
+  //   this.on('poolEventsBatch', cb);
+  //   return () => this.off('poolEventsBatch', cb);
+  // }
 
   // onArbitrageOpportunity(cb: (opp: ArbitrageOpportunity) => void): () => void {
   //   this.on('arbitrage-opportunity', cb);

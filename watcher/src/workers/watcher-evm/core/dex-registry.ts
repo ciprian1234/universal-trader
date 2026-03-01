@@ -7,7 +7,7 @@ import * as DEX_V3 from './adapters/uniswap-v3';
 import * as DEX_V4 from './adapters/uniswap-v4';
 import type { DexPoolState, DexV2PoolState, DexV3PoolState, DexV4PoolState, DexVenueName } from '@/shared/data-model/layer1';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
-import type { PoolEvent, V2SyncEvent, V4SwapEvent } from './interfaces';
+import type { PoolEvent, V2SyncEvent, V3SwapEvent, V4SwapEvent } from './interfaces';
 
 type DexRegistryInput = {
   logger: Logger;
@@ -107,6 +107,34 @@ export class DexRegistry {
     }
     this.logger.info(`✅ Pool discovery complete, found ${allPools.length} pools`);
     return allPools;
+  }
+
+  //
+  // This function is used to handle events for pools that are not yet known in the system.
+  //
+  async handleEventForUnknownPool(event: PoolEvent): Promise<DexPoolState | null> {
+    const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager };
+    this.logger.warn(`Introspecting event for unknown poolId: ${event.poolId}`);
+
+    try {
+      if (event.protocol === 'v2') {
+        // for V2 => at this point we only have the pool address and reserves
+        const pool = await DEX_V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
+        return pool;
+      } else if (event.protocol === 'v3') {
+        // for V3 => at this point we only have the pool address and fee tier, we need to fetch the token pair and tick spacing from the contract
+        const pool = await DEX_V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
+        return pool;
+      } else if (event.protocol === 'v4') {
+        // for V4 => at this point we only have the pool address, we need to fetch the token pair and fee tier from the contract
+        //   const pool = await DEX_V4.introspectPoolFromEvent(ctx, event as V4SwapEvent);
+        //   return pool;
+        return null; // V4 pool introspection not implemented yet
+      }
+    } catch (error) {
+      this.logger.error(`Error introspecting pool for event with poolId ${event.poolId}: ${(error as Error).message}`);
+    }
+    return null;
   }
 
   // ================================================================================================

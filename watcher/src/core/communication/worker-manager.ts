@@ -56,7 +56,7 @@ export class WorkerManager {
 
     // Listen for errors
     worker.onerror = (event) => {
-      logger.error(`Error in worker "${id}":`, event);
+      logger.error(`Error in worker "${id}":`, { event });
       // Reject ALL pending requests for this worker
       for (const [correlationId, pending] of this.pendingRequests) {
         if (correlationId.startsWith(`${id}-`)) {
@@ -125,7 +125,11 @@ export class WorkerManager {
   }
 
   private handleEvent(message: EventMessage): void {
-    if (message.name === 'venue-state-batch') this.eventBus.emitPoolUpdate(message.data as any);
+    logger.info(`Received event from worker "${message.sender}": ${message.name}`);
+
+    if (message.name === 'venue-state-batch') {
+      // message.data.
+    }
     // else console.error(`Unhandled event from worker ${message.}: ${message.name}`);
   }
 

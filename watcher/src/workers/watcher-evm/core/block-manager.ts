@@ -147,16 +147,16 @@ export class BlockManager {
    * 🎧 Listen for pool events
    */
   listenPoolEvents(): void {
-    const poolAddresses = this.poolStatesManager.getPoolAddresses();
-    if (poolAddresses.length === 0) {
-      this.logger.error('❌ No pools to monitor');
-      return;
-    }
-    this.poolAddressesSet = new Set(poolAddresses.map((a) => a.toLowerCase()));
+    // const poolAddresses = this.poolStatesManager.getPoolAddresses();
+    // if (poolAddresses.length === 0) {
+    //   this.logger.error('❌ No pools to monitor');
+    //   return;
+    // }
+    // this.poolAddressesSet = new Set(poolAddresses.map((a) => a.toLowerCase()));
 
     // Create single filter for ALL pool addresses and ALL event types
     this.eventFilter = {
-      address: poolAddresses, // POST_MVP consider dynamic subscription management
+      // address: poolAddresses, // POST_MVP consider dynamic subscription management
       topics: [
         [
           this.EVENT_TOPICS.V2_SYNC,
@@ -171,7 +171,7 @@ export class BlockManager {
 
     // Subscribe to logs
     this.blockchain.on(this.eventFilter, (log: ethers.Log) => this.handlePoolEvent(log));
-    this.logger.info(`🎧 Subscribed to ${this.poolAddressesSet.size} pools events`);
+    this.logger.info(`🎧 Subscribed to pool events`);
   }
 
   /**
@@ -203,10 +203,10 @@ export class BlockManager {
    */
   private handlePoolEvent(log: ethers.Log): void {
     try {
-      if (!this.poolAddressesSet.has(log.address.toLowerCase())) {
-        this.logger.warn(`Received event for unmonitored pool: ${log.address}`, { log }); // POST_MVP allow dynamic pool subscription management
-        return;
-      }
+      // if (!this.poolAddressesSet.has(log.address.toLowerCase())) {
+      //   this.logger.warn(`Received event for unmonitored pool: ${log.address}`, { log }); // POST_MVP allow dynamic pool subscription management
+      //   return;
+      // }
       const event = this.parseLog(log);
 
       // Push event to event buffer
@@ -236,7 +236,7 @@ export class BlockManager {
     const events = [...this.eventBuffer];
     this.eventBuffer = []; // clear buffer
 
-    this.eventBus.emitPoolEventsBatch({ events });
+    // this.eventBus.emitPoolEventsBatch({ events });
 
     this.eventsProcessingTimer = null;
   }

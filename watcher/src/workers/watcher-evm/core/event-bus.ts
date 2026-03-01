@@ -2,9 +2,10 @@
  * 📡 EVENT BUS: Central event coordination and arbitrage opportunity detection
  */
 import { EventEmitter } from 'events';
-import type { PoolEvent, ArbitrageOpportunity, PoolState } from './interfaces';
+import type { PoolEvent, ArbitrageOpportunity } from './interfaces';
 import type { BlockEntry } from './block-manager';
 import type { Logger } from '@/utils';
+import type { DexPoolState } from '@/shared/data-model/layer1';
 
 export interface EventBusConfig {
   logger: Logger;
@@ -51,7 +52,7 @@ export class EventBus extends EventEmitter {
    * This its emited after sync/swap event gets processed and pool state is updated
    * ArbitrageService listens to this event
    */
-  emitPoolUpdate(poolState: PoolState, previousState?: PoolState): void {
+  emitPoolUpdate(poolState: DexPoolState, previousState?: DexPoolState): void {
     const updateInfo = {
       current: poolState,
       previous: previousState,

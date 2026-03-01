@@ -4,13 +4,11 @@
 import { ethers } from 'ethers';
 import { Blockchain } from './blockchain';
 import type { Logger } from '@/utils';
-import type { TokenConfig } from '@/config/models';
 import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 
 export interface TokenManagerConfig {
   logger: Logger;
   blockchain: Blockchain;
-  inputTokens: Array<TokenConfig>; // input tokens at initialization
 }
 
 // ================================================================================================
@@ -20,8 +18,9 @@ export interface TokenManagerConfig {
 export class TokenManager {
   private readonly logger: Logger;
   private blockchain: Blockchain;
+
   private tokens: Map<string, TokenOnChain> = new Map();
-  private inputTokens: Array<TokenConfig>; // Configured input tokens to register at startup
+  private trustedTokens: TokenOnChain[] = []; // List of trusted tokens loaded from cache (e.g. coingecko or uniswap token lists)
 
   // Token metadata cache
   private erc20ABI = [
@@ -33,7 +32,6 @@ export class TokenManager {
   ];
 
   constructor(config: TokenManagerConfig) {
-    this.inputTokens = config.inputTokens;
     this.blockchain = config.blockchain;
     this.logger = config.logger;
   }
@@ -43,14 +41,54 @@ export class TokenManager {
   // ================================================================================================
 
   /**
-   * 📝 REGISTER TOKEN: Add token to manager with metadata
+   * Load trusted tokens (make sure to have the corresponding cache file in data/cache/)
+   * coingecho source: https://tokens.coingecko.com/uniswap/all.json
+   * uniswap source: https://tokens.uniswap.org
    */
-  async registerToken(address: string): Promise<TokenOnChain> {
-    const normalizedAddress = address.toLowerCase();
+  async loadTrustedTokens(source: 'coingecko' | 'uniswap'): Promise<void> {
+    this.logger.info(`🔍 Loading trusted tokens from ${source}...`);
+    const cache = await import(`../../../../data/cache/${source}-token-list.json`);
+    if (!cache || !cache.tokens) throw new Error(`No trusted tokens found in ${source} cache`);
+    this.trustedTokens = cache.tokens.map((token: any) => ({
+      chainId: token.chainId,
+      address: token.address.toLowerCase(),
+      name: token.name,
+      symbol: token.symbol,
+      decimals: token.decimals,
+      trusted: true,
+    }));
+    this.logger.info(`✅ Loaded ${this.trustedTokens.length} trusted tokens from ${source}.`);
+  }
 
-    // Check if already registered
-    const existing = this.tokens.get(normalizedAddress);
-    if (existing) throw new Error(`Token ${address} already registered`);
+  /**
+   * 📝 REGISTER TOKEN: Either from trusted tokens or introspect on-chain
+   */
+  async ensureTokenRegistered(key: string, by: 'address' | 'symbol'): Promise<TokenOnChain> {
+    if (by === 'address') {
+      key = key.toLowerCase(); // normalize address to lowercase
+      const registredToken = this.tokens.get(key);
+      if (registredToken) return registredToken;
+    }
+
+    // find token in trusted list otherwise introspect on chain (only by address, symbol-based lookup is not reliable)
+    let foundToken = this.trustedTokens.find((token) => token[by] === key && token.chainId === this.blockchain.chainId);
+    if (!foundToken && by === 'address') {
+      this.logger.warn(`⚠️ Token with ${by} ${key} not found in trusted tokens list, introspecting on-chain...`);
+      foundToken = await this.introspectToken(key); // introspect token on chain
+    }
+    if (!foundToken) throw new Error(`Token with ${by} ${key} not found`);
+
+    // Register token if not already registered
+    this.tokens.set(foundToken.address, foundToken);
+    this.logger.info(`✅ Registered token ${foundToken.symbol} (addr: ${foundToken.address})`);
+    return foundToken;
+  }
+
+  /**
+   * 📝 Introspect token by address on chain
+   */
+  async introspectToken(address: string): Promise<TokenOnChain> {
+    const normalizedAddress = address.toLowerCase();
 
     // init erc20 token contract
     const contract = this.blockchain.initContract(address, this.erc20ABI);
@@ -64,32 +102,15 @@ export class TokenManager {
         symbol,
         name,
         decimals: Number(decimals),
+        trusted: false,
       };
 
-      this.tokens.set(normalizedAddress, token);
-      this.logger.info(`💰 Token registered: (${symbol.padEnd(1)}) ${name.padEnd(20)} (TokenAddress: ${normalizedAddress})`);
+      this.logger.info(`Introspected token (${symbol.padEnd(1)}) ${name.padEnd(20)} (TokenAddress: ${normalizedAddress})`);
 
       return token;
     } catch (error) {
-      throw new Error(`Failed to register token ${address}: ${error}`);
+      throw new Error(`Failed to introspect token ${address}: ${error}`);
     }
-  }
-
-  /**
-   * 📦 BATCH REGISTER: Register multiple tokens efficiently
-   */
-  async batchRegisterTokens(): Promise<TokenOnChain[]> {
-    const results = await Promise.allSettled(this.inputTokens.map(({ address }) => this.registerToken(address)));
-
-    const registeredTokens: TokenOnChain[] = [];
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      if (result.status === 'fulfilled') registeredTokens.push(result.value);
-      else throw new Error(`Failed to register token ${this.inputTokens[i].address}: ${result.reason}`);
-    }
-
-    this.logger.info(`✅ Registered ${registeredTokens.length} tokens\n`);
-    return registeredTokens;
   }
 
   /**
@@ -150,6 +171,7 @@ export class TokenManager {
    */
   async getTokenBalance(tokenAddress: string, walletAddress: string): Promise<bigint> {
     const contract = this.blockchain.getContract(tokenAddress);
+    if (!contract) throw new Error(`Contract for token ${tokenAddress} not found`);
     return await contract.balanceOf(walletAddress);
   }
 

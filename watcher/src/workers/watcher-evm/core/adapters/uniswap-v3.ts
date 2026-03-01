@@ -2,13 +2,14 @@
  * 🦄 DEX V3 ADAPTER: High-performance V3 DEX adapter with concentrated liquidity
  */
 import { ethers } from 'ethers';
-import type { TradeQuote, PoolEvent } from '../interfaces';
+import type { TradeQuote, PoolEvent, V3SwapEvent } from '../interfaces';
 import * as SqrtMath from './lib/sqrtPriceMath';
-import { dexPoolId, type DexV3PoolState } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexV3PoolState, type DexVenue } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
 import { createLogger } from '@/utils/logger';
-import type { DexAdapterContext } from './interfaces';
+import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
+import type { Blockchain } from '../blockchain';
 
 // ================================================================================================
 // DEX V3 ADAPTER
@@ -59,6 +60,7 @@ export const ROUTER_ABI = [
 export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPairOnChain): Promise<DexV3PoolState[]> {
   if (ctx.config.protocol !== 'v3') throw new Error(`Invalid config protocol for V3 adapter: ${ctx.config.protocol}`);
   const factoryContract = ctx.blockchain.getContract(ctx.config.factoryAddress);
+  if (!factoryContract) throw new Error(`FactoryV3 contract not found at address: ${ctx.config.factoryAddress}`);
 
   const symbol0 = tokenPair.token0.symbol;
   const symbol1 = tokenPair.token1.symbol;
@@ -70,7 +72,8 @@ export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPair
       const poolAddress = await factoryContract.getPool(tokenPair.token0.address, tokenPair.token1.address, fee);
       if (poolAddress === ethers.ZeroAddress) continue;
 
-      const poolState = await initPool(ctx, poolAddress, tokenPair);
+      const venue = { name: ctx.config.name, type: 'dex' as const, chainId: ctx.blockchain.chainId };
+      const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, feeBps: fee });
       pools.push(poolState);
     } catch (error) {
       // Pool doesn't exist for this fee tier, continue
@@ -81,38 +84,67 @@ export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPair
   return pools;
 }
 
+// =====================================================================================================================
+// Introspect pool from event
+// =====================================================================================================================
+export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event: V3SwapEvent): Promise<DexV3PoolState> {
+  const poolAddress = event.sourceAddress.toLowerCase();
+  let poolContract = ctx.blockchain.getContract(poolAddress);
+  if (!poolContract) poolContract = ctx.blockchain.initContract(poolAddress, POOL_ABI);
+
+  const [token0Address, token1Address, fee] = await Promise.all([
+    poolContract.token0(),
+    poolContract.token1(),
+    poolContract.fee(),
+  ]);
+  const token0 = await ctx.tokenManager.ensureTokenRegistered(token0Address, 'address');
+  const token1 = await ctx.tokenManager.ensureTokenRegistered(token1Address, 'address');
+
+  if (!token0.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token0 ${token0.symbol} (${token0.address}) is not trusted!`);
+  if (!token1.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token1 ${token1.symbol} (${token1.address}) is not trusted!`);
+  const tokenPair = { token0, token1, key: `${token0.symbol}-${token1.symbol}` };
+
+  const venue = { name: 'unknown' as const, type: 'dex' as const, chainId: ctx.blockchain.chainId };
+  // TODO: - attempt to find the venue
+
+  const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, feeBps: Number(fee), event });
+  return poolState;
+}
+
 /**
  * 🏗 INIT POOL: Initialize V3 pool state with static data (called once when pool is first discovered)
  */
-async function initPool(ctx: DexAdapterContext, address: string, tokenPair: TokenPairOnChain): Promise<DexV3PoolState> {
-  const poolAddress = address.toLowerCase();
-
+async function initPool(
+  blockchain: Blockchain,
+  input: {
+    poolAddress: string;
+    tokenPair: TokenPairOnChain;
+    venue: DexVenue;
+    feeBps: number;
+    event?: V3SwapEvent; // optional event for initializing dynamic fields if available (used when introspecting from event)
+  },
+): Promise<DexV3PoolState> {
   // init pool contract
-  const contract = ctx.blockchain.initContract(poolAddress, POOL_ABI);
+  const contract = blockchain.initContract(input.poolAddress, POOL_ABI);
 
   // Fetch pool static data
-  const [token0Address, token1Address, fee, tickSpacing /* feeGrowthGlobal0X128, feeGrowthGlobal1X128 */] = await Promise.all([
-    contract.token0(),
-    contract.token1(),
-    contract.fee(),
+  const [tickSpacing /* feeGrowthGlobal0X128, feeGrowthGlobal1X128 */] = await Promise.all([
     contract.tickSpacing(),
     // contract.feeGrowthGlobal0X128(),
     // contract.feeGrowthGlobal1X128(),
   ]);
 
-  if (!token0Address || !token1Address) throw new Error(`Failed to fetch token addresses for pool ${poolAddress}`);
-  if (!fee) throw new Error(`Failed to fetch fee for pool ${poolAddress}`);
-  if (!tickSpacing) throw new Error(`Failed to fetch tick spacing for pool ${poolAddress}`);
+  if (!tickSpacing) throw new Error(`Failed to fetch tick spacing for pool ${input.poolAddress}`);
 
-  const poolState: DexV3PoolState = {
-    id: dexPoolId(ctx.blockchain.chainId, poolAddress),
-    address: poolAddress,
-    venue: { name: ctx.config.name, type: 'dex', chainId: ctx.blockchain.chainId },
+  const newPool: DexV3PoolState = {
+    id: dexPoolId(blockchain.chainId, input.poolAddress),
+    address: input.poolAddress,
+    venue: input.venue,
     protocol: 'v3',
-    pairId: getCanonicalPairId(tokenPair.token0, tokenPair.token1),
-    tokenPair,
-    feeBps: fee, // Fee in basis points (500, 3000, 10000)
-    tickSpacing: tickSpacing, // Tick spacing for the pool
+    pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),
+    tokenPair: input.tokenPair,
+    feeBps: input.feeBps, // Fee in basis points (500, 3000, 10000)
+    tickSpacing: Number(tickSpacing), // Tick spacing for the pool
 
     // init dynamic fields to zero (updated later)
     sqrtPriceX96: 0n,
@@ -124,7 +156,8 @@ async function initPool(ctx: DexAdapterContext, address: string, tokenPair: Toke
     spotPrice1to0: 0,
   };
 
-  return poolState;
+  if (input.event) updatePoolFromEvent(newPool, input.event);
+  return newPool;
 }
 
 /**
@@ -176,6 +209,7 @@ async function getTradeQuote(
 ): Promise<TradeQuote> {
   if (ctx.config.protocol !== 'v3') throw new Error(`Invalid config protocol for V3 adapter: ${ctx.config.protocol}`);
   const quoterContract = ctx.blockchain.getContract(ctx.config.quoterAddress);
+  if (!quoterContract) throw new Error(`Quoter contract not found at address: ${ctx.config.quoterAddress}`);
   if (amountIn <= 0n) throw new Error(`Invalid trade amount: ${amountIn} (must be > 0)`);
   if (poolState.liquidity! <= 0n) throw new Error(`Insufficient liquidity in pool: ${poolState.id}`);
   const { token0, token1 } = poolState.tokenPair;
@@ -292,7 +326,7 @@ export async function fetchInitializedTicks(
   tickRange: number = 200,
 ): Promise<void> {
   const contract = ctx.blockchain.getContract(pool.id);
-  if (!contract) return;
+  if (!contract) throw new Error(`Pool contract not found for address: ${pool.address}`);
 
   const currentTick = pool.tick!;
   const tickSpacing = Number(pool.tickSpacing!);
@@ -334,7 +368,7 @@ async function fetchInitializedTicksMulticall3(
   tickRange: number = 10,
 ): Promise<void> {
   const contract = ctx.blockchain.getContract(pool.id);
-  if (!contract) return;
+  if (!contract) throw new Error(`Pool contract not found for address: ${pool.address}`);
 
   const currentTick = Number(pool.tick!);
   const tickSpacing = Number(pool.tickSpacing!);
@@ -372,6 +406,7 @@ async function fetchInitializedTicksMulticall3(
   const allResults: { success: boolean; returnData: string }[] = [];
 
   const multicall = ctx.blockchain.getMulticall3Contract();
+  if (!multicall) throw new Error(`Multicall3 contract not found on blockchain ${ctx.blockchain.chainId}`);
 
   for (let i = 0; i < calls.length; i += BATCH_SIZE) {
     const batch = calls.slice(i, i + BATCH_SIZE);

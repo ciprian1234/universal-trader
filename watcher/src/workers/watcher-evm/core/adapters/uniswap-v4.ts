@@ -224,6 +224,7 @@ function isWETH(address: string): boolean {
 export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPairOnChain): Promise<DexV4PoolState[]> {
   if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 pool initialization');
   const stateViewContract = ctx.blockchain.getContract(ctx.config.stateViewAddress);
+  if (!stateViewContract) throw new Error(`StateView contract not found at address: ${ctx.config.stateViewAddress}`);
   const symbol0 = tokenPair.token0.address;
   const symbol1 = tokenPair.token1.address;
   const pools: DexV4PoolState[] = [];
@@ -319,6 +320,7 @@ export async function updatePool(ctx: DexAdapterContext, pool: DexV4PoolState): 
 
   // Call PoolManager for this specific ID
   const stateViewContract = ctx.blockchain.getContract(ctx.config.stateViewAddress);
+  if (!stateViewContract) throw new Error(`StateView contract not found at address: ${ctx.config.stateViewAddress}`);
   const [slot0, liquidity] = await Promise.all([stateViewContract.getSlot0(poolKey), stateViewContract.getLiquidity(poolKey)]);
   if (!slot0) throw new Error(`Failed to fetch slot0 for pool ID ${poolKey}`);
 
@@ -370,6 +372,7 @@ export async function getTradeQuote(
 ): Promise<TradeQuote> {
   if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 trade quote');
   const quoterContract = ctx.blockchain.getContract(ctx.config.quoterAddress);
+  if (!quoterContract) throw new Error(`Quoter contract not found at address: ${ctx.config.quoterAddress}`);
   const { token0, token1 } = pool.tokenPair;
 
   // Ensure Key logic matches discovery
@@ -499,6 +502,7 @@ export function updatePoolFromEvent(pool: DexV4PoolState, event: V4SwapEvent): D
 export async function getTickBitmap(ctx: DexAdapterContext, poolId: string, wordPos: number): Promise<bigint> {
   if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 tick bitmap');
   const poolManagerContract = ctx.blockchain.getContract(ctx.config.poolManagerAddress);
+  if (!poolManagerContract) throw new Error(`PoolManager contract not found at address: ${ctx.config.poolManagerAddress}`);
   // Calculate storage slot for tick bitmap
   const slot = ethers.solidityPackedKeccak256(['bytes32', 'uint256'], [poolId, wordPos]);
 
@@ -534,7 +538,7 @@ export async function getPoolStateFromStorage(
 ): Promise<{ sqrtPriceX96: bigint; tick: number; liquidity: bigint }> {
   if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 tick bitmap');
   const poolManagerContract = ctx.blockchain.getContract(ctx.config.poolManagerAddress);
-
+  if (!poolManagerContract) throw new Error(`PoolManager contract not found at address: ${ctx.config.poolManagerAddress}`);
   // 1. Calculate the base storage slot for this pool's struct in the mapping
   // mapping slot for key k is keccak256(abi.encode(k, padding_slot))
   // Assuming _pools is at slot 0

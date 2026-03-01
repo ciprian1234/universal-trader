@@ -7,3 +7,8 @@ export interface DexAdapterContext {
   blockchain: Blockchain;
   tokenManager: TokenManager;
 }
+
+export interface PoolIntrospectContext {
+  blockchain: Blockchain;
+  tokenManager: TokenManager;
+}

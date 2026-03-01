@@ -5,12 +5,6 @@
 import { DEX_VENUE_NAMES } from '@/shared/data-model/layer1';
 import { z } from 'zod';
 
-export const TokenConfigSchema = z.object({
-  address: z.string(),
-  symbol: z.string(),
-  decimals: z.number().optional(),
-});
-
 // ── DEX Config Schemas (protocol-specific) ──────────────────
 
 const DexConfigBase = z.object({
@@ -57,7 +51,7 @@ export const ChainConfigSchema = PlatformConfigSchema.extend({
   preferredBorrowTokens: z.array(z.string()),
 
   // Tokens
-  tokens: z.array(TokenConfigSchema),
+  tokens: z.array(z.string()), // List of token symbols to register at startup, e.g. ['WETH', 'USDC']
 
   // DEXes
   dexConfigs: z.array(DexConfigSchema),
@@ -108,7 +102,6 @@ export type DexConfig = z.infer<typeof DexConfigSchema>;
 export type DexV2Config = z.infer<typeof DexV2ConfigSchema>;
 export type DexV3Config = z.infer<typeof DexV3ConfigSchema>;
 export type DexV4Config = z.infer<typeof DexV4ConfigSchema>;
-export type TokenConfig = z.infer<typeof TokenConfigSchema>;
 export type PlatformConfig = z.infer<typeof PlatformConfigSchema>;
 export type ChainConfig = z.infer<typeof ChainConfigSchema>;
 export type ExchangeConfig = z.infer<typeof ExchangeConfigSchema>;

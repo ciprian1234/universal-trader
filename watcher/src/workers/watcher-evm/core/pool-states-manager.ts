@@ -3,7 +3,7 @@ import { EventBus } from './event-bus';
 import type { PoolEvent } from './interfaces';
 import type { DexRegistry } from './dex-registry';
 import { TokenManager } from '../core/token-manager';
-import type { Logger } from '@/utils';
+import { safeStringify, type Logger } from '@/utils';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { DexPoolState, DexV2PoolState, DexV3PoolState, DexV4PoolState, EventMetadata } from '@/shared/data-model/layer1';
 
@@ -165,14 +165,18 @@ export class PoolStatesManager {
   // ================================================================================================
   // EVENT HANDLERS
   // ================================================================================================
-  handlePoolEvent(event: PoolEvent) {
-    const pool = this.poolStates.get(event.poolId);
-    if (!pool) return this.logger.warn(`Received event for unknown poolId: ${event.poolId}`);
+  async handlePoolEvent(event: PoolEvent) {
+    let pool: DexPoolState | null = null;
+    if (this.poolStates.has(event.poolId)) pool = this.poolStates.get(event.poolId)!;
+    else {
+      pool = await this.dexRegistry.handleEventForUnknownPool(event);
+      console.log('handleEventForUnknownPool result:', safeStringify(pool));
+    }
+    if (!pool) return this.logger.warn(`Unable to find or introspect pool for event with poolId ${event.poolId}`);
 
     // check if event is newer
     if (!this.isEventNewer(event.meta, pool.latestEventMeta)) {
-      this.logger.warn(`⚠️ Skipping outdated event received for ${event.poolId}`);
-      return;
+      return this.logger.warn(`⚠️ Skipping outdated event received for ${event.poolId}`);
     }
 
     // log event details
@@ -191,7 +195,7 @@ export class PoolStatesManager {
     this.poolStates.set(pool.id, updatedState);
 
     // Emit pool update event
-    this.eventBus.emitPoolUpdate(updatedState, pool);
+    // this.eventBus.emitPoolUpdate(updatedState, pool);
   }
 
   // ================================================================================================
@@ -233,7 +237,6 @@ export class PoolStatesManager {
   displayEvent(event: PoolEvent, previousState: DexPoolState, updatedState: DexPoolState): void {
     const s0 = updatedState.tokenPair.token0.symbol;
     const s1 = updatedState.tokenPair.token1.symbol;
-    // const adapter = this.dexRegistry.getAdapter(updatedState.venue.name)!;
 
     // get info data
     const oldSpotPriceToken0InToken1 = previousState.spotPrice0to1;

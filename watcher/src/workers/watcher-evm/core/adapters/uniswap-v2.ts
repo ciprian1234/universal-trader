@@ -3,14 +3,18 @@
  */
 import { ethers } from 'ethers';
 import type { TradeQuote, V2SyncEvent } from '../interfaces';
-import { dexPoolId, type DexV2PoolState } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexV2PoolState, type DexVenue } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
-import type { DexAdapterContext } from './interfaces';
+import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
+import { createLogger } from '@/utils/logger';
+import type { Blockchain } from '../blockchain';
 
 // ================================================================================================
 // DEX V2 ADAPTERS
 // ================================================================================================
+
+const logger = createLogger('DexV2Adapter');
 
 const FEE_BASIS_POINTS = 30; // 0.3% fee (30 bps) (denominated by 10,000)
 
@@ -42,33 +46,62 @@ export const ROUTER_ABI = [
  */
 export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPairOnChain): Promise<DexV2PoolState[]> {
   if (ctx.config.protocol !== 'v2') throw new Error(`Invalid config protocol for V2 adapter: ${ctx.config.protocol}`);
+
   const factoryContract = ctx.blockchain.getContract(ctx.config.factoryAddress);
+  if (!factoryContract) throw new Error(`FactoryV2 contract not found at address: ${ctx.config.factoryAddress}`);
   const poolAddress = await factoryContract.getPair(tokenPair.token0.address, tokenPair.token1.address);
   if (poolAddress === ethers.ZeroAddress) return []; // no pool exists for this pair
-  const poolState = await initPool(ctx, poolAddress, tokenPair);
+
+  const venue = { name: ctx.config.name, type: 'dex' as const, chainId: ctx.blockchain.chainId };
+  const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue });
   return [poolState];
 }
 
+// =====================================================================================================================
+// Introspect pool from event
+// =====================================================================================================================
+export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event: V2SyncEvent): Promise<DexV2PoolState> {
+  const poolAddress = event.sourceAddress;
+  let poolContract = ctx.blockchain.getContract(poolAddress);
+  if (!poolContract) poolContract = ctx.blockchain.initContract(poolAddress, POOL_ABI);
+
+  const [token0Address, token1Address] = await Promise.all([poolContract.token0(), poolContract.token1()]);
+  const token0 = await ctx.tokenManager.ensureTokenRegistered(token0Address, 'address');
+  const token1 = await ctx.tokenManager.ensureTokenRegistered(token1Address, 'address');
+
+  if (!token0.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token0 ${token0.symbol} (${token0.address}) is not trusted!`);
+  if (!token1.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token1 ${token1.symbol} (${token1.address}) is not trusted!`);
+  const tokenPair = { token0, token1, key: `${token0.symbol}-${token1.symbol}` };
+
+  const venue = { name: 'unknown' as const, type: 'dex' as const, chainId: ctx.blockchain.chainId };
+
+  // TODO: - attempt to find the venue
+
+  const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue });
+  return poolState;
+}
+
 /**
- * 🏗 INIT POOL: Initialize V2 pool state with static data (called once when pool is first discovered)
+ * 🏗 INIT POOL: Initialize V2 pool state: called either from pool discovery or from introspection
+ * If pool initialized from event => we have the dynamic fields
  */
-async function initPool(ctx: DexAdapterContext, address: string, tokenPair: TokenPairOnChain): Promise<DexV2PoolState> {
-  const poolAddress = address.toLowerCase();
-
+async function initPool(
+  blockchain: Blockchain,
+  input: { poolAddress: string; tokenPair: TokenPairOnChain; venue: DexVenue; event?: V2SyncEvent },
+): Promise<DexV2PoolState> {
   // init pool contract
-  const contract = ctx.blockchain.initContract(poolAddress, POOL_ABI);
+  const contract = blockchain.initContract(input.poolAddress, POOL_ABI);
+  // Fetch pool static data (not needed since we already have tokenPair)
+  // const [token0Address, token1Address] = await Promise.all([contract.token0(), contract.token1()]);
+  // if (!token0Address || !token1Address) throw new Error(`Failed to fetch token addresses for pool ${poolAddress}`);
 
-  // Fetch pool static data
-  const [token0Address, token1Address] = await Promise.all([contract.token0(), contract.token1()]);
-  if (!token0Address || !token1Address) throw new Error(`Failed to fetch token addresses for pool ${poolAddress}`);
-
-  return {
-    id: dexPoolId(ctx.blockchain.chainId, poolAddress),
-    address: poolAddress,
-    venue: { name: ctx.config.name, type: 'dex', chainId: ctx.blockchain.chainId },
+  const newPool: DexV2PoolState = {
+    id: dexPoolId(blockchain.chainId, input.poolAddress),
+    address: input.poolAddress,
+    venue: input.venue,
     protocol: 'v2',
-    pairId: getCanonicalPairId(tokenPair.token0, tokenPair.token1),
-    tokenPair,
+    pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),
+    tokenPair: input.tokenPair,
     feeBps: FEE_BASIS_POINTS, // Convert to basis points (0.3% = 30 bps (denominated by 10,000))
 
     // init dynamic fields to zero (updated later)
@@ -78,6 +111,9 @@ async function initPool(ctx: DexAdapterContext, address: string, tokenPair: Toke
     spotPrice1to0: 0,
     // totalLiquidityInUSD: 0,
   };
+
+  if (input.event) updatePoolFromEvent(newPool, input.event);
+  return newPool;
 }
 
 /**

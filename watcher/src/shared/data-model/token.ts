@@ -9,9 +9,10 @@ export interface TokenBase {
 
 /** On-chain token with a known address */
 export interface TokenOnChain extends TokenBase {
-  address: string;
   chainId: number;
+  address: string;
   decimals: number;
+  trusted: boolean; // whether this token is in the trusted token list (e.g. coingecko or uniswap token lists)
 }
 
 /** Token reference that may or may not be on-chain (used in VenueState.tokens) */

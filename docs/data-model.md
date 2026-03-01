@@ -18,15 +18,30 @@
 
 - start with a small list of tokens from config => ETH, WETH, USDC, USDT, DAI, WBTC
   => discover Pools for configured tokens across venues
-- the tokens and pools would grow over time => sync tokens and pools in DB
+- the tokens and pools would grow over time by pool events or => sync tokens and pools in DB
+
+## State initialization (at application startup) and main event flows
+
+- load all previously stored Tokens from DB (trusted from coingecko and untrusted - introspected from on-chain if not found in coingecko token list): all tokens are enabled by default (a token can be explicitly disabled api-server => if token disable its called => send request to worker)
+- load all previously discovered pools from DB (with static data, poolAddress, venue, tokenPair, fee, tick-spacing)
+- start listening for All V2/V3/V4 pool-events
+- fetch dynamic data (call updatePool) for few PoolStates (fetch dynamic data for some popular preconfigured token pairs like WETH-USDC, WBTC-USDC, etc.)
+- if event occurs on a previously discovered pool OR we call updatePool => we consider that pool as: active/enabled/inSync
+- if event occurs on some undiscovered/unidentified pool we call introspectPool to initialize the pool and save pool to DB
+  => if event its V2_SYNC OR V3_SWAP we can consider that pool as: active/enabled/inSync since can update the pool with dynamic data.
+
+### NOTES
+
+- main thread only listen for events and keep its cache updated
+- if mainthread wants to add/remove enable/disable a DexVenueState/Token it will send a command and worker will behave acordingly (write toDB and update its internal memory)
 
 ## PoolEvent => VenueState discovery
 
 - When a poolEvent its emited => we have poolId and event data
-- V2-SYNC => we have reserve0/reserve1 but we don't know token0/token1 and the venue
-- V3-SWAP =>
+- V2/V3 => we have event dynamic data (reserve0/reserve0, etc..) but token0/token1 info
+- V4-EVENTS => we know token addresses and venue as well since its coming from PoolManager
 
-Q: Can we perform swap if we know only the poolId?
+Q: Can we perform swap if we know only the poolId? Yes
 
 ## Tokens
 
