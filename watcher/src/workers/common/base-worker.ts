@@ -9,7 +9,7 @@ declare const self: Worker;
 export abstract class BaseWorker {
   isInitialized = false;
   workerId = 'unidentified-worker';
-  log = createLogger(`worker`);
+  logger = createLogger(`worker`);
 
   constructor() {
     // Listen for messages FROM the main thread
@@ -17,7 +17,7 @@ export abstract class BaseWorker {
       const message = msg.data; // the actual message its inside BunMessageEvent.data
       if (message.type === 'request') this.handleRequestMessage(message as RequestMessage);
       else if (message.type === 'event') this.handleEventMessage(message as EventMessage);
-      else this.log.warn(`Unknown message type: ${message.type}`);
+      else this.logger.warn(`Unknown message type: ${message.type}`);
     };
   }
 
@@ -27,14 +27,14 @@ export abstract class BaseWorker {
   handleRequestMessage(message: RequestMessage): void {
     const { name, data, correlationId } = message;
     if (!this.isInitialized && name !== 'init') {
-      this.log.warn(`Worker not initialized. Ignoring request: ${name}`);
+      this.logger.warn(`Worker not initialized. Ignoring request: ${name}`);
       this.sendResponseMessage({ correlationId, error: { message: `Worker not initialized` } });
     } else if (name == 'init') {
       // base init logic (e.g. set worker name in context, setup logger)
       const config = data as PlatformConfig;
       if (!config.id) throw new Error(`Missing "id" from init config`);
       this.workerId = config.id;
-      this.log = createLogger(`[${config.id}]`); // Update logger with worker name
+      this.logger = createLogger(`[${config.id}]`); // Update logger with worker name
 
       // call init from the concrete worker class
       this.init(data)
@@ -44,24 +44,24 @@ export abstract class BaseWorker {
         })
         .catch((error) => {
           this.isInitialized = false;
-          this.log.error(`init`, error);
+          this.logger.error(`init`, error);
           this.sendResponseMessage({ correlationId, error: { message: error.message } });
         });
     } else if (name === 'stop') {
       this.stop()
         .then(() => {
           this.sendResponseMessage({ correlationId, data: { success: true } });
-          this.log.info('✅ Stopped successfully');
+          this.logger.info('✅ Stopped successfully');
         })
         .catch((error) => {
-          this.log.error(`❌ Error during worker termination:`, error);
+          this.logger.error(`❌ Error during worker termination:`, error);
           this.sendResponseMessage({ correlationId, error: { message: error.message } });
         });
       // note: we don't call self.termintate() since main thread will call worker.terminate() after receiving the stop response
     } else {
       // call the concrete worker's request handler
       this.handleRequest(message).catch((error) => {
-        this.log.error(`handleRequest <${name}>:`, error);
+        this.logger.error(`handleRequest <${name}>:`, error);
         this.sendResponseMessage({ correlationId, error: { message: error.message } });
       });
     }
@@ -72,7 +72,7 @@ export abstract class BaseWorker {
    */
   handleEventMessage(event: EventMessage): void {
     this.handleEvent(event).catch((error) => {
-      this.log.error(`handleEvent <${event.name}>:`, error);
+      this.logger.error(`handleEvent <${event.name}>:`, error);
     });
   }
 
