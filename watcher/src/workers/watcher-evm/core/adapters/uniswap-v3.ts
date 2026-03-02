@@ -85,7 +85,7 @@ export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPair
 }
 
 // =====================================================================================================================
-// Introspect pool from event
+// Introspect pool from event - also apply event data to pool state (for faster updates)
 // =====================================================================================================================
 export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event: V3SwapEvent): Promise<DexV3PoolState> {
   const poolAddress = event.sourceAddress.toLowerCase();

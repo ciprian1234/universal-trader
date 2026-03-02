@@ -95,8 +95,8 @@ class EVMWorker extends BaseWorker {
       eventBus: this.eventBus,
       db: this.db,
     });
-    await this.tokenManager.init(); // load tokens from db and trusted tokens from coingecho
-    await Promise.all(this.config.tokens.map((symbol) => this.tokenManager.ensureTokenRegistered(symbol, 'symbol'))); // register configured input tokens at startup
+    await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecho
+    await Promise.all(this.config.tokens.map((symbol) => this.tokenManager.ensureTokenRegistered(symbol, 'symbol')));
 
     // create dex registry and register adapters
     this.dexRegistry = new DexRegistry({
@@ -104,7 +104,7 @@ class EVMWorker extends BaseWorker {
       tokenManager: this.tokenManager,
       logger: createLogger(`[${this.workerId}.dex-registry]`),
     });
-    this.dexRegistry.init(this.config);
+    this.dexRegistry.init(this.config); // init contracts for dex venues
 
     // initialize PoolStatesManager
     this.poolStatesManager = new PoolStatesManager({
@@ -116,7 +116,6 @@ class EVMWorker extends BaseWorker {
       db: this.db,
     });
     await this.poolStatesManager.init(); // load discovered pools from DB
-    // await this.poolStatesManager.discoverAndRegisterPools(tradingPairs); // Discover and register pools for trading pairs
 
     this.tokenManager.createTradingPairs(); // emit events with created trading pairs => this triggers pool discovery in PoolStatesManager
 

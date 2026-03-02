@@ -26,7 +26,8 @@ export class PoolStatesManager {
   private readonly db: WorkerDb;
 
   private poolStates: Map<string, DexPoolState> = new Map();
-  private latestPoolEventMeta: Map<string, EventMetadata> = new Map();
+  private activePoolIds: Set<string> = new Set(); // track active pool IDs
+  private unknownPoolIds: Set<string> = new Set(); // track pool IDs that have received events but are not in the registry
 
   constructor(input: PoolStatesManagerInput) {
     this.chainId = input.chainId;
@@ -94,7 +95,7 @@ export class PoolStatesManager {
    * 📈 GET ALL ACTIVE POOLS
    */
   getAllActivePools(): DexPoolState[] {
-    return Array.from(this.poolStates.values());
+    return Array.from(this.activePoolIds).map((poolId) => this.poolStates.get(poolId)!);
   }
 
   // ================================================================================================
@@ -130,22 +131,23 @@ export class PoolStatesManager {
     this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${discoveredPools.length} new pools`);
   }
 
-  async updateAll(): Promise<void> {
+  async updateActivePools(): Promise<void> {
     this.logger.info('🔄 Updating all pool states...');
-    for (const [id, pool] of this.poolStates.entries()) {
+    for (const poolId of this.activePoolIds) {
       try {
+        const pool = this.poolStates.get(poolId)!;
         const updatedPoolState = await this.dexRegistry.updatePool(pool);
-        this.poolStates.set(id, updatedPoolState);
+        this.poolStates.set(poolId, updatedPoolState);
 
         // Log pool initialization
         this.logger.info(
           `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
         );
       } catch (error) {
-        this.logger.warn(`❌ Failed to update pool ${id}:`, { error });
+        this.logger.warn(`❌ Failed to update pool ${poolId}:`, { error });
       }
     }
-    this.logger.info(`✅ Updated ${this.poolStates.size} pool states`);
+    this.logger.info(`✅ Updated ${this.activePoolIds.size} active pool states`);
   }
 
   // ================================================================================================
@@ -186,17 +188,15 @@ export class PoolStatesManager {
   // EVENT HANDLERS
   // ================================================================================================
   async handlePoolEvent(event: PoolEvent) {
-    let pool: DexPoolState | null = null;
-    if (this.poolStates.has(event.poolId)) pool = this.poolStates.get(event.poolId)!;
-    else {
-      pool = await this.dexRegistry.handleEventForUnknownPool(event);
-      console.log('handleEventForUnknownPool result:', safeStringify(pool));
-    }
-    if (!pool) return this.logger.warn(`Unable to find or introspect pool for event with poolId ${event.poolId}`);
-
-    // check if event is newer
-    if (!this.isEventNewer(event.meta, pool.latestEventMeta)) {
-      return this.logger.warn(`⚠️ Skipping outdated event received for ${event.poolId}`);
+    let pool: DexPoolState | null = this.poolStates.get(event.poolId) ?? null;
+    if (pool) {
+      // => pool its registred - update state from event data
+      const updatedState = this.dexRegistry.updatePoolFromEvent(pool, event);
+      this.poolStates.set(pool.id, updatedState);
+    } else {
+      // => pool its unknown - try to introspect it from the event
+      pool = await this.dexRegistry.handleEventForUnknownPool(event); // NOTE: this may take longer...
+      if (!pool) return this.logger.warn(`Unable to introspect pool, ignoring event for poolId: ${event.poolId}`);
     }
 
     // log event details
@@ -205,46 +205,15 @@ export class PoolStatesManager {
     const deltaMs = Date.now() - event.meta.blockReceivedTimestamp;
     this.logger.info(`${eventDetails.padEnd(60)} 🔗 ${event.meta.blockNumber} (+${deltaMs}ms)`);
 
-    // Update pool state from event
-    const updatedState = this.dexRegistry.updatePoolFromEvent(pool, event);
-
-    // Update latest event timestamp
-    this.latestPoolEventMeta.set(pool.id, event.meta); // set blockchain timestamp (not local)
-
-    // Update active state
-    this.poolStates.set(pool.id, updatedState);
+    // Mark pool as active if not already
+    if (pool.venue.name === 'unknown') {
+      if (!this.unknownPoolIds.has(pool.id)) this.unknownPoolIds.add(pool.id);
+    } else {
+      if (!this.activePoolIds.has(pool.id)) this.activePoolIds.add(pool.id);
+    }
 
     // Emit pool update event
     // this.eventBus.emitPoolUpdate(updatedState, pool);
-  }
-
-  // ================================================================================================
-  // HELPERS for pool staleness
-  // ================================================================================================
-  public arePoolsFresh(poolStates: DexPoolState[]): boolean {
-    return poolStates.every((currentPool) => {
-      const latestPoolEventMeta = this.latestPoolEventMeta.get(currentPool.id);
-      if (!latestPoolEventMeta) return true;
-      return !this.isEventNewer(latestPoolEventMeta, currentPool.latestEventMeta);
-    });
-  }
-
-  private isEventNewer(newEvent: EventMetadata, lastEvent?: EventMetadata): boolean {
-    // if no last event, consider new event as newer
-    if (!lastEvent) return true;
-
-    // Primary: Block number
-    if (newEvent.blockNumber !== lastEvent.blockNumber) {
-      return newEvent.blockNumber > lastEvent.blockNumber;
-    }
-
-    // Secondary: Transaction index within block
-    if (newEvent.transactionIndex !== lastEvent.transactionIndex) {
-      return newEvent.transactionIndex > lastEvent.transactionIndex;
-    }
-
-    // Tertiary: Log index within transaction
-    return newEvent.logIndex > lastEvent.logIndex;
   }
 
   // ================================================================================================

@@ -58,7 +58,7 @@ export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPair
 }
 
 // =====================================================================================================================
-// Introspect pool from event
+// Introspect pool from event - also apply event data to pool state (for faster updates)
 // =====================================================================================================================
 export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event: V2SyncEvent): Promise<DexV2PoolState> {
   const poolAddress = event.sourceAddress;
@@ -77,7 +77,7 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
 
   // TODO: - attempt to find the venue
 
-  const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue });
+  const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, event });
   return poolState;
 }
 

@@ -12,7 +12,7 @@ import { EventBus } from './event-bus';
 import { PoolStatesManager } from './pool-states-manager';
 import { Blockchain } from './blockchain';
 import type { Logger } from '@/utils';
-import { dexPoolId, type EventMetadata } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexPoolState, type EventMetadata } from '@/shared/data-model/layer1';
 
 type BlockManagerInput = {
   chainId: number;
@@ -45,6 +45,9 @@ export class BlockManager {
   private eventFilter: ethers.Filter | null = null;
   private eventBuffer: PoolEvent[] = [];
   private eventsProcessingTimer: NodeJS.Timeout | null = null;
+
+  // latest event metadata for each pool (used for reorg handling and ensuring we only apply newer events)
+  private latestPoolEventsMeta: Map<string, EventMetadata> = new Map();
 
   // Event signatures - Support V2, V3, and V4
   private readonly EVENT_TOPICS = {
@@ -190,7 +193,7 @@ export class BlockManager {
 
     // Refresh all pool states
     this.logger.info('🔄 Refreshing pool states after reorg...');
-    await this.poolStatesManager.updateAll();
+    await this.poolStatesManager.updateActivePools();
     this.poolStatesManager.calculateAllPoolsLiquidityUSD();
 
     // resume arbitrage checking after recovery
@@ -203,11 +206,14 @@ export class BlockManager {
    */
   private handlePoolEvent(log: ethers.Log): void {
     try {
-      // if (!this.poolAddressesSet.has(log.address.toLowerCase())) {
-      //   this.logger.warn(`Received event for unmonitored pool: ${log.address}`, { log }); // POST_MVP allow dynamic pool subscription management
-      //   return;
-      // }
       const event = this.parseLog(log);
+
+      // check if event is newer
+      if (!this.isEventNewer(event.meta, this.latestPoolEventsMeta.get(event.poolId))) {
+        return this.logger.warn(`⚠️ Skipping outdated event received for ${event.poolId}`);
+      }
+      // this event its newer => set latest event for pool and continue
+      this.latestPoolEventsMeta.set(event.poolId, event.meta);
 
       // Push event to event buffer
       this.eventBuffer.push(event);
@@ -239,6 +245,35 @@ export class BlockManager {
     // this.eventBus.emitPoolEventsBatch({ events });
 
     this.eventsProcessingTimer = null;
+  }
+
+  // ================================================================================================
+  // HELPERS for pool staleness
+  // ================================================================================================
+  public arePoolsFresh(poolStates: DexPoolState[]): boolean {
+    return poolStates.every((currentPool) => {
+      const latestPoolEventMeta = this.latestPoolEventsMeta.get(currentPool.id);
+      if (!latestPoolEventMeta) return true;
+      return !this.isEventNewer(latestPoolEventMeta, currentPool.latestEventMeta);
+    });
+  }
+
+  private isEventNewer(newEvent: EventMetadata, lastEvent?: EventMetadata): boolean {
+    // if no last event, consider new event as newer
+    if (!lastEvent) return true;
+
+    // Primary: Block number
+    if (newEvent.blockNumber !== lastEvent.blockNumber) {
+      return newEvent.blockNumber > lastEvent.blockNumber;
+    }
+
+    // Secondary: Transaction index within block
+    if (newEvent.transactionIndex !== lastEvent.transactionIndex) {
+      return newEvent.transactionIndex > lastEvent.transactionIndex;
+    }
+
+    // Tertiary: Log index within transaction
+    return newEvent.logIndex > lastEvent.logIndex;
   }
 
   /**
