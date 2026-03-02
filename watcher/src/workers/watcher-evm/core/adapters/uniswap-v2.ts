@@ -97,7 +97,7 @@ async function initPool(
 
   const newPool: DexV2PoolState = {
     id: dexPoolId(blockchain.chainId, input.poolAddress),
-    address: input.poolAddress,
+    address: input.poolAddress.toLowerCase(),
     venue: input.venue,
     protocol: 'v2',
     pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),

@@ -6,6 +6,7 @@ import { TokenManager } from '../core/token-manager';
 import { safeStringify, type Logger } from '@/utils';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { DexPoolState, DexV2PoolState, DexV3PoolState, DexV4PoolState, EventMetadata } from '@/shared/data-model/layer1';
+import type { WorkerDb } from '../db';
 
 export type PoolStatesManagerInput = {
   chainId: number;
@@ -13,6 +14,7 @@ export type PoolStatesManagerInput = {
   eventBus: EventBus;
   dexRegistry: DexRegistry;
   tokenManager: TokenManager;
+  db: WorkerDb;
 };
 
 export class PoolStatesManager {
@@ -21,6 +23,7 @@ export class PoolStatesManager {
   private readonly eventBus: EventBus;
   private readonly dexRegistry: DexRegistry;
   private readonly tokenManager: TokenManager;
+  private readonly db: WorkerDb;
 
   private poolStates: Map<string, DexPoolState> = new Map();
   private latestPoolEventMeta: Map<string, EventMetadata> = new Map();
@@ -31,6 +34,7 @@ export class PoolStatesManager {
     this.dexRegistry = input.dexRegistry;
     this.tokenManager = input.tokenManager;
     this.logger = input.logger;
+    this.db = input.db;
   }
 
   // ================================================================================================
@@ -98,6 +102,16 @@ export class PoolStatesManager {
   // ================================================================================================
   // INITIALIZATION AND MANAGEMENT
   // ================================================================================================
+  async init() {
+    const storedPools = await this.db.loadAllPools();
+    this.logger.info(`📦 Loaded ${storedPools.length} pools from DB`);
+    for (const pool of storedPools) {
+      this.poolStates.set(pool.id, pool.state);
+      this.logger.info(`📦 Registered pool: ${pool.venue_name} ${pool.token_pair_key} ${pool.fee_bps} (${pool.state.address})`);
+      // TODO: also send event to main thread
+    }
+  }
+
   async discoverAndRegisterPools(watchedPairs: TokenPairOnChain[]): Promise<void> {
     const discoveredPools = await this.dexRegistry.discoverAllPools(watchedPairs);
     for (const pool of discoveredPools) {
@@ -107,6 +121,7 @@ export class PoolStatesManager {
         continue;
       }
       this.poolStates.set(poolId, pool);
+      await this.db.upsertPool(pool, 'config');
     }
   }
 

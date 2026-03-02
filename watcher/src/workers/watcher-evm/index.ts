@@ -9,9 +9,11 @@ import { PoolStatesManager } from './core/pool-states-manager';
 import { EventBus } from './core/event-bus';
 import { DexRegistry } from './core/dex-registry';
 import { BlockManager } from './core/block-manager';
+import { WorkerDb } from './db';
 
 class EVMWorker extends BaseWorker {
   private config!: ChainConfig;
+  private db!: WorkerDb;
   private cache!: CacheService;
   private eventBus!: EventBus;
 
@@ -45,7 +47,7 @@ class EVMWorker extends BaseWorker {
         //   updatedPoolStates,
         // });
       } catch (error) {
-        this.log.error(`Error in poolEventsBatch handler: ${error instanceof Error ? error.stack : String(error)}`);
+        this.logger.error(`Error in poolEventsBatch handler: ${error instanceof Error ? error.stack : String(error)}`);
       }
     });
   }
@@ -53,13 +55,14 @@ class EVMWorker extends BaseWorker {
   async init(config: ChainConfig) {
     this.config = config;
 
-    // init event bus and setup event pipeline
-    this.eventBus = new EventBus({ logger: createLogger(`[${this.workerId}.event-bus]`) });
-    this.setupEventPipeline();
-
     // init cache
     this.cache = new CacheService(this.config.chainId);
     await this.cache.load();
+
+    // init database
+    this.db = new WorkerDb(this.config.databaseUrl, this.config.chainId);
+    // await this.db.reset(); // for testing only, reset db on startup
+    await this.db.createTables();
 
     // init blockchain
     this.blockchain = new Blockchain({
@@ -70,16 +73,19 @@ class EVMWorker extends BaseWorker {
       logger: createLogger(`[${this.workerId}.blockchain]`),
     });
 
+    // init event bus and setup event pipeline
+    this.eventBus = new EventBus({ logger: createLogger(`[${this.workerId}.event-bus]`) });
+    this.setupEventPipeline();
+
     // create token manager
     this.tokenManager = new TokenManager({
       logger: createLogger(`[${this.workerId}.token-manager]`),
       blockchain: this.blockchain,
+      db: this.db,
     });
-    await this.tokenManager.loadTrustedTokens('coingecko'); // load trusted tokens from cache (coingecko or uniswap token lists)
-    this.config.tokens.forEach((symbol) => this.tokenManager.ensureTokenRegistered(symbol, 'symbol')); // register configured input tokens at startup
+    await this.tokenManager.init(); // load tokens from db and trusted tokens from coingecho
+    await Promise.all(this.config.tokens.map((symbol) => this.tokenManager.ensureTokenRegistered(symbol, 'symbol'))); // register configured input tokens at startup
     const tradingPairs = this.tokenManager.createTradingPairs(); // setup trading pairs to monitor
-
-    // throw new Error('EVMWorker initialization not complete. Please implement the rest of the init method.');
 
     // create dex registry and register adapters
     this.dexRegistry = new DexRegistry({
@@ -96,10 +102,12 @@ class EVMWorker extends BaseWorker {
       dexRegistry: this.dexRegistry,
       tokenManager: this.tokenManager,
       logger: createLogger(`[${this.workerId}.pool-states-manager]`),
+      db: this.db,
     });
+    await this.poolStatesManager.init(); // load discovered pools from DB
+    await this.poolStatesManager.discoverAndRegisterPools(tradingPairs); // Discover and register pools for trading pairs
 
-    // Discover and register pools for trading pairs
-    await this.poolStatesManager.discoverAndRegisterPools(tradingPairs);
+    throw new Error('EVMWorker stopped temp');
 
     // Initialize BlockManager
     this.blockManager = new BlockManager({
@@ -117,7 +125,7 @@ class EVMWorker extends BaseWorker {
   }
 
   async stop() {
-    this.log.info('💾 Saving cache to disk...');
+    this.logger.info('💾 Saving cache to disk...');
     await this.cache.save(); // do not force save if cache is not dirty
 
     // Cleanup Prisma

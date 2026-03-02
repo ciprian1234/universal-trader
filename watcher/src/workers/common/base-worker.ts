@@ -44,7 +44,7 @@ export abstract class BaseWorker {
         })
         .catch((error) => {
           this.isInitialized = false;
-          this.logger.error(`init`, error);
+          this.logger.error(`Error during worker initialization:`, { error }); // note error.message its not logged properly
           this.sendResponseMessage({ correlationId, error: { message: error.message } });
         });
     } else if (name === 'stop') {
@@ -54,7 +54,7 @@ export abstract class BaseWorker {
           this.logger.info('✅ Stopped successfully');
         })
         .catch((error) => {
-          this.logger.error(`❌ Error during worker termination:`, error);
+          this.logger.error(`❌ Error during worker termination:`, { error });
           this.sendResponseMessage({ correlationId, error: { message: error.message } });
         });
       // note: we don't call self.termintate() since main thread will call worker.terminate() after receiving the stop response

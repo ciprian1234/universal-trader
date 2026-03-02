@@ -15,6 +15,9 @@ const ethereum: ChainConfig = {
   preferredBorrowTokens: ['WETH', 'USDC', 'USDT', 'DAI', 'WBTC'],
   providerRpcUrl: process.env.PLATFORM_ETHEREUM_RPC_URL_WS!,
 
+  // database URL for this chain's worker
+  databaseUrl: process.env.APP_CONFIG_DATABASE_URL!,
+
   // enabled
   enabled: true,
   internalArbitrageEnabled: true,

@@ -40,6 +40,7 @@ export const PlatformConfigSchema = z.object({
   name: z.string(), // e.g. 'ethereum', 'arbitrum', 'binance'
   enabled: z.boolean(),
   internalArbitrageEnabled: z.boolean(),
+  databaseUrl: z.string(), // required for chain platforms, optional for exchanges
 });
 
 export const ChainConfigSchema = PlatformConfigSchema.extend({

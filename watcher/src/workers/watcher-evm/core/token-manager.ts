@@ -5,10 +5,12 @@ import { ethers } from 'ethers';
 import { Blockchain } from './blockchain';
 import type { Logger } from '@/utils';
 import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
+import type { WorkerDb } from '../db';
 
 export interface TokenManagerConfig {
   logger: Logger;
   blockchain: Blockchain;
+  db: WorkerDb;
 }
 
 // ================================================================================================
@@ -17,8 +19,10 @@ export interface TokenManagerConfig {
 
 export class TokenManager {
   private readonly logger: Logger;
-  private blockchain: Blockchain;
+  private readonly blockchain: Blockchain;
+  private readonly db: WorkerDb;
 
+  // In-memory token registry: address => token info
   private tokens: Map<string, TokenOnChain> = new Map();
   private trustedTokens: TokenOnChain[] = []; // List of trusted tokens loaded from cache (e.g. coingecko or uniswap token lists)
 
@@ -34,11 +38,33 @@ export class TokenManager {
   constructor(config: TokenManagerConfig) {
     this.blockchain = config.blockchain;
     this.logger = config.logger;
+    this.db = config.db;
   }
 
   // ================================================================================================
-  // TOKEN REGISTRATION AND MANAGEMENT
+  // init - load tokens from db, also load trusted tokens and cache everthing
   // ================================================================================================
+  async init() {
+    // load trusted tokens in cache (coingecko or uniswap token lists)
+    await this.loadTrustedTokens('coingecko');
+
+    // load stored tokens from DB and populate in-memory cache: "this.tokens"
+    const storedTokens = await this.db.loadAllTokens();
+    this.logger.info(`📦 Loaded ${storedTokens.length} tokens from DB`);
+    storedTokens.forEach((token) => {
+      const data: TokenOnChain = {
+        chainId: token.chainId,
+        address: token.address,
+        symbol: token.symbol,
+        name: token.name,
+        decimals: token.decimals,
+        trusted: token.source === 'coingecko', // consider tokens from coingecko list as trusted
+      };
+      this.tokens.set(token.address, data);
+      this.logger.info(`📦 Registered token: ${token.symbol} (${token.address})`);
+      // TODO: also send event to main thread
+    });
+  }
 
   /**
    * Load trusted tokens (make sure to have the corresponding cache file in data/cache/)
@@ -68,18 +94,24 @@ export class TokenManager {
       key = key.toLowerCase(); // normalize address to lowercase
       const registredToken = this.tokens.get(key);
       if (registredToken) return registredToken;
+    } else {
+      const registredToken = Array.from(this.tokens.values()).find((token) => token.symbol === key);
+      if (registredToken) return registredToken;
     }
 
     // find token in trusted list otherwise introspect on chain (only by address, symbol-based lookup is not reliable)
+    let tokenSource: 'coingecko' | 'introspected' = 'coingecko';
     let foundToken = this.trustedTokens.find((token) => token[by] === key && token.chainId === this.blockchain.chainId);
     if (!foundToken && by === 'address') {
       this.logger.warn(`⚠️ Token with ${by} ${key} not found in trusted tokens list, introspecting on-chain...`);
       foundToken = await this.introspectToken(key); // introspect token on chain
+      tokenSource = 'introspected';
     }
     if (!foundToken) throw new Error(`Token with ${by} ${key} not found`);
 
     // Register token if not already registered
     this.tokens.set(foundToken.address, foundToken);
+    await this.db.upsertToken({ ...foundToken, source: tokenSource }); // save token to DB
     this.logger.info(`✅ Registered token ${foundToken.symbol} (addr: ${foundToken.address})`);
     return foundToken;
   }
