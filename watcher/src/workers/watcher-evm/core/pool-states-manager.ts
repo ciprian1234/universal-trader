@@ -107,7 +107,7 @@ export class PoolStatesManager {
     this.logger.info(`📦 Loaded ${storedPools.length} pools from DB`);
     for (const pool of storedPools) {
       this.poolStates.set(pool.id, pool.state);
-      this.logger.info(`📦 Registered pool: ${pool.venue_name} ${pool.token_pair_key} ${pool.fee_bps} (${pool.state.address})`);
+      this.logger.info(`📦 Registered pool: ${pool.venueName} ${pool.tokenPairKey} ${pool.feeBps} (${pool.state.address})`);
       // TODO: also send event to main thread
     }
   }
@@ -121,7 +121,7 @@ export class PoolStatesManager {
         continue;
       }
       this.poolStates.set(poolId, pool);
-      await this.db.upsertPool(pool, 'config');
+      await this.db.upsertPool(pool, 'config', true);
     }
   }
 

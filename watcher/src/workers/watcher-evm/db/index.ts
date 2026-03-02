@@ -9,24 +9,26 @@ import { createLogger } from '@/utils';
 
 export interface StoredToken extends TokenOnChain {
   source: 'config' | 'coingecko' | 'introspected';
-  created_at?: number;
-  updated_at?: number;
+  isEnabled: boolean; // whether this token is enabled for trading (not blacklisted)
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface StoredPool {
   id: string;
 
   // we store those for easy querying => we also have this data in state
-  chain_id: number;
-  venue_name: string;
-  token_pair_key: string; // on-chain token pair key token0:token1 (example: USDC:WETH)
-  fee_bps: number;
-  pair_id: string; // canonical token pair id (e.g. "ETH:USDC")
+  chainId: number;
+  venueName: string;
+  tokenPairKey: string; // on-chain token pair key token0:token1 (example: USDC:WETH)
+  feeBps: number;
+  pairId: string; // canonical token pair id (e.g. "ETH:USDC")
 
   state: DexPoolState; // we store full state but we care only about static fields
   source: 'config' | 'event';
-  created_at?: number;
-  updated_at?: number;
+  isEnabled: boolean; // whether this pool is enabled for trading (not blacklisted)
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -56,30 +58,32 @@ export class WorkerDb {
     try {
       await this.sql`
       CREATE TABLE IF NOT EXISTS tokens (
-        chain_id       INTEGER   NOT NULL,
-        address        TEXT      NOT NULL,
-        symbol         TEXT      NOT NULL,
-        name           TEXT      NOT NULL,
-        decimals       INTEGER   NOT NULL,
-        source         TEXT      NOT NULL,
-        created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (chain_id, address)
+        "chainId"         INTEGER   NOT NULL,
+        "address"         TEXT      NOT NULL,
+        "symbol"          TEXT      NOT NULL,
+        "name"            TEXT      NOT NULL,
+        "decimals"        INTEGER   NOT NULL,
+        "source"          TEXT      NOT NULL,
+        "isEnabled"       BOOLEAN   NOT NULL DEFAULT TRUE,
+        "createdAt"       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt"       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY ("chainId", "address")
       )
     `;
 
       await this.sql`
       CREATE TABLE IF NOT EXISTS pools (
-        id             TEXT      PRIMARY KEY,
-        chain_id       INTEGER   NOT NULL,
-        venue_name     TEXT      NOT NULL,
-        token_pair_key TEXT      NOT NULL,
-        fee_bps        INTEGER   NOT NULL,
-        pair_id        TEXT      NOT NULL,
-        state          JSONB     NOT NULL,
-        source         TEXT      NOT NULL,
-        created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        "id"              TEXT      PRIMARY KEY,
+        "chainId"         INTEGER   NOT NULL,
+        "venueName"       TEXT      NOT NULL,
+        "tokenPairKey"    TEXT      NOT NULL,
+        "feeBps"          INTEGER   NOT NULL,
+        "pairId"          TEXT      NOT NULL,
+        "state"           JSONB     NOT NULL,
+        "source"          TEXT      NOT NULL,
+        "isEnabled"       BOOLEAN   NOT NULL DEFAULT TRUE,
+        "createdAt"       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt"       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `;
     } catch (error) {
@@ -88,52 +92,54 @@ export class WorkerDb {
     }
 
     // optionally create DB indexes
-    // await this.sql`CREATE INDEX IF NOT EXISTS idx_tokens_chain ON tokens (chain_id)`;
-    // await this.sql`CREATE INDEX IF NOT EXISTS idx_pools_chain  ON pools  (chain_id)`;
-    // await this.sql`CREATE INDEX IF NOT EXISTS idx_pools_venue  ON pools  (venue_name)`;
-    // await this.sql`CREATE INDEX IF NOT EXISTS idx_pools_pair   ON pools  (pair_key)`;
+    // await this.sql`CREATE INDEX IF NOT EXISTS idx_tokens_chain ON tokens (chainId)`;
+    // await this.sql`CREATE INDEX IF NOT EXISTS idx_pools_chain  ON pools  (chainId)`;
+    // await this.sql`CREATE INDEX IF NOT EXISTS idx_pools_venue  ON pools  (venueName)`;
+    // await this.sql`CREATE INDEX IF NOT EXISTS idx_pools_pair   ON pools  (pairId)`;
     this.logger.info('✅ DB schema ready');
   }
 
   // ── Tokens ───────────────────────────────────────────────────────────
   async upsertToken(token: StoredToken): Promise<void> {
     await this.sql`
-      INSERT INTO tokens (chain_id, address, symbol, name, decimals, source)
+      INSERT INTO tokens ("chainId", "address", "symbol", "name", "decimals", "source", "isEnabled")
       VALUES (
         ${token.chainId},
         ${token.address.toLowerCase()},
         ${token.symbol},
         ${token.name},
         ${token.decimals},
-        ${token.source}
+        ${token.source},
+        ${token.isEnabled}
       )
-      ON CONFLICT (chain_id, address) DO UPDATE SET
-        source        = EXCLUDED.source,
-        updated_at    = CURRENT_TIMESTAMP
+      ON CONFLICT ("chainId", "address") DO UPDATE SET
+        "source" = EXCLUDED."source",
+        "isEnabled" = EXCLUDED."isEnabled",
+        "updatedAt" = CURRENT_TIMESTAMP
     `;
   }
 
   async loadAllTokens(): Promise<StoredToken[]> {
-    const rows = await this.sql`
-      SELECT * FROM tokens WHERE chain_id = ${this.chainId}`;
+    const rows = await this.sql`SELECT * FROM tokens WHERE "chainId" = ${this.chainId}`;
 
     return rows.map((row: any) => ({
-      chainId: row.chain_id as number,
+      chainId: row.chainId as number,
       address: row.address as string,
       symbol: row.symbol as string,
       name: row.name as string,
       decimals: row.decimals as number,
       source: row.source as StoredToken['source'],
-      created_at: new Date(row.created_at),
-      updated_at: new Date(row.updated_at),
+      isEnabled: row.isEnabled as boolean,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
     }));
   }
 
   // ── Pools ────────────────────────────────────────────────────────────
-  async upsertPool(pool: DexPoolState, source: StoredPool['source']): Promise<void> {
+  async upsertPool(pool: DexPoolState, source: StoredPool['source'], isEnabled: boolean): Promise<void> {
     // return;
     await this.sql`
-      INSERT INTO pools (id, chain_id, venue_name,token_pair_key, fee_bps, pair_id, state, source)
+      INSERT INTO pools ("id", "chainId", "venueName", "tokenPairKey", "feeBps", "pairId", "state", "source", "isEnabled")
       VALUES (
         ${pool.id},
         ${pool.venue.chainId},
@@ -142,36 +148,39 @@ export class WorkerDb {
         ${pool.feeBps},
         ${pool.pairId},
         ${serializeObject(pool)},
-        ${source}
+        ${source},
+        ${isEnabled}
       )
-      ON CONFLICT (id) DO UPDATE SET
-        state = EXCLUDED.state,
-        updated_at = CURRENT_TIMESTAMP
+      ON CONFLICT ("id") DO UPDATE SET
+        "state" = EXCLUDED."state",
+        "isEnabled" = EXCLUDED."isEnabled",
+        "updatedAt" = CURRENT_TIMESTAMP
     `;
   }
 
   async updatePoolIsEnabled(poolId: string, isEnabled: boolean): Promise<void> {
     await this.sql`
       UPDATE pools
-      SET is_enabled = ${isEnabled}
-      WHERE id = ${poolId}
+      SET "isEnabled" = ${isEnabled}
+      WHERE "id" = ${poolId}
     `;
   }
 
   async loadAllPools(): Promise<StoredPool[]> {
-    const rows = await this.sql`SELECT * FROM pools WHERE chain_id = ${this.chainId}`;
+    const rows = await this.sql`SELECT * FROM pools WHERE "chainId" = ${this.chainId}`;
 
     return rows.map((row: any) => ({
       id: row.id as string,
-      chain_id: row.chain_id as number,
-      venue_name: row.venue_name as string,
-      token_pair_key: row.token_pair_key as string,
-      fee_bps: row.fee_bps as number,
-      pair_id: row.pair_id as string,
+      chainId: row.chainId as number,
+      venueName: row.venueName as string,
+      tokenPairKey: row.tokenPairKey as string,
+      feeBps: row.feeBps as number,
+      pairId: row.pairId as string,
       state: deserializeObject<DexPoolState>(row.state),
       source: row.source as StoredPool['source'],
-      created_at: new Date(row.created_at),
-      updated_at: new Date(row.updated_at),
+      isEnabled: row.isEnabled as boolean,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
     }));
   }
 

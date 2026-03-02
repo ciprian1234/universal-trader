@@ -111,7 +111,7 @@ export class TokenManager {
 
     // Register token if not already registered
     this.tokens.set(foundToken.address, foundToken);
-    await this.db.upsertToken({ ...foundToken, source: tokenSource }); // save token to DB
+    await this.db.upsertToken({ ...foundToken, source: tokenSource, isEnabled: true }); // save token to DB
     this.logger.info(`✅ Registered token ${foundToken.symbol} (addr: ${foundToken.address})`);
     return foundToken;
   }
