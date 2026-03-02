@@ -126,7 +126,9 @@ export class PoolStatesManager {
         continue;
       }
       this.poolStates.set(poolId, pool);
-      await this.db.upsertPool(pool, 'config', true);
+      this.db
+        .upsertPool(pool, 'config', true)
+        .catch((e) => this.logger.error(`Failed to save new pool ${poolId} to DB:`, { error: e }));
     }
     this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${discoveredPools.length} new pools`);
   }
@@ -197,6 +199,14 @@ export class PoolStatesManager {
       // => pool its unknown - try to introspect it from the event
       pool = await this.dexRegistry.handleEventForUnknownPool(event); // NOTE: this may take longer...
       if (!pool) return this.logger.warn(`Unable to introspect pool, ignoring event for poolId: ${event.poolId}`);
+
+      // set pool in cache and save pool to DB as well
+      this.poolStates.set(pool.id, pool);
+
+      // save pool to db
+      this.db
+        .upsertPool(pool, 'event', true)
+        .catch((e) => this.logger.error(`Failed to save new pool ${pool!.id} to DB:`, { error: e }));
     }
 
     // log event details

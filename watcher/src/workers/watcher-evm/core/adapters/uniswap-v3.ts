@@ -4,12 +4,14 @@
 import { ethers } from 'ethers';
 import type { TradeQuote, PoolEvent, V3SwapEvent } from '../interfaces';
 import * as SqrtMath from './lib/sqrtPriceMath';
-import { dexPoolId, type DexV3PoolState, type DexVenue } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexPoolState, type DexV3PoolState, type DexVenue } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
 import { createLogger } from '@/utils/logger';
 import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
 import type { Blockchain } from '../blockchain';
+import { AbiCoder } from 'ethers';
+import type { DexV3Config } from '@/config/models';
 
 // ================================================================================================
 // DEX V3 ADAPTER
@@ -27,6 +29,7 @@ export const FACTORY_ABI = [
 ];
 
 export const POOL_ABI = [
+  'function factory() external view returns (address)',
   'function token0() external view returns (address)',
   'function token1() external view returns (address)',
   'function fee() external view returns (uint24)',
@@ -109,6 +112,34 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
 
   const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, feeBps: Number(fee), event });
   return poolState;
+}
+
+// identify venue for pool given a list of V3 configs (used for introspection)
+export async function identifyVenueForPool(pool: DexPoolState, dexV3Configs: DexV3Config[], blockchain: Blockchain) {
+  for (const config of dexV3Configs) {
+    const computedAddress = computePoolAddress(pool.tokenPair, pool.feeBps, config.factoryAddress, config.initCodeHash);
+    if (computedAddress.toLowerCase() === pool.address.toLowerCase()) return config.name;
+  }
+  // if we reach here => no venue found from configs => call factory
+  let poolContract = blockchain.getContract(pool.address);
+  if (!poolContract) poolContract = blockchain.initContract(pool.address, POOL_ABI);
+  const factoryAddress = await poolContract.factory();
+  console.log(`POOL ${pool.id} factory address: ${factoryAddress}`);
+  return 'unknown';
+}
+
+// compute V3 pool address from token addresses
+export function computePoolAddress(
+  tokenPair: TokenPairOnChain,
+  fee: number,
+  factoryAddress: string,
+  initCodeHash: string,
+): string {
+  const abiCoder = AbiCoder.defaultAbiCoder();
+  const salt = ethers.keccak256(
+    abiCoder.encode(['address', 'address', 'uint24'], [tokenPair.token0.address, tokenPair.token1.address, fee]),
+  );
+  return ethers.getCreate2Address(factoryAddress, salt, initCodeHash);
 }
 
 /**

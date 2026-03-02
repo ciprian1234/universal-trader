@@ -37,18 +37,28 @@ const ethereum: ChainConfig = {
       protocol: 'v2',
       factoryAddress: '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
       routerAddress: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+      initCodeHash: '0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f',
     },
     {
       name: 'sushiswap-v2',
       protocol: 'v2',
       factoryAddress: '0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac',
       routerAddress: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
+      initCodeHash: '0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303',
     },
     {
       name: 'pancakeswap-v2',
       protocol: 'v2',
       factoryAddress: '0x1097053Fd2ea711dad45caCcc45EfF7548fCB362',
       routerAddress: '0xEfF92A263d31888d860bD50809A8D171709b7b1c',
+      initCodeHash: '0x57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d',
+    },
+    {
+      name: 'fraxswap-v2',
+      protocol: 'v2',
+      factoryAddress: '0x43eC799eAdd63848443E2347C49f5f52e8Fe0F6f',
+      routerAddress: '0xC14d550632db8592D1243Edc8B95b0Ad06703867',
+      initCodeHash: '0xe469e96d32cb39bca5416d9d901a18f36dd1f3efdd4231b546a7b85ec2264b90',
     },
     {
       name: 'uniswap-v3',
@@ -56,6 +66,7 @@ const ethereum: ChainConfig = {
       factoryAddress: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
       routerAddress: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
       quoterAddress: '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
+      initCodeHash: '0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54',
     },
   ],
 

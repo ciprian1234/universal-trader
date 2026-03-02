@@ -120,8 +120,8 @@ class EVMWorker extends BaseWorker {
     this.tokenManager.createTradingPairs(); // emit events with created trading pairs => this triggers pool discovery in PoolStatesManager
 
     // delay 10 seconds to allow initial token/pool registration before starting block manager
-    await new Promise((resolve) => setTimeout(resolve, 10_000));
-    throw new Error('EVMWorker stopped temp');
+    // await new Promise((resolve) => setTimeout(resolve, 10_000));
+    // throw new Error('EVMWorker stopped temp');
 
     // Initialize BlockManager
     this.blockManager = new BlockManager({
@@ -157,7 +157,11 @@ class EVMWorker extends BaseWorker {
     // this.gasManager.cleanup();
 
     // Cleanup Blockchain
-    this.blockchain.cleanup();
+    await this.blockchain.cleanup();
+
+    // stop db connection
+    await this.db.destroy();
+    this.logger.info('Worker stopped gracefully');
   }
 }
 

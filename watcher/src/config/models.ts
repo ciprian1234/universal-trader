@@ -15,14 +15,14 @@ const DexConfigBase = z.object({
 const DexV2ConfigSchema = DexConfigBase.extend({
   protocol: z.literal('v2'),
   factoryAddress: z.string().length(42),
-  initCodeHash: z.string().optional(),
+  initCodeHash: z.string(),
 });
 
 const DexV3ConfigSchema = DexConfigBase.extend({
   protocol: z.literal('v3'),
   factoryAddress: z.string().length(42),
   quoterAddress: z.string().length(42),
-  initCodeHash: z.string().optional(),
+  initCodeHash: z.string(),
 });
 
 const DexV4ConfigSchema = DexConfigBase.extend({

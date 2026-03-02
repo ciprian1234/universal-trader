@@ -1,13 +1,14 @@
 import { TokenManager } from '../core/token-manager';
 import { Blockchain } from '../core/blockchain';
 import type { Logger } from '@/utils';
-import type { ChainConfig, DexConfig } from '@/config/models';
+import type { ChainConfig, DexConfig, DexV2Config, DexV3Config } from '@/config/models';
 import * as DEX_V2 from './adapters/uniswap-v2';
 import * as DEX_V3 from './adapters/uniswap-v3';
 import * as DEX_V4 from './adapters/uniswap-v4';
 import type { DexPoolState, DexV2PoolState, DexV3PoolState, DexV4PoolState, DexVenueName } from '@/shared/data-model/layer1';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { PoolEvent, V2SyncEvent, V3SwapEvent, V4SwapEvent } from './interfaces';
+import { AbiCoder, ethers } from 'ethers';
 
 type DexRegistryInput = {
   logger: Logger;
@@ -122,6 +123,24 @@ export class DexRegistry {
       this.logger.error(`Error introspecting pool for event with poolId ${event.poolId}: ${(error as Error).message}`);
     }
     return null;
+  }
+
+  //
+  // Identify venue for unknown pool
+  //
+  async identifyVenueForPool(pool: DexPoolState): Promise<DexVenueName> {
+    const dexConfigListByProtocol = [...this.venueConfigs.values()].filter((config) => config.protocol === pool.protocol);
+
+    let result: any;
+    if (pool.protocol === 'v2') {
+      result = await DEX_V2.identifyVenueForPool(pool, dexConfigListByProtocol as DexV2Config[], this.blockchain);
+    } else if (pool.protocol === 'v3') {
+      result = await DEX_V3.identifyVenueForPool(pool, dexConfigListByProtocol as DexV3Config[], this.blockchain);
+    } else {
+      result = 'unknown';
+    }
+
+    return result;
   }
 
   // ================================================================================================

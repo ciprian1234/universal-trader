@@ -3,12 +3,13 @@
  */
 import { ethers } from 'ethers';
 import type { TradeQuote, V2SyncEvent } from '../interfaces';
-import { dexPoolId, type DexV2PoolState, type DexVenue } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexPoolState, type DexV2PoolState, type DexVenue } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
 import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
 import { createLogger } from '@/utils/logger';
 import type { Blockchain } from '../blockchain';
+import type { DexConfig, DexV2Config } from '@/config/models';
 
 // ================================================================================================
 // DEX V2 ADAPTERS
@@ -26,6 +27,7 @@ export const FACTORY_ABI = [
 ];
 
 export const POOL_ABI = [
+  'function factory() external view returns (address)',
   'function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
   'function token0() external view returns (address)',
   'function token1() external view returns (address)',
@@ -79,6 +81,28 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
 
   const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, event });
   return poolState;
+}
+
+// identify venue for pool given a list of V2 configs (used for introspection)
+export async function identifyVenueForPool(pool: DexPoolState, dexV2Configs: DexV2Config[], blockchain: Blockchain) {
+  for (const config of dexV2Configs) {
+    const computedAddress = computePoolAddress(pool.tokenPair, config.factoryAddress, config.initCodeHash);
+    if (computedAddress.toLowerCase() === pool.address.toLowerCase()) return config.name;
+  }
+  // if we reach here => no venue found from configs => call factory
+  let poolContract = blockchain.getContract(pool.address);
+  if (!poolContract) poolContract = blockchain.initContract(pool.address, POOL_ABI);
+  const factoryAddress = await poolContract.factory();
+  console.log(`POOL ${pool.id} factory address: ${factoryAddress}`);
+  return 'unknown';
+}
+
+// compute V2 pool address from token addresses
+export function computePoolAddress(tokenPair: TokenPairOnChain, factoryAddress: string, initCodeHash: string): string {
+  const salt = ethers.keccak256(
+    ethers.solidityPacked(['address', 'address'], [tokenPair.token0.address, tokenPair.token1.address]),
+  );
+  return ethers.getCreate2Address(factoryAddress, salt, initCodeHash);
 }
 
 /**
