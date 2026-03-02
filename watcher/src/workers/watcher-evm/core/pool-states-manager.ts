@@ -35,6 +35,11 @@ export class PoolStatesManager {
     this.tokenManager = input.tokenManager;
     this.logger = input.logger;
     this.db = input.db;
+
+    // listen for new token pair events to trigger pool discovery
+    this.eventBus.onTokenPairRegistered((tokenPair) => {
+      this.discoverPoolsForTokenPairs(tokenPair); // discover pools for the new trading pair
+    });
   }
 
   // ================================================================================================
@@ -65,13 +70,6 @@ export class PoolStatesManager {
    */
   getPoolState(id: string): DexPoolState | undefined {
     return this.poolStates.get(id);
-  }
-
-  /**
-   * 🗑️ REMOVE POOL STATE
-   */
-  removePoolState(id: string): void {
-    this.poolStates.delete(id);
   }
 
   /**
@@ -112,8 +110,14 @@ export class PoolStatesManager {
     }
   }
 
-  async discoverAndRegisterPools(watchedPairs: TokenPairOnChain[]): Promise<void> {
-    const discoveredPools = await this.dexRegistry.discoverAllPools(watchedPairs);
+  async discoverPoolsForTokenPairs(tokenPair: TokenPairOnChain): Promise<void> {
+    const existingPools = this.findPoolsByTokenPair(tokenPair);
+    // TODO: revisit this logic - if 1 new pool exist due to new event => other pools are not discovered
+    if (existingPools.length >= 1) {
+      this.logger.info(`There are already ${existingPools.length} pools for pair ${tokenPair.key}, skipping discovery`);
+      return;
+    }
+    const discoveredPools = await this.dexRegistry.discoverAllPoolsForTokenPair(tokenPair);
     for (const pool of discoveredPools) {
       const poolId = pool.id;
       if (this.poolStates.has(pool.id)) {
@@ -123,6 +127,7 @@ export class PoolStatesManager {
       this.poolStates.set(poolId, pool);
       await this.db.upsertPool(pool, 'config', true);
     }
+    this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${discoveredPools.length} new pools`);
   }
 
   async updateAll(): Promise<void> {

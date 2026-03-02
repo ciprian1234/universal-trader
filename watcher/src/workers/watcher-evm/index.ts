@@ -36,6 +36,17 @@ class EVMWorker extends BaseWorker {
 
   setupEventPipeline() {
     // send event to main thread
+    this.eventBus.onTokenRegistered((data) => {
+      // console.log(`Token ${data.symbol} (${data.address}) registered`);
+      // this.sendEventMessage('token-registered', data);
+    });
+
+    this.eventBus.onTokenPairRegistered((data) => {
+      this.logger.info(`Token pair ${data.key} registered:`);
+      this.logger.info(` • ${data.token0.symbol} (${data.token0.address})`);
+      this.logger.info(` • ${data.token1.symbol} (${data.token1.address})`);
+    });
+
     this.eventBus.onPoolEventsBatch((data) => {
       try {
         // // events are already applied to poolStates by the time they are emitted => so send the updated pool states
@@ -81,11 +92,11 @@ class EVMWorker extends BaseWorker {
     this.tokenManager = new TokenManager({
       logger: createLogger(`[${this.workerId}.token-manager]`),
       blockchain: this.blockchain,
+      eventBus: this.eventBus,
       db: this.db,
     });
     await this.tokenManager.init(); // load tokens from db and trusted tokens from coingecho
     await Promise.all(this.config.tokens.map((symbol) => this.tokenManager.ensureTokenRegistered(symbol, 'symbol'))); // register configured input tokens at startup
-    const tradingPairs = this.tokenManager.createTradingPairs(); // setup trading pairs to monitor
 
     // create dex registry and register adapters
     this.dexRegistry = new DexRegistry({
@@ -105,8 +116,12 @@ class EVMWorker extends BaseWorker {
       db: this.db,
     });
     await this.poolStatesManager.init(); // load discovered pools from DB
-    await this.poolStatesManager.discoverAndRegisterPools(tradingPairs); // Discover and register pools for trading pairs
+    // await this.poolStatesManager.discoverAndRegisterPools(tradingPairs); // Discover and register pools for trading pairs
 
+    this.tokenManager.createTradingPairs(); // emit events with created trading pairs => this triggers pool discovery in PoolStatesManager
+
+    // delay 10 seconds to allow initial token/pool registration before starting block manager
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
     throw new Error('EVMWorker stopped temp');
 
     // Initialize BlockManager

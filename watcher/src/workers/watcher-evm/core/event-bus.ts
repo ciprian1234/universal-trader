@@ -6,6 +6,7 @@ import type { PoolEvent, ArbitrageOpportunity } from './interfaces';
 import type { BlockEntry } from './block-manager';
 import type { Logger } from '@/utils';
 import type { DexPoolState } from '@/shared/data-model/layer1';
+import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 
 export interface EventBusConfig {
   logger: Logger;
@@ -41,6 +42,14 @@ export class EventBus extends EventEmitter {
 
   emitNewBlock(blockEntry: BlockEntry): void {
     this.emit('newBlock', blockEntry);
+  }
+
+  emitTokenRegistered(data: TokenOnChain): void {
+    this.emit('token-registered', data);
+  }
+
+  emitTokenPairRegistered(data: TokenPairOnChain): void {
+    this.emit('token-pair-registered', data);
   }
 
   emitPoolEventsBatch(data: { events: PoolEvent[] }): void {
@@ -93,6 +102,16 @@ export class EventBus extends EventEmitter {
   onNewBlock(callback: (data: BlockEntry) => void): () => void {
     this.on('newBlock', callback);
     return () => this.off('newBlock', callback); // Return unsubscribe function
+  }
+
+  onTokenRegistered(callback: (data: TokenOnChain) => void): () => void {
+    this.on('token-registered', callback);
+    return () => this.off('token-registered', callback); // Return unsubscribe function
+  }
+
+  onTokenPairRegistered(callback: (data: TokenPairOnChain) => void): () => void {
+    this.on('token-pair-registered', callback);
+    return () => this.off('token-pair-registered', callback); // Return unsubscribe function
   }
 
   onPoolEventsBatch(callback: (data: { blockData: BlockEntry; events: PoolEvent[] }) => void): () => void {

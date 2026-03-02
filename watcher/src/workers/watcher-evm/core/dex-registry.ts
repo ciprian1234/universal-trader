@@ -17,8 +17,8 @@ type DexRegistryInput = {
 
 export class DexRegistry {
   private readonly logger: Logger;
-  private blockchain: Blockchain;
-  private tokenManager: TokenManager;
+  private readonly blockchain: Blockchain;
+  private readonly tokenManager: TokenManager;
 
   // list of all DEXes supported by the worker, populated during init() based on chain config
   private readonly venueConfigs: Map<DexVenueName, DexConfig> = new Map();
@@ -28,6 +28,7 @@ export class DexRegistry {
     this.blockchain = input.blockchain;
     this.tokenManager = input.tokenManager;
   }
+
   private requireConfig(venueName: DexVenueName) {
     const config = this.venueConfigs.get(venueName);
     if (!config) throw new Error(`No config for venue: ${venueName}`);
@@ -62,51 +63,37 @@ export class DexRegistry {
     this.logger.info(`✅ Configured DEX venues: ${[...this.venueConfigs.keys()].join(', ')}`);
   }
 
-  async discoverAllPools(watchedPairs: TokenPairOnChain[]) {
-    this.logger.info('🔍 Discovering all pools for configured DEX venues...');
-    this.logger.info('📋 TRADING PAIRS:');
-    watchedPairs.forEach((pair, index) => {
-      this.logger.info(`   ${(index + 1).toString().padStart(2)}. ${pair.key}`);
-      this.logger.info(`       • ${pair.token0.symbol} (${pair.token0.address})`);
-      this.logger.info(`       • ${pair.token1.symbol} (${pair.token1.address})`);
-    });
-
-    const allPools: DexPoolState[] = [];
+  async discoverAllPoolsForTokenPair(tokenPair: TokenPairOnChain) {
+    const foundPools: DexPoolState[] = [];
     for (const [venueName, config] of this.venueConfigs.entries()) {
-      const ctx = {
-        blockchain: this.blockchain,
-        tokenManager: this.tokenManager,
-        config,
-      };
-      for (const pair of watchedPairs) {
-        try {
-          let foundPoolsForPair: DexPoolState[] = [];
-          if (config.protocol === 'v2') {
-            foundPoolsForPair = await DEX_V2.discoverPools(ctx, pair);
-          } else if (config.protocol === 'v3') {
-            foundPoolsForPair = await DEX_V3.discoverPools(ctx, pair);
-          } else if (config.protocol === 'v4') {
-            foundPoolsForPair = await DEX_V4.discoverPools(ctx, pair);
-          }
-          if (foundPoolsForPair.length === 0) continue;
-          allPools.push(...foundPoolsForPair);
-          foundPoolsForPair.forEach((pool) => {
-            this.logger.info(
-              `✅ Found pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps
-                .toString()
-                .padEnd(5)}) (id: ${pool.id})`,
-            );
-          });
-        } catch (error) {
-          this.logger.error(`Error discovering pools for pair ${pair.key} on venue ${venueName}`, {
-            error: (error as Error).message,
-          });
-          continue;
+      const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config };
+
+      try {
+        let foundPoolsForVenue: DexPoolState[] = [];
+        if (config.protocol === 'v2') {
+          foundPoolsForVenue = await DEX_V2.discoverPools(ctx, tokenPair);
+        } else if (config.protocol === 'v3') {
+          foundPoolsForVenue = await DEX_V3.discoverPools(ctx, tokenPair);
+        } else if (config.protocol === 'v4') {
+          foundPoolsForVenue = await DEX_V4.discoverPools(ctx, tokenPair);
         }
+        if (foundPoolsForVenue.length === 0) continue;
+        foundPools.push(...foundPoolsForVenue);
+        foundPoolsForVenue.forEach((pool) => {
+          this.logger.info(
+            `✅ Found pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps
+              .toString()
+              .padEnd(5)}) (id: ${pool.id})`,
+          );
+        });
+      } catch (error) {
+        this.logger.error(`Error discovering pools for pair ${tokenPair.key} on venue ${venueName}`, {
+          error: (error as Error).message,
+        });
+        continue;
       }
     }
-    this.logger.info(`✅ Pool discovery complete, found ${allPools.length} pools`);
-    return allPools;
+    return foundPools;
   }
 
   //

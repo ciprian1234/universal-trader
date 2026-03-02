@@ -6,10 +6,12 @@ import { Blockchain } from './blockchain';
 import type { Logger } from '@/utils';
 import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 import type { WorkerDb } from '../db';
+import type { EventBus } from './event-bus';
 
 export interface TokenManagerConfig {
   logger: Logger;
   blockchain: Blockchain;
+  eventBus: EventBus;
   db: WorkerDb;
 }
 
@@ -20,11 +22,15 @@ export interface TokenManagerConfig {
 export class TokenManager {
   private readonly logger: Logger;
   private readonly blockchain: Blockchain;
+  private readonly eventBus: EventBus;
   private readonly db: WorkerDb;
 
   // In-memory token registry: address => token info
   private tokens: Map<string, TokenOnChain> = new Map();
   private trustedTokens: TokenOnChain[] = []; // List of trusted tokens loaded from cache (e.g. coingecko or uniswap token lists)
+
+  // TokenPair registry for quick lookup of trading pairs
+  private tokenPairs: Map<string, TokenPairOnChain> = new Map(); // key is `${token0.symbol}-${token1.symbol}` (token0/1 are ordered by address)
 
   // Token metadata cache
   private erc20ABI = [
@@ -38,6 +44,7 @@ export class TokenManager {
   constructor(config: TokenManagerConfig) {
     this.blockchain = config.blockchain;
     this.logger = config.logger;
+    this.eventBus = config.eventBus;
     this.db = config.db;
   }
 
@@ -62,6 +69,7 @@ export class TokenManager {
       };
       this.tokens.set(token.address, data);
       this.logger.info(`📦 Registered token: ${token.symbol} (${token.address})`);
+      this.eventBus.emitTokenRegistered(data);
       // TODO: also send event to main thread
     });
   }
@@ -111,6 +119,7 @@ export class TokenManager {
 
     // Register token if not already registered
     this.tokens.set(foundToken.address, foundToken);
+    this.eventBus.emitTokenRegistered(foundToken);
     await this.db.upsertToken({ ...foundToken, source: tokenSource, isEnabled: true }); // save token to DB
     this.logger.info(`✅ Registered token ${foundToken.symbol} (addr: ${foundToken.address})`);
     return foundToken;
@@ -211,28 +220,24 @@ export class TokenManager {
   // UTILITY METHODS
   // ================================================================================================
 
-  createTradingPairs(): TokenPairOnChain[] {
+  createTradingPairs() {
     const allTokens = this.getAllTokensArray();
-    const pairs: TokenPairOnChain[] = [];
 
     // Create pairs for major tokens
-    const majorTokens = allTokens.filter((token) => ['WETH', 'WBTC', 'USDC'].includes(token.symbol));
+    // const majorTokens = allTokens.filter((token) => ['WETH', 'WBTC', 'USDC'].includes(token.symbol));
 
-    for (const tokenA of allTokens) {
-      for (const tokenB of allTokens) {
-        if (tokenA.address === tokenB.address) continue; // Skip self-pairs
-
+    for (const token0 of allTokens) {
+      for (const token1 of allTokens) {
+        if (token0.address === token1.address) continue; // Skip self-pairs
         // Enforce canonical order to avoid duplicates
-        if (tokenA.address < tokenB.address) {
-          pairs.push({
-            token0: tokenA,
-            token1: tokenB,
-            key: `${tokenA.symbol}-${tokenB.symbol}`,
-          });
+        if (token0.address < token1.address) {
+          const key = `${token0.symbol}-${token1.symbol}`;
+          if (this.tokenPairs.has(key)) continue; // Skip if pair already exists
+          const tokenPair: TokenPairOnChain = { key, token0, token1 };
+          this.tokenPairs.set(key, tokenPair);
+          this.eventBus.emit('token-pair-registered', tokenPair); // Emit event for new token pair
         }
       }
     }
-
-    return pairs;
   }
 }
