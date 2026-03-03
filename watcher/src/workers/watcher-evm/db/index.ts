@@ -152,6 +152,7 @@ export class WorkerDb {
         ${isEnabled}
       )
       ON CONFLICT ("id") DO UPDATE SET
+        "venueName" = EXCLUDED."venueName",
         "state" = EXCLUDED."state",
         "isEnabled" = EXCLUDED."isEnabled",
         "updatedAt" = CURRENT_TIMESTAMP

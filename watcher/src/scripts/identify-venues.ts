@@ -49,8 +49,14 @@ async function main() {
   console.log(`Loaded ${pools.length} pools from DB`);
 
   for (const pool of pools) {
-    const venue = await dexRegistry.identifyVenueForPool(pool.state);
-    console.log(`Pool ${pool.state.id} identified as venue: ${venue} (old:${pool.state.venue.name})`);
+    const identifiedVenueName = dexRegistry.identifyVenueNameForPool(pool.state);
+    console.log(`Pool ${pool.state.id} identified as venue: ${identifiedVenueName} (old:${pool.state.venue.name})`);
+    // update pool venue in DB if it was previously unknown
+    if (pool.venueName === 'unknown' && identifiedVenueName !== 'unknown') {
+      pool.state.venue.name = identifiedVenueName;
+      await db.upsertPool(pool.state, pool.source, true);
+      console.log(`Updated pool ${pool.state.id} venue to ${identifiedVenueName} in DB`);
+    }
   }
 }
 

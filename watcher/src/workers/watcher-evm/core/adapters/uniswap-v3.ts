@@ -4,7 +4,7 @@
 import { ethers } from 'ethers';
 import type { TradeQuote, PoolEvent, V3SwapEvent } from '../interfaces';
 import * as SqrtMath from './lib/sqrtPriceMath';
-import { dexPoolId, type DexPoolState, type DexV3PoolState, type DexVenue } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexPoolState, type DexV3PoolState, type DexVenue, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
 import { createLogger } from '@/utils/logger';
@@ -115,16 +115,16 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
 }
 
 // identify venue for pool given a list of V3 configs (used for introspection)
-export async function identifyVenueForPool(pool: DexPoolState, dexV3Configs: DexV3Config[], blockchain: Blockchain) {
+export function identifyVenueForPool(pool: DexPoolState, dexV3Configs: DexV3Config[]): DexVenueName {
   for (const config of dexV3Configs) {
     const computedAddress = computePoolAddress(pool.tokenPair, pool.feeBps, config.factoryAddress, config.initCodeHash);
     if (computedAddress.toLowerCase() === pool.address.toLowerCase()) return config.name;
   }
   // if we reach here => no venue found from configs => call factory
-  let poolContract = blockchain.getContract(pool.address);
-  if (!poolContract) poolContract = blockchain.initContract(pool.address, POOL_ABI);
-  const factoryAddress = await poolContract.factory();
-  console.log(`POOL ${pool.id} factory address: ${factoryAddress}`);
+  // let poolContract = blockchain.getContract(pool.address);
+  // if (!poolContract) poolContract = blockchain.initContract(pool.address, POOL_ABI);
+  // const factoryAddress = await poolContract.factory();
+  // console.log(`POOL ${pool.id} factory address: ${factoryAddress}`);
   return 'unknown';
 }
 

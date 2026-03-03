@@ -105,20 +105,19 @@ export class DexRegistry {
     this.logger.warn(`Introspecting event for unknown poolId: ${event.poolId}`);
 
     try {
+      let pool: DexPoolState | null = null;
       if (event.protocol === 'v2') {
         // for V2 => at this point we only have the pool address and reserves
-        const pool = await DEX_V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
-        return pool;
+        pool = await DEX_V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
       } else if (event.protocol === 'v3') {
         // for V3 => at this point we only have the pool address and fee tier, we need to fetch the token pair and tick spacing from the contract
-        const pool = await DEX_V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
-        return pool;
-      } else if (event.protocol === 'v4') {
-        // for V4 => at this point we only have the pool address, we need to fetch the token pair and fee tier from the contract
-        //   const pool = await DEX_V4.introspectPoolFromEvent(ctx, event as V4SwapEvent);
-        //   return pool;
+        pool = await DEX_V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
+      } else {
         return null; // V4 pool introspection not implemented yet
       }
+
+      pool.venue.name = this.identifyVenueNameForPool(pool);
+      return pool;
     } catch (error) {
       this.logger.error(`Error introspecting pool for event with poolId ${event.poolId}: ${(error as Error).message}`);
     }
@@ -126,21 +125,19 @@ export class DexRegistry {
   }
 
   //
-  // Identify venue for unknown pool
+  // Identify venue name for unknown pool
   //
-  async identifyVenueForPool(pool: DexPoolState): Promise<DexVenueName> {
+  identifyVenueNameForPool(pool: DexPoolState): DexVenueName {
     const dexConfigListByProtocol = [...this.venueConfigs.values()].filter((config) => config.protocol === pool.protocol);
 
-    let result: any;
+    let venueName: DexVenueName = 'unknown';
     if (pool.protocol === 'v2') {
-      result = await DEX_V2.identifyVenueForPool(pool, dexConfigListByProtocol as DexV2Config[], this.blockchain);
+      venueName = DEX_V2.identifyVenueForPool(pool, dexConfigListByProtocol as DexV2Config[]);
     } else if (pool.protocol === 'v3') {
-      result = await DEX_V3.identifyVenueForPool(pool, dexConfigListByProtocol as DexV3Config[], this.blockchain);
-    } else {
-      result = 'unknown';
+      venueName = DEX_V3.identifyVenueForPool(pool, dexConfigListByProtocol as DexV3Config[]);
     }
 
-    return result;
+    return venueName;
   }
 
   // ================================================================================================

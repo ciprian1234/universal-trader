@@ -3,13 +3,13 @@
  */
 import { ethers } from 'ethers';
 import type { TradeQuote, V2SyncEvent } from '../interfaces';
-import { dexPoolId, type DexPoolState, type DexV2PoolState, type DexVenue } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexPoolState, type DexV2PoolState, type DexVenue, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
 import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
 import { createLogger } from '@/utils/logger';
 import type { Blockchain } from '../blockchain';
-import type { DexConfig, DexV2Config } from '@/config/models';
+import type { DexV2Config } from '@/config/models';
 
 // ================================================================================================
 // DEX V2 ADAPTERS
@@ -84,16 +84,16 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
 }
 
 // identify venue for pool given a list of V2 configs (used for introspection)
-export async function identifyVenueForPool(pool: DexPoolState, dexV2Configs: DexV2Config[], blockchain: Blockchain) {
+export function identifyVenueForPool(pool: DexPoolState, dexV2Configs: DexV2Config[]): DexVenueName {
   for (const config of dexV2Configs) {
     const computedAddress = computePoolAddress(pool.tokenPair, config.factoryAddress, config.initCodeHash);
     if (computedAddress.toLowerCase() === pool.address.toLowerCase()) return config.name;
   }
   // if we reach here => no venue found from configs => call factory
-  let poolContract = blockchain.getContract(pool.address);
-  if (!poolContract) poolContract = blockchain.initContract(pool.address, POOL_ABI);
-  const factoryAddress = await poolContract.factory();
-  console.log(`POOL ${pool.id} factory address: ${factoryAddress}`);
+  // let poolContract = blockchain.getContract(pool.address);
+  // if (!poolContract) poolContract = blockchain.initContract(pool.address, POOL_ABI);
+  // const factoryAddress = await poolContract.factory();
+  // console.log(`POOL ${pool.id} factory address: ${factoryAddress}`);
   return 'unknown';
 }
 

@@ -53,13 +53,13 @@ const ethereum: ChainConfig = {
       routerAddress: '0xEfF92A263d31888d860bD50809A8D171709b7b1c',
       initCodeHash: '0x57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d',
     },
-    {
-      name: 'fraxswap-v2',
-      protocol: 'v2',
-      factoryAddress: '0x43eC799eAdd63848443E2347C49f5f52e8Fe0F6f',
-      routerAddress: '0xC14d550632db8592D1243Edc8B95b0Ad06703867',
-      initCodeHash: '0xe469e96d32cb39bca5416d9d901a18f36dd1f3efdd4231b546a7b85ec2264b90',
-    },
+    // {
+    //   name: 'fraxswap-v2',
+    //   protocol: 'v2',
+    //   factoryAddress: '0x43eC799eAdd63848443E2347C49f5f52e8Fe0F6f',
+    //   routerAddress: '0xC14d550632db8592D1243Edc8B95b0Ad06703867',
+    //   initCodeHash: '0xe469e96d32cb39bca5416d9d901a18f36dd1f3efdd4231b546a7b85ec2264b90',
+    // },
     {
       name: 'uniswap-v3',
       protocol: 'v3',
