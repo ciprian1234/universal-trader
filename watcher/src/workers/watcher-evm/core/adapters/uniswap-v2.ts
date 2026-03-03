@@ -75,9 +75,8 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
   if (!token1.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token1 ${token1.symbol} (${token1.address}) is not trusted!`);
   const tokenPair = { token0, token1, key: `${token0.symbol}-${token1.symbol}` };
 
+  // note: venueName its from outer function (dexRegistry.handleEventForUnknownPool)
   const venue = { name: 'unknown' as const, type: 'dex' as const, chainId: ctx.blockchain.chainId };
-
-  // TODO: - attempt to find the venue
 
   const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, event });
   return poolState;

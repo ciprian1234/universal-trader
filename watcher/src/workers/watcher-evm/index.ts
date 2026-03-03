@@ -12,7 +12,7 @@ import { BlockManager } from './core/block-manager';
 import { WorkerDb } from './db';
 
 class EVMWorker extends BaseWorker {
-  private config!: ChainConfig;
+  private chainConfig!: ChainConfig;
   private db!: WorkerDb;
   private cache!: CacheService;
   private eventBus!: EventBus;
@@ -35,18 +35,33 @@ class EVMWorker extends BaseWorker {
   }
 
   setupEventPipeline() {
-    // send event to main thread
-    this.eventBus.onTokenRegistered((data) => {
-      // console.log(`Token ${data.symbol} (${data.address}) registered`);
-      // this.sendEventMessage('token-registered', data);
+    // -- 1. "token-registered" ---------------------------------------------
+    // For each new token: create trading pairs with ROOT tokens and emit "token-pair-registered" events for those pairs
+    this.eventBus.onTokenRegistered((token) => {
+      console.log(`Token ${token.symbol} (${token.address}) registered`);
+      // this.sendEventMessage('token-registered', { token }); // send event to main thread
+
+      // create trading pairs for new token with all root tokens
+      // this.tokenManager.createTokenPairsForNewToken(token); // FOR NOW KEEP THIS DISABLED
     });
 
-    this.eventBus.onTokenPairRegistered((data) => {
-      this.logger.info(`Token pair ${data.key} registered:`);
-      this.logger.info(` • ${data.token0.symbol} (${data.token0.address})`);
-      this.logger.info(` • ${data.token1.symbol} (${data.token1.address})`);
+    // -- 2. "token-pair-registered" ----------------------------------------
+    // Only fired for meaningful pairs (preconfigured + anchor pairs)
+    this.eventBus.onTokenPairRegistered((tokenPair) => {
+      this.logger.info(`Token pair ${tokenPair.key} registered:`);
+      this.logger.info(` • ${tokenPair.token0.symbol} (${tokenPair.token0.address})`);
+      this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
+      this.poolStatesManager.discoverPoolsForTokenPairs(tokenPair); // discover pools for the new trading pair
     });
 
+    // -- 3. "pool-update" ---------------------------------------------
+    // PriceOracle derives prices incrementally on each pool update
+    // this.eventBus.onPoolUpdate((pool) => {
+    //   this.priceOracle.deriveFromPool(pool);
+    // });
+
+    // -- 4. "pool-events-batch" ---------------------------------------------
+    // send updated pools to main thread
     this.eventBus.onPoolEventsBatch((data) => {
       try {
         // // events are already applied to poolStates by the time they are emitted => so send the updated pool states
@@ -60,76 +75,86 @@ class EVMWorker extends BaseWorker {
       } catch (error) {
         this.logger.error(`Error in poolEventsBatch handler: ${error instanceof Error ? error.stack : String(error)}`);
       }
+
+      // const updatedStates = data.events
+      //   .map((e) => this.poolStatesManager.getPoolState(e.poolId))
+      //   .filter(Boolean);
+
+      // this.sendEventMessage('pool-update-batch', {
+      //   blockData: data.blockData,
+      //   updatedPoolStates: updatedStates,
+      //   prices: this.priceOracle.getSnapshotForPools(updatedStates),
+      // });
     });
   }
 
-  async init(config: ChainConfig) {
-    this.config = config;
+  async init(chainConfig: ChainConfig) {
+    this.chainConfig = chainConfig;
 
     // init cache
-    this.cache = new CacheService(this.config.chainId);
+    this.cache = new CacheService(this.chainConfig.chainId);
     await this.cache.load();
 
     // init database
-    this.db = new WorkerDb(this.config.databaseUrl, this.config.chainId);
+    this.db = new WorkerDb(this.chainConfig.databaseUrl, this.chainConfig.chainId);
     // await this.db.reset(); // for testing only, reset db on startup
     await this.db.createTables();
 
+    // init event bus and setup event pipeline
+    this.eventBus = new EventBus({ logger: createLogger(`[${this.chainConfig.name}.event-bus]`) });
+    this.setupEventPipeline();
+
     // init blockchain
     this.blockchain = new Blockchain({
-      chainId: this.config.chainId,
-      chainName: this.config.name,
-      providerURL: this.config.providerRpcUrl,
+      chainId: this.chainConfig.chainId,
+      chainName: this.chainConfig.name,
+      providerURL: this.chainConfig.providerRpcUrl,
       cache: this.cache,
-      logger: createLogger(`[${this.workerId}.blockchain]`),
+      logger: createLogger(`[${this.chainConfig.name}.blockchain]`),
     });
-
-    // init event bus and setup event pipeline
-    this.eventBus = new EventBus({ logger: createLogger(`[${this.workerId}.event-bus]`) });
-    this.setupEventPipeline();
 
     // create token manager
     this.tokenManager = new TokenManager({
-      logger: createLogger(`[${this.workerId}.token-manager]`),
+      chainConfig: this.chainConfig,
       blockchain: this.blockchain,
       eventBus: this.eventBus,
       db: this.db,
     });
-    await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecho
-    await Promise.all(this.config.tokens.map((symbol) => this.tokenManager.ensureTokenRegistered(symbol, 'symbol')));
+    await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
 
     // create dex registry and register adapters
     this.dexRegistry = new DexRegistry({
       blockchain: this.blockchain,
       tokenManager: this.tokenManager,
-      logger: createLogger(`[${this.workerId}.dex-registry]`),
+      logger: createLogger(`[${this.chainConfig.name}.dex-registry]`),
     });
-    this.dexRegistry.init(this.config); // init contracts for dex venues
+    this.dexRegistry.init(this.chainConfig); // init contracts for dex venues
 
     // initialize PoolStatesManager
     this.poolStatesManager = new PoolStatesManager({
-      chainId: this.config.chainId,
+      chainId: this.chainConfig.chainId,
       eventBus: this.eventBus,
       dexRegistry: this.dexRegistry,
       tokenManager: this.tokenManager,
-      logger: createLogger(`[${this.workerId}.pool-states-manager]`),
+      logger: createLogger(`[${this.chainConfig.name}.pool-states-manager]`),
       db: this.db,
     });
     await this.poolStatesManager.init(); // load discovered pools from DB
 
-    this.tokenManager.createTradingPairs(); // emit events with created trading pairs => this triggers pool discovery in PoolStatesManager
+    // emit events with created trading pairs => this triggers pool discovery in PoolStatesManager
+    this.tokenManager.createTradingPairsBetweenRootTokens();
 
     // delay 10 seconds to allow initial token/pool registration before starting block manager
-    // await new Promise((resolve) => setTimeout(resolve, 10_000));
-    // throw new Error('EVMWorker stopped temp');
+    await new Promise((resolve) => setTimeout(resolve, 15_000));
+    throw new Error('EVMWorker stopped temp');
 
     // Initialize BlockManager
     this.blockManager = new BlockManager({
-      chainId: this.config.chainId,
+      chainId: this.chainConfig.chainId,
       blockchain: this.blockchain,
       eventBus: this.eventBus,
       poolStatesManager: this.poolStatesManager,
-      logger: createLogger(`[${this.workerId}.block-manager]`),
+      logger: createLogger(`[${this.chainConfig.name}.block-manager]`),
     });
     await this.blockManager.init();
 

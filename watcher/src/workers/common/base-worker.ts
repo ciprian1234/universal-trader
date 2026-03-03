@@ -32,9 +32,9 @@ export abstract class BaseWorker {
     } else if (name == 'init') {
       // base init logic (e.g. set worker name in context, setup logger)
       const config = data as PlatformConfig;
-      if (!config.id) throw new Error(`Missing "id" from init config`);
-      this.workerId = config.id;
-      this.logger = createLogger(`[${config.id}]`); // Update logger with worker name
+      if (!config.name) throw new Error(`Missing field "name" from init config used to identify the worker`);
+      this.workerId = config.name;
+      this.logger = createLogger(`[${config.name}]`); // Update logger with worker name
 
       // call init from the concrete worker class
       this.init(data)

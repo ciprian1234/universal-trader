@@ -35,49 +35,56 @@
 - main thread only listen for events and keep its cache updated
 - if mainthread wants to add/remove enable/disable a DexVenueState/Token it will send a command and worker will behave acordingly (write toDB and update its internal memory)
 
-## PoolEvent => VenueState discovery
-
-- When a poolEvent its emited => we have poolId and event data
-- V2/V3 => we have event dynamic data (reserve0/reserve0, etc..) but token0/token1 info
-- V4-EVENTS => we know token addresses and venue as well since its coming from PoolManager
-
-Q: Can we perform swap if we know only the poolId? Yes
-
 ## Tokens
-
-enum state: disabled=0, new=1, validated=
-
-Tokens are managed by TokenManager (main-thread) and TokenStore (worker)
-Types of tokens:
 
 - native => ETH === WETH
 - stable coins (ERC20) => USDT, USDC, DAI (can be swaped 1to1 with USD if token its burned/minted)
 - others (ERC20)
 
 Questions - its native token? - ETH (native) == WETH (wrapped ERC20) => need to provide resolver => ETH = WETH
-NOTE: native tokens and stable coins will be preconfigured in config.
-The others could be added dynamically or manually at runtime
+NOTE: native tokens and stable coins will be preconfigured in config. (others will be added dynamically)
 
 ### New Token data flow
 
-IMPORTANT NOTE: (there may be multiple fake copies of any ERC20)
+Tokens gets added either from newPool events or manually
+IMPORTANT NOTE: (there may be multiple fake copies of any ERC20) => don't do cross chain trading with untrusted tokens!!!
 
-- In both cases we need to ensure token its authentic
-- we will ensure token its authentic if it can be found across multiple venues AND the liquidityUSD of those venuesStates > threshold
-  => we can't trade until price oracle its updated so we can calculate liquidityUSD to validate the token
+## EVM-Worker (internal events)
 
-### Case1 - added manually using the API-SERVER (only ERC20)
+### EventBus: "token-registred"
 
-Input: symbol, address, and chainId
-Event: token-added
-Triggers:
+EMITTED: at init from DB or when calling ensureTokenRegistered (NOTE: ensureTokenRegistered get called only for unknown pools)
+TRIGGERS => route event on MainThread (nothing else for now)
 
-- trigger
+### EventBus: "token-pair-registred"
 
-### Case2 - discovered from poolEvents (only ERC20)
+EMITTED: at init for few preconfigured TOKENS
+TRIGGERS => PoolStatesManager.discoverPoolsForTokenPairs(newTokenPair) (pools discovery for a gven tokenPair on all venues)
 
-- new poolEvent => contains new unknown tokens (either 1 or both) => emits new event
+### Blockchain pool event => BlockManager.handlePoolEvent => poolStatesManager.handlePoolEvent(e) (BlockManager calls directly with no EventBus)
+
+- if pool its registred => calls dexRegistry.updatePoolFromEvent(p, e) => set pool state and emit "pool-update"
+- else => calls dexRegistry.handleEventForUnknownPool(e) => calls ensureTokenRegistered for both token0/token1 => set pool state and emit "pool-update"?
+
+### temp-events
+
+pool-
 
 ## PriceOracle
 
-- it
+We need token prices in USD just for liquidity calculation and for referance - arbitrage its not based on priceOracle data!
+
+- at init => fetch few RootPrices from external sources (WETH, WBTC, USD-stablecoins, and few other popular tokens)
+- every 5 minutes => fetch rootTokenPrices - if failed => just log a warning - don't stop the app (we can fallback to internal calculation)
+
+## REORG MECHANISM
+
+- To handle reorg we need to store in block manager the list of events for last ~10 blocks
+  We don't want to update all pools because thats an expensive operation
+  Instead we want to mark as invalidated the pools events which evolved wrong during reorg
+  => From list of events => we have the poolIds of the pools we need to invalidate and fetch fresh data
+  => on block reorg detected => Gather all PoolIDs and
+
+## Q&A:
+
+Q: Can we perform swap if we know only the poolId? Yes (idea: refactor contract to swap directly without router???)

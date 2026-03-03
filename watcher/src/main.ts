@@ -37,11 +37,11 @@ async function main(): Promise<void> {
   });
 
   // go through each enabled platform and spawn corresponding workers
-  for (const [platformName, platformConfig] of Object.entries(appConfig.platforms)) {
+  for (const [_, platformConfig] of Object.entries(appConfig.platforms)) {
     if (!platformConfig.enabled) continue;
-    workerManager.spawnWorker(platformConfig.id, path.resolve(__dirname, './workers/watcher-evm/index.ts'));
-    await workerManager.sendRequest(platformConfig.id, 'init', platformConfig);
-    log.info(`✅ Worker "${platformConfig.id}" (${platformConfig.name}) initialized`);
+    workerManager.spawnWorker(platformConfig.name, path.resolve(__dirname, './workers/watcher-evm/index.ts'));
+    await workerManager.sendRequest(platformConfig.name, 'init', platformConfig);
+    log.info(`✅ Worker "${platformConfig.name}" (${platformConfig.name}) initialized`);
   }
 
   // === 5. Wire up EventBus → WebSocket broadcast ===

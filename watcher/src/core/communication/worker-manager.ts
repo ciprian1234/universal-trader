@@ -10,7 +10,7 @@ const logger = createLogger('[main.WorkerManager]');
 let requestIdCounter = 0;
 
 interface ManagedWorker {
-  id: string;
+  name: string;
   worker: Worker;
   scriptPath: string;
 }
@@ -39,36 +39,36 @@ export class WorkerManager {
   /**
    * Spawn a new worker from a script file
    */
-  spawnWorker(id: string, scriptPath: string): void {
-    if (this.workers.has(id)) {
-      return logger.error(`Worker "${id}" already exists. Terminate it first.`);
+  spawnWorker(name: string, scriptPath: string): void {
+    if (this.workers.has(name)) {
+      return logger.error(`Worker "${name}" already exists. Terminate it first.`);
     }
 
-    const worker = new Worker(scriptPath, { name: id });
+    const worker = new Worker(scriptPath, { name });
 
     // Listen for messages FROM the worker
     worker.onmessage = (msg: BunMessageEvent<Message>) => {
       const message = msg.data; // actual message sent by the worker
       if (message.type === 'response') this.handleResponse(message as ResponseMessage);
       else if (message.type === 'event') this.handleEvent(message as EventMessage);
-      else logger.warn(`Unknown message type from worker "${id}":`, message);
+      else logger.warn(`Unknown message type from worker "${name}":`, message);
     };
 
     // Listen for errors
     worker.onerror = (event) => {
-      logger.error(`Error in worker "${id}":`, { event });
+      logger.error(`Error in worker "${name}":`, { event });
       // Reject ALL pending requests for this worker
       for (const [correlationId, pending] of this.pendingRequests) {
-        if (correlationId.startsWith(`${id}-`)) {
+        if (correlationId.startsWith(`${name}-`)) {
           clearTimeout(pending.timer);
-          pending.reject(new Error(`Worker "${id}" error: ${event.message}`));
+          pending.reject(new Error(`Worker "${name}" error: ${event.message}`));
           this.pendingRequests.delete(correlationId);
         }
       }
     };
 
-    this.workers.set(id, { id, worker, scriptPath });
-    logger.info(`Spawned worker "${id}" from ${scriptPath}`);
+    this.workers.set(name, { name, worker, scriptPath });
+    logger.info(`Spawned worker "${name}" from ${scriptPath}`);
   }
 
   /**
@@ -108,8 +108,8 @@ export class WorkerManager {
   //  * Broadcast a command to ALL workers
   //  */
   broadcast(data: any): void {
-    for (const [id] of this.workers) {
-      this.sendRequest(id, data.name, data.data);
+    for (const [name] of this.workers) {
+      this.sendRequest(name, data.name, data.data);
     }
   }
 

@@ -35,9 +35,8 @@ const DexV4ConfigSchema = DexConfigBase.extend({
 export const DexConfigSchema = z.discriminatedUnion('protocol', [DexV2ConfigSchema, DexV3ConfigSchema, DexV4ConfigSchema]);
 
 export const PlatformConfigSchema = z.object({
-  id: z.string(), // unique identifier, e.g. 'ethereum', 'arbitrum', 'binance'
+  name: z.string(), // used as workerId and for logging, must be unique across platforms (e.g. 'ethereum', 'arbitrum', 'binance')
   platformType: z.string(), // 'chain', 'exchange'
-  name: z.string(), // e.g. 'ethereum', 'arbitrum', 'binance'
   enabled: z.boolean(),
   internalArbitrageEnabled: z.boolean(),
   databaseUrl: z.string(), // required for chain platforms, optional for exchanges
@@ -46,13 +45,13 @@ export const PlatformConfigSchema = z.object({
 export const ChainConfigSchema = PlatformConfigSchema.extend({
   platformType: z.literal('chain'),
   chainId: z.number(),
-  nativeToken: z.string(),
   providerRpcUrl: z.url(),
-  wrappedNativeTokenAddress: z.string(),
-  preferredBorrowTokens: z.array(z.string()),
 
-  // Tokens
-  tokens: z.array(z.string()), // List of token symbols to register at startup, e.g. ['WETH', 'USDC']
+  // Tokens configuration
+  nativeToken: z.string(),
+  wrappedNativeToken: z.string(),
+  stablecoinTokens: z.array(z.string()), // List of stablecoin symbols, e.g. ['USDC', 'DAI']
+  rootTokens: z.array(z.string()), // List of root token symbols used for pair discovery, e.g. ['WETH', 'USDC']
 
   // DEXes
   dexConfigs: z.array(DexConfigSchema),

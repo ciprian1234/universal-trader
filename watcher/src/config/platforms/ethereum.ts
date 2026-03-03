@@ -6,14 +6,16 @@ import { ethers } from 'ethers';
 import type { ChainConfig } from '../models.ts';
 
 const ethereum: ChainConfig = {
-  id: 'ethereum',
-  platformType: 'chain',
-  name: 'Ethereum Mainnet',
+  name: 'ethereum', // used as workerId and for logging, must be unique across platforms
   chainId: 1,
-  nativeToken: 'ETH',
-  wrappedNativeTokenAddress: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-  preferredBorrowTokens: ['WETH', 'USDC', 'USDT', 'DAI', 'WBTC'],
+  platformType: 'chain',
   providerRpcUrl: process.env.PLATFORM_ETHEREUM_RPC_URL_WS!,
+
+  // Tokens configuration
+  nativeToken: 'ETH',
+  wrappedNativeToken: 'WETH',
+  stablecoinTokens: ['USDC', 'USDT', 'DAI'],
+  rootTokens: ['WETH', 'WBTC', 'USDC', 'USDT', 'DAI'], // used for pair discovery and as preferred borrow tokens
 
   // database URL for this chain's worker
   databaseUrl: process.env.APP_CONFIG_DATABASE_URL!,
@@ -26,9 +28,6 @@ const ethereum: ChainConfig = {
   gasDataFetchInterval: 5,
   minPriorityFee: ethers.parseUnits('0.05', 'gwei'), // 0.05 gwei
   maxPriorityFee: ethers.parseUnits('100', 'gwei'), // 100 gwei
-
-  // initial list of tokens for which we discover pools at startup
-  tokens: ['WETH', 'USDT', 'USDC'], // DAI, WBTC, add later
 
   // DEX venues
   dexConfigs: [

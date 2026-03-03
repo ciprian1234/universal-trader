@@ -8,7 +8,6 @@ import * as DEX_V4 from './adapters/uniswap-v4';
 import type { DexPoolState, DexV2PoolState, DexV3PoolState, DexV4PoolState, DexVenueName } from '@/shared/data-model/layer1';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { PoolEvent, V2SyncEvent, V3SwapEvent, V4SwapEvent } from './interfaces';
-import { AbiCoder, ethers } from 'ethers';
 
 type DexRegistryInput = {
   logger: Logger;

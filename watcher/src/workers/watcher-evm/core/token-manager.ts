@@ -3,16 +3,17 @@
  */
 import { ethers } from 'ethers';
 import { Blockchain } from './blockchain';
-import type { Logger } from '@/utils';
+import { createLogger, type Logger } from '@/utils';
 import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 import type { WorkerDb } from '../db';
 import type { EventBus } from './event-bus';
+import type { ChainConfig } from '@/config/models';
 
-export interface TokenManagerConfig {
-  logger: Logger;
+export interface TokenManagerInput {
+  db: WorkerDb;
+  chainConfig: ChainConfig;
   blockchain: Blockchain;
   eventBus: EventBus;
-  db: WorkerDb;
 }
 
 // ================================================================================================
@@ -21,9 +22,10 @@ export interface TokenManagerConfig {
 
 export class TokenManager {
   private readonly logger: Logger;
+  private readonly db: WorkerDb;
+  private readonly chainConfig: ChainConfig;
   private readonly blockchain: Blockchain;
   private readonly eventBus: EventBus;
-  private readonly db: WorkerDb;
 
   // In-memory token registry: address => token info
   private tokens: Map<string, TokenOnChain> = new Map();
@@ -41,11 +43,12 @@ export class TokenManager {
     'function balanceOf(address) view returns (uint256)',
   ];
 
-  constructor(config: TokenManagerConfig) {
-    this.blockchain = config.blockchain;
-    this.logger = config.logger;
-    this.eventBus = config.eventBus;
-    this.db = config.db;
+  constructor(input: TokenManagerInput) {
+    this.logger = createLogger(`[${input.chainConfig.name}.token-manager]`);
+    this.db = input.db;
+    this.chainConfig = input.chainConfig;
+    this.blockchain = input.blockchain;
+    this.eventBus = input.eventBus;
   }
 
   // ================================================================================================
@@ -68,10 +71,13 @@ export class TokenManager {
         trusted: token.source === 'coingecko', // consider tokens from coingecko list as trusted
       };
       this.tokens.set(token.address, data);
-      this.logger.info(`📦 Registered token: ${token.symbol} (${token.address})`);
+      // this.logger.info(`📦 Registered token: ${token.symbol} (${token.address})`);
       this.eventBus.emitTokenRegistered(data);
-      // TODO: also send event to main thread
     });
+
+    // ensure root tokens and stablecoins are registered
+    await Promise.all(this.chainConfig.stablecoinTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
+    await Promise.all(this.chainConfig.rootTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
   }
 
   /**
@@ -220,14 +226,16 @@ export class TokenManager {
   // UTILITY METHODS
   // ================================================================================================
 
-  createTradingPairs() {
-    const allTokens = this.getAllTokensArray();
-
-    // Create pairs for major tokens
-    // const majorTokens = allTokens.filter((token) => ['WETH', 'WBTC', 'USDC'].includes(token.symbol));
-
-    for (const token0 of allTokens) {
-      for (const token1 of allTokens) {
+  /**
+   * Create trading pairs between all root tokens
+   * emits event for new token pairs which triggers pool discovery in PoolStatesManager
+   */
+  createTradingPairsBetweenRootTokens() {
+    for (const symbol0 of this.chainConfig.rootTokens) {
+      for (const symbol1 of this.chainConfig.rootTokens) {
+        const token0 = this.findTokenBySymbol(symbol0);
+        const token1 = this.findTokenBySymbol(symbol1);
+        if (!token0 || !token1) throw new Error(`Root tokens ${symbol0} or ${symbol1} not found in registry`);
         if (token0.address === token1.address) continue; // Skip self-pairs
         // Enforce canonical order to avoid duplicates
         if (token0.address < token1.address) {
@@ -235,9 +243,35 @@ export class TokenManager {
           if (this.tokenPairs.has(key)) continue; // Skip if pair already exists
           const tokenPair: TokenPairOnChain = { key, token0, token1 };
           this.tokenPairs.set(key, tokenPair);
-          this.eventBus.emit('token-pair-registered', tokenPair); // Emit event for new token pair
+          this.eventBus.emitTokenPairRegistered(tokenPair); // Emit event for new token pair
         }
       }
+    }
+  }
+
+  /**
+   * Create token pairs between some input token and all root tokens
+   * emits event for new token pairs which triggers pool discovery in PoolStatesManager
+   */
+  createTokenPairsForNewToken(newToken: TokenOnChain) {
+    // TBD: improve this logic in future:
+    // - create trading pairs only if some criteria are met to avoid unnecessary pool discoveries
+    // - also cache token pairs stats to avoid creating pairs that are unlikely to be liquid (e.g. low market cap tokens)
+    for (const rootSymbol of this.chainConfig.rootTokens) {
+      const rootToken = this.findTokenBySymbol(rootSymbol);
+      if (!rootToken) throw new Error(`Root token ${rootSymbol} not found in registry`);
+      if (newToken.address === rootToken.address) continue; // Skip self-pair
+
+      // Enforce canonical order to avoid duplicates
+      const [token0, token1] = newToken.address < rootToken.address ? [newToken, rootToken] : [rootToken, newToken];
+      const key = `${token0.symbol}-${token1.symbol}`;
+      if (this.tokenPairs.has(key)) {
+        this.logger.warn(`Token pair ${key} already exists, skipping creation`);
+        continue; // Skip if pair already exists
+      }
+      const tokenPair: TokenPairOnChain = { key, token0, token1 };
+      this.tokenPairs.set(key, tokenPair);
+      this.eventBus.emitTokenPairRegistered(tokenPair); // Emit event for new token pair
     }
   }
 }

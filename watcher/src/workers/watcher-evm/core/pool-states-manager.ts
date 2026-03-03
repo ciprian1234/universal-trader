@@ -36,11 +36,6 @@ export class PoolStatesManager {
     this.tokenManager = input.tokenManager;
     this.logger = input.logger;
     this.db = input.db;
-
-    // listen for new token pair events to trigger pool discovery
-    this.eventBus.onTokenPairRegistered((tokenPair) => {
-      this.discoverPoolsForTokenPairs(tokenPair); // discover pools for the new trading pair
-    });
   }
 
   // ================================================================================================
@@ -203,7 +198,6 @@ export class PoolStatesManager {
       // set pool in cache and save pool to DB as well
       this.poolStates.set(pool.id, pool);
 
-      // save pool to db
       this.db
         .upsertPool(pool, 'event', true)
         .catch((e) => this.logger.error(`Failed to save new pool ${pool!.id} to DB:`, { error: e }));
