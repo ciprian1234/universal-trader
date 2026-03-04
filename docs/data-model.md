@@ -53,12 +53,14 @@ IMPORTANT NOTE: (there may be multiple fake copies of any ERC20) => don't do cro
 
 ### EventBus: "token-registred"
 
-EMITTED: at init from DB or when calling ensureTokenRegistered (NOTE: ensureTokenRegistered get called only for unknown pools)
+EMITTED: only by tokenManager.ensureTokenRegistered if token not registred yet.
+case 1: at init for rootTokens
+case 2: when a new
 TRIGGERS => route event on MainThread (nothing else for now)
 
 ### EventBus: "token-pair-registred"
 
-EMITTED: at init for few preconfigured TOKENS
+EMITTED: at init for few preconfigured ROOT TOKENS or when a new token gets registered
 TRIGGERS => PoolStatesManager.discoverPoolsForTokenPairs(newTokenPair) (pools discovery for a gven tokenPair on all venues)
 
 ### Blockchain pool event => BlockManager.handlePoolEvent => poolStatesManager.handlePoolEvent(e) (BlockManager calls directly with no EventBus)
@@ -66,9 +68,20 @@ TRIGGERS => PoolStatesManager.discoverPoolsForTokenPairs(newTokenPair) (pools di
 - if pool its registred => calls dexRegistry.updatePoolFromEvent(p, e) => set pool state and emit "pool-update"
 - else => calls dexRegistry.handleEventForUnknownPool(e) => calls ensureTokenRegistered for both token0/token1 => set pool state and emit "pool-update"?
 
-### temp-events
+### temp-use-case
 
-pool-
+new Blockchain pool event: Pool(id1, t0, t1) => EMIT(t0), EMIT(t1)
+(lets asume new pool its unknown both t0 and t1 are new tokens)
+
+=>
+
+Case1: create only 1 TokenPair: (t0, t1)
+Case2: create (t0, rootToken0)...(t0m, rootTokenN), (t1, rootToken0)...(t1, rootTokenN)
+
+new TokenPair(t0, t1) => discover pools on all venues
+=> new Pool(id1, t0, t1)
+
+Q: Should I check
 
 ## PriceOracle
 

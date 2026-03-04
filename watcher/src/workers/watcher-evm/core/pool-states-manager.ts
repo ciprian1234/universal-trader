@@ -26,6 +26,10 @@ export class PoolStatesManager {
   private readonly db: WorkerDb;
 
   private poolStates: Map<string, DexPoolState> = new Map();
+
+  // cached list of all stored pools from DB (used for quick introspection)
+  private storedPools: Map<string, DexPoolState> = new Map();
+
   private activePoolIds: Set<string> = new Set(); // track active pool IDs
   private unknownPoolIds: Set<string> = new Set(); // track pool IDs that have received events but are not in the registry
 
@@ -73,7 +77,7 @@ export class PoolStatesManager {
    */
   findPoolsByTokenPair(tokenPair: TokenPairOnChain): DexPoolState[] {
     const foundPools: DexPoolState[] = [];
-    for (const pool of this.poolStates.values()) {
+    for (const pool of this.storedPools.values()) {
       if (pool.tokenPair.key === tokenPair.key) foundPools.push(pool);
     }
     return foundPools;
@@ -97,13 +101,11 @@ export class PoolStatesManager {
   // INITIALIZATION AND MANAGEMENT
   // ================================================================================================
   async init() {
-    const storedPools = await this.db.loadAllPools();
-    this.logger.info(`📦 Loaded ${storedPools.length} pools from DB`);
-    for (const pool of storedPools) {
-      this.poolStates.set(pool.id, pool.state);
-      this.logger.info(`📦 Registered pool: ${pool.venueName} ${pool.tokenPairKey} ${pool.feeBps} (${pool.state.address})`);
-      // TODO: also send event to main thread
+    const dbPools = await this.db.loadAllPools();
+    for (const pool of dbPools) {
+      this.storedPools.set(pool.id, pool.state);
     }
+    this.logger.info(`📦 Loaded ${dbPools.length} pools from DB`);
   }
 
   async discoverPoolsForTokenPairs(tokenPair: TokenPairOnChain): Promise<void> {
@@ -121,6 +123,7 @@ export class PoolStatesManager {
         continue;
       }
       this.poolStates.set(poolId, pool);
+      // this.storedPools.set(poolId, pool);
       this.db
         .upsertPool(pool, 'config', true)
         .catch((e) => this.logger.error(`Failed to save new pool ${poolId} to DB:`, { error: e }));
