@@ -27,9 +27,15 @@ export class TokenManager {
   private readonly blockchain: Blockchain;
   private readonly eventBus: EventBus;
 
-  // In-memory token registry: address => token info
-  private tokens: Map<string, TokenOnChain> = new Map();
-  private trustedTokens: TokenOnChain[] = []; // List of trusted tokens loaded from cache (e.g. coingecko or uniswap token lists)
+  // token its the main list of active tokens - we register only root tokens and stablecoins at startup
+  // as pool events come in we register new tokens into this list => which triggers token pair creations with root tokens
+  private tokens: Map<string, TokenOnChain> = new Map(); // the main list of activeTokens
+
+  // cached list of all stored tokens from DB
+  private storedTokens: TokenOnChain[] = [];
+
+  // cached list of trusted tokens loaded from cache (e.g. coingecko or uniswap token lists)
+  private trustedTokens: TokenOnChain[] = [];
 
   // TokenPair registry for quick lookup of trading pairs
   private tokenPairs: Map<string, TokenPairOnChain> = new Map(); // key is `${token0.symbol}-${token1.symbol}` (token0/1 are ordered by address)
@@ -55,25 +61,21 @@ export class TokenManager {
   // init - load tokens from db, also load trusted tokens and cache everthing
   // ================================================================================================
   async init() {
+    const dbTokens = await this.db.loadAllTokens();
+
+    this.storedTokens = dbTokens.map((token) => ({
+      chainId: token.chainId,
+      address: token.address,
+      symbol: token.symbol,
+      name: token.name,
+      decimals: token.decimals,
+      trusted: token.source === 'coingecko', // consider tokens from coingecko list as trusted
+    }));
+
+    this.logger.info(`📦 Cached ${this.storedTokens.length} stored tokens from DB`);
+
     // load trusted tokens in cache (coingecko or uniswap token lists)
     await this.loadTrustedTokens('coingecko');
-
-    // load stored tokens from DB and populate in-memory cache: "this.tokens"
-    const storedTokens = await this.db.loadAllTokens();
-    this.logger.info(`📦 Loaded ${storedTokens.length} tokens from DB`);
-    storedTokens.forEach((token) => {
-      const data: TokenOnChain = {
-        chainId: token.chainId,
-        address: token.address,
-        symbol: token.symbol,
-        name: token.name,
-        decimals: token.decimals,
-        trusted: token.source === 'coingecko', // consider tokens from coingecko list as trusted
-      };
-      this.tokens.set(token.address, data);
-      // this.logger.info(`📦 Registered token: ${token.symbol} (${token.address})`);
-      this.eventBus.emitTokenRegistered(data);
-    });
 
     // ensure root tokens and stablecoins are registered
     await Promise.all(this.chainConfig.stablecoinTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
@@ -86,7 +88,6 @@ export class TokenManager {
    * uniswap source: https://tokens.uniswap.org
    */
   async loadTrustedTokens(source: 'coingecko' | 'uniswap'): Promise<void> {
-    this.logger.info(`🔍 Loading trusted tokens from ${source}...`);
     const cache = await import(`../../../../data/cache/${source}-token-list.json`);
     if (!cache || !cache.tokens) throw new Error(`No trusted tokens found in ${source} cache`);
     this.trustedTokens = cache.tokens.map((token: any) => ({
@@ -97,7 +98,7 @@ export class TokenManager {
       decimals: token.decimals,
       trusted: true,
     }));
-    this.logger.info(`✅ Loaded ${this.trustedTokens.length} trusted tokens from ${source}.`);
+    this.logger.info(`📦 Cached ${this.trustedTokens.length} trusted tokens from ${source}`);
   }
 
   /**
@@ -113,21 +114,35 @@ export class TokenManager {
       if (registredToken) return registredToken;
     }
 
-    // find token in trusted list otherwise introspect on chain (only by address, symbol-based lookup is not reliable)
+    // if token not registred:
+    // 1. attempt to find token in storedTokens from DB
+    let foundToken = this.storedTokens.find((token) => token[by] === key && token.chainId === this.blockchain.chainId);
+    if (foundToken) {
+      this.tokens.set(foundToken.address, foundToken);
+      this.eventBus.emitTokenRegistered(foundToken);
+      return foundToken;
+    }
+
+    // 2. if not found in db => attempt to find token in trusted list,
+    // 3. otherwise introspect on chain (only by address, symbol-based lookup is not reliable)
     let tokenSource: 'coingecko' | 'introspected' = 'coingecko';
-    let foundToken = this.trustedTokens.find((token) => token[by] === key && token.chainId === this.blockchain.chainId);
+    foundToken = this.trustedTokens.find((token) => token[by] === key && token.chainId === this.blockchain.chainId);
     if (!foundToken && by === 'address') {
       this.logger.warn(`⚠️ Token with ${by} ${key} not found in trusted tokens list, introspecting on-chain...`);
       foundToken = await this.introspectToken(key); // introspect token on chain
       tokenSource = 'introspected';
     }
+
+    // if still not found => throw error (token does not exist or is not ERC20 compliant)
     if (!foundToken) throw new Error(`Token with ${by} ${key} not found`);
 
-    // Register token if not already registered
+    // => register token in main list, save it to DB and emit token-registered event
     this.tokens.set(foundToken.address, foundToken);
+    this.storedTokens.push(foundToken); // also add to storedTokens cache to mark it as stored
     this.eventBus.emitTokenRegistered(foundToken);
-    await this.db.upsertToken({ ...foundToken, source: tokenSource, isEnabled: true }); // save token to DB
-    this.logger.info(`✅ Registered token ${foundToken.symbol} (addr: ${foundToken.address})`);
+    this.db.upsertToken({ ...foundToken, source: tokenSource, isEnabled: true }).catch((error) => {
+      this.logger.error(`❌ Failed to save token ${foundToken.symbol} (${foundToken.address}) to DB: ${error}`);
+    });
     return foundToken;
   }
 

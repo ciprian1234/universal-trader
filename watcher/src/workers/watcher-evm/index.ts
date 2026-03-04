@@ -38,7 +38,7 @@ class EVMWorker extends BaseWorker {
     // -- 1. "token-registered" ---------------------------------------------
     // For each new token: create trading pairs with ROOT tokens and emit "token-pair-registered" events for those pairs
     this.eventBus.onTokenRegistered((token) => {
-      console.log(`Token ${token.symbol} (${token.address}) registered`);
+      this.logger.info(`✅ Registered token ${token.symbol} (addr: ${token.address})`);
       // this.sendEventMessage('token-registered', { token }); // send event to main thread
 
       // create trading pairs for new token with all root tokens
