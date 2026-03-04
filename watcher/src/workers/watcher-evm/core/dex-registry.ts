@@ -9,14 +9,14 @@ import type { WorkerDb } from '../db';
 import { formatUnits } from 'ethers';
 import { DEX_ADAPTER } from './dex-adapters';
 
-type DexRegistryInput = {
+type DexManagerInput = {
   chainConfig: ChainConfig;
   db: WorkerDb;
   blockchain: Blockchain;
   tokenManager: TokenManager;
 };
 
-export class DexRegistry {
+export class DexManager {
   private readonly logger: Logger;
   private chainConfig: ChainConfig;
 
@@ -33,7 +33,7 @@ export class DexRegistry {
   // list of registred pools in the system, updated on discovery and on events
   private pools: Map<string, DexPoolState> = new Map();
 
-  constructor(input: DexRegistryInput) {
+  constructor(input: DexManagerInput) {
     this.logger = createLogger(`[${input.chainConfig.name}.DexManager]`);
     this.chainConfig = input.chainConfig;
 

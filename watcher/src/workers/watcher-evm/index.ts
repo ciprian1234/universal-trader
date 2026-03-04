@@ -6,7 +6,7 @@ import type { ChainConfig } from '@/config/models';
 import { Blockchain } from './core/blockchain';
 import { TokenManager } from './core/token-manager';
 import { EventBus } from './core/event-bus';
-import { DexRegistry } from './core/dex-registry';
+import { DexManager } from './core/dex-registry';
 import { BlockManager } from './core/block-manager';
 import { WorkerDb } from './db';
 
@@ -18,7 +18,7 @@ class EVMWorker extends BaseWorker {
 
   private blockchain!: Blockchain;
   private tokenManager!: TokenManager;
-  private dexRegistry!: DexRegistry;
+  private dexManager!: DexManager;
   private blockManager!: BlockManager;
 
   async handleRequest(message: RequestMessage) {
@@ -49,7 +49,7 @@ class EVMWorker extends BaseWorker {
       this.logger.info(`Token pair ${tokenPair.key} registered:`);
       this.logger.info(` • ${tokenPair.token0.symbol} (${tokenPair.token0.address})`);
       this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
-      this.dexRegistry.discoverPoolsForTokenPair(tokenPair); // discover pools for the new trading pair
+      this.dexManager.discoverPoolsForTokenPair(tokenPair); // discover pools for the new trading pair
     });
 
     // -- 3. "pool-update" ---------------------------------------------
@@ -121,13 +121,13 @@ class EVMWorker extends BaseWorker {
     await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
 
     // create dex registry and register adapters
-    this.dexRegistry = new DexRegistry({
+    this.dexManager = new DexManager({
       chainConfig: this.chainConfig,
       blockchain: this.blockchain,
       tokenManager: this.tokenManager,
       db: this.db,
     });
-    await this.dexRegistry.init(); // init contracts for dex venues
+    await this.dexManager.init(); // init contracts for dex venues
 
     // emit events with created trading pairs => this triggers pool discovery in DexManager
     this.tokenManager.createTradingPairsBetweenRootTokens();
@@ -141,7 +141,7 @@ class EVMWorker extends BaseWorker {
       chainId: this.chainConfig.chainId,
       blockchain: this.blockchain,
       eventBus: this.eventBus,
-      dexRegistry: this.dexRegistry,
+      dexManager: this.dexManager,
       logger: createLogger(`[${this.chainConfig.name}.block-manager]`),
     });
     await this.blockManager.init();

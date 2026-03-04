@@ -9,7 +9,8 @@ import { createLogger } from '@/utils';
 import { CacheService } from '@/utils/cache-service';
 import { TokenManager } from '@/workers/watcher-evm/core/token-manager';
 import { EventBus } from '@/workers/watcher-evm/core/event-bus';
-import { DexRegistry } from '@/workers/watcher-evm/core/dex-registry';
+import { DexManager } from '@/workers/watcher-evm/core/dex-registry';
+import { DEX_ADAPTER } from '@/workers/watcher-evm/core/dex-adapters';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;
 
@@ -26,20 +27,20 @@ const blockchain = new Blockchain({
   logger: createLogger(`[blockchain]`),
 });
 
-// create token manager
-const tokenManager = new TokenManager({
-  chainConfig: platformConfig,
-  blockchain: blockchain,
-  eventBus: eventBus,
-  db,
-});
+// // create token manager
+// const tokenManager = new TokenManager({
+//   chainConfig: platformConfig,
+//   blockchain: blockchain,
+//   eventBus: eventBus,
+//   db,
+// });
 
-const dexRegistry = new DexRegistry({
-  chainConfig: platformConfig,
-  blockchain: blockchain,
-  tokenManager: tokenManager,
-  db,
-});
+// const dexManager = new DexManager({
+//   chainConfig: platformConfig,
+//   blockchain: blockchain,
+//   tokenManager: tokenManager,
+//   db,
+// });
 
 // ================================================================================================
 // Main wrapper
@@ -50,7 +51,7 @@ async function main() {
   console.log(`Loaded ${pools.length} pools from DB`);
 
   for (const pool of pools) {
-    const identifiedVenueName = dexRegistry.identifyVenueNameForPool(pool.state);
+    const identifiedVenueName = DEX_ADAPTER.identifyVenueNameForPool(pool.state, platformConfig.dexConfigs);
     console.log(`Pool ${pool.state.id} identified as venue: ${identifiedVenueName} (old:${pool.state.venue.name})`);
     // update pool venue in DB if it was previously unknown
     if (pool.venueName === 'unknown' && identifiedVenueName !== 'unknown') {
@@ -65,7 +66,7 @@ async function init() {
   // init cache
   await cache.load();
   // await tokenManager.init(); // load tokens from DB and trusted tokens from coingecho
-  dexRegistry.init(); // init contracts for dex venues
+  DEX_ADAPTER.initAllDexConfigContracts(blockchain, platformConfig.dexConfigs); // init contracts for dex venues
 }
 
 // Entry point

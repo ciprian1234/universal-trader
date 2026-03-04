@@ -9,7 +9,7 @@ import { createLogger } from '@/utils';
 import { CacheService } from '@/utils/cache-service';
 import { TokenManager } from '@/workers/watcher-evm/core/token-manager';
 import { EventBus } from '@/workers/watcher-evm/core/event-bus';
-import { DexRegistry } from '@/workers/watcher-evm/core/dex-registry';
+import { DexManager } from '@/workers/watcher-evm/core/dex-registry';
 import { PriceOracle } from '@/workers/watcher-evm/core/price-oracle';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;
@@ -35,7 +35,7 @@ const tokenManager = new TokenManager({
   db,
 });
 
-const dexRegistry = new DexRegistry({
+const dexManager = new DexManager({
   blockchain: blockchain,
   tokenManager: tokenManager,
   logger: createLogger(`[dex-registry]`),
@@ -53,7 +53,7 @@ async function main() {
   // init
   await cache.load();
   await tokenManager.init(); // load tokens from DB and trusted tokens from coingecho
-  dexRegistry.init(platformConfig); // init contracts for dex venues
+  dexManager.init(platformConfig); // init contracts for dex venues
 
   const pools = await db.loadAllPools();
   console.log(`Loaded ${pools.length} pools from DB`);

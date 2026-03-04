@@ -81,6 +81,7 @@ export const DEX_ADAPTER = {
   initAllDexConfigContracts,
   discoverPoolsForVenue,
   handleEventForUnknownPool,
+  identifyVenueNameForPool, // this is used in identify-venues script only
   updatePool,
   getFeePercent,
   updatePoolFromEvent,
