@@ -9,6 +9,7 @@ export interface DexAdapterContext {
 }
 
 export interface PoolIntrospectContext {
+  configs: DexConfig[]; // list of all dex venue configs
   blockchain: Blockchain;
   tokenManager: TokenManager;
 }

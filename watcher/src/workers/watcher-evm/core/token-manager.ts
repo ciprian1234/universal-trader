@@ -243,7 +243,7 @@ export class TokenManager {
 
   /**
    * Create trading pairs between all root tokens
-   * emits event for new token pairs which triggers pool discovery in PoolStatesManager
+   * emits event for new token pairs which triggers pool discovery in DexManager
    */
   createTradingPairsBetweenRootTokens() {
     for (const symbol0 of this.chainConfig.rootTokens) {
@@ -266,7 +266,7 @@ export class TokenManager {
 
   /**
    * Create token pairs between some input token and all root tokens
-   * emits event for new token pairs which triggers pool discovery in PoolStatesManager
+   * emits event for new token pairs which triggers pool discovery in DexManager
    */
   createTokenPairsForNewToken(newToken: TokenOnChain) {
     // TBD: improve this logic in future:

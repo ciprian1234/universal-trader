@@ -28,16 +28,17 @@ const blockchain = new Blockchain({
 
 // create token manager
 const tokenManager = new TokenManager({
-  logger: createLogger(`[token-manager]`),
+  chainConfig: platformConfig,
   blockchain: blockchain,
   eventBus: eventBus,
   db,
 });
 
 const dexRegistry = new DexRegistry({
+  chainConfig: platformConfig,
   blockchain: blockchain,
   tokenManager: tokenManager,
-  logger: createLogger(`[dex-registry]`),
+  db,
 });
 
 // ================================================================================================
@@ -64,8 +65,7 @@ async function init() {
   // init cache
   await cache.load();
   // await tokenManager.init(); // load tokens from DB and trusted tokens from coingecho
-  // await poolStatesManager.init(); // load discovered pools from DB
-  dexRegistry.init(platformConfig); // init contracts for dex venues
+  dexRegistry.init(); // init contracts for dex venues
 }
 
 // Entry point

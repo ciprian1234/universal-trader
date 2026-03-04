@@ -5,7 +5,6 @@ import { CacheService } from '@/utils/cache-service';
 import type { ChainConfig } from '@/config/models';
 import { Blockchain } from './core/blockchain';
 import { TokenManager } from './core/token-manager';
-import { PoolStatesManager } from './core/pool-states-manager';
 import { EventBus } from './core/event-bus';
 import { DexRegistry } from './core/dex-registry';
 import { BlockManager } from './core/block-manager';
@@ -21,7 +20,6 @@ class EVMWorker extends BaseWorker {
   private tokenManager!: TokenManager;
   private dexRegistry!: DexRegistry;
   private blockManager!: BlockManager;
-  private poolStatesManager!: PoolStatesManager;
 
   async handleRequest(message: RequestMessage) {
     this.sendResponseMessage({
@@ -51,7 +49,7 @@ class EVMWorker extends BaseWorker {
       this.logger.info(`Token pair ${tokenPair.key} registered:`);
       this.logger.info(` • ${tokenPair.token0.symbol} (${tokenPair.token0.address})`);
       this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
-      this.poolStatesManager.discoverPoolsForTokenPairs(tokenPair); // discover pools for the new trading pair
+      this.dexRegistry.discoverPoolsForTokenPair(tokenPair); // discover pools for the new trading pair
     });
 
     // -- 3. "pool-update" ---------------------------------------------
@@ -124,24 +122,14 @@ class EVMWorker extends BaseWorker {
 
     // create dex registry and register adapters
     this.dexRegistry = new DexRegistry({
+      chainConfig: this.chainConfig,
       blockchain: this.blockchain,
       tokenManager: this.tokenManager,
-      logger: createLogger(`[${this.chainConfig.name}.dex-registry]`),
-    });
-    this.dexRegistry.init(this.chainConfig); // init contracts for dex venues
-
-    // initialize PoolStatesManager
-    this.poolStatesManager = new PoolStatesManager({
-      chainId: this.chainConfig.chainId,
-      eventBus: this.eventBus,
-      dexRegistry: this.dexRegistry,
-      tokenManager: this.tokenManager,
-      logger: createLogger(`[${this.chainConfig.name}.pool-states-manager]`),
       db: this.db,
     });
-    await this.poolStatesManager.init(); // load discovered pools from DB
+    await this.dexRegistry.init(); // init contracts for dex venues
 
-    // emit events with created trading pairs => this triggers pool discovery in PoolStatesManager
+    // emit events with created trading pairs => this triggers pool discovery in DexManager
     this.tokenManager.createTradingPairsBetweenRootTokens();
 
     // delay 10 seconds to allow initial token/pool registration before starting block manager
@@ -153,7 +141,7 @@ class EVMWorker extends BaseWorker {
       chainId: this.chainConfig.chainId,
       blockchain: this.blockchain,
       eventBus: this.eventBus,
-      poolStatesManager: this.poolStatesManager,
+      dexRegistry: this.dexRegistry,
       logger: createLogger(`[${this.chainConfig.name}.block-manager]`),
     });
     await this.blockManager.init();

@@ -61,9 +61,9 @@ TRIGGERS => route event on MainThread (nothing else for now)
 ### EventBus: "token-pair-registred"
 
 EMITTED: at init for few preconfigured ROOT TOKENS or when a new token gets registered
-TRIGGERS => PoolStatesManager.discoverPoolsForTokenPairs(newTokenPair) (pools discovery for a gven tokenPair on all venues)
+TRIGGERS => DexManager.discoverPoolsForTokenPairs(newTokenPair) (pools discovery for a gven tokenPair on all venues)
 
-### Blockchain pool event => BlockManager.handlePoolEvent => poolStatesManager.handlePoolEvent(e) (BlockManager calls directly with no EventBus)
+### Blockchain pool event => BlockManager.handlePoolEvent => dexManager.handlePoolEvent(e) (BlockManager calls directly with no EventBus)
 
 - if pool its registred => calls dexRegistry.updatePoolFromEvent(p, e) => set pool state and emit "pool-update"
 - else => calls dexRegistry.handleEventForUnknownPool(e) => calls ensureTokenRegistered for both token0/token1 => set pool state and emit "pool-update"?

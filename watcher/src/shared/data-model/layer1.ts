@@ -45,7 +45,10 @@ export interface VenueState {
 
 // ── DEX ─────────────────────────────────────────────────────
 
-export interface DexPoolState extends VenueState {
+export type DexPoolState = DexV2PoolState | DexV3PoolState | DexV4PoolState;
+
+// Base DexPoolState fields are common across all DEX versions
+export interface DexPoolStateBase extends VenueState {
   venue: DexVenue;
   address: string; // pool address (for v2 and v3), in v4 we store PoolManager address here and the actual pool is identified by poolKey
   protocol: DexProtocol;
@@ -75,17 +78,17 @@ interface ConcentratedLiquidityFields {
   ticks?: TickData[]; // optional array of active ticks with liquidity changes
 }
 
-export interface DexV2PoolState extends DexPoolState {
+export interface DexV2PoolState extends DexPoolStateBase {
   protocol: 'v2';
   reserve0: bigint;
   reserve1: bigint;
 }
 
-export interface DexV3PoolState extends DexPoolState, ConcentratedLiquidityFields {
+export interface DexV3PoolState extends DexPoolStateBase, ConcentratedLiquidityFields {
   protocol: 'v3';
 }
 
-export interface DexV4PoolState extends DexPoolState, ConcentratedLiquidityFields {
+export interface DexV4PoolState extends DexPoolStateBase, ConcentratedLiquidityFields {
   protocol: 'v4';
   poolKey: string; // bytes32 — V4 identifies pools by poolKey, not address
   hooks?: string; // V4 hooks address

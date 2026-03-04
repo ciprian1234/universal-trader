@@ -9,16 +9,16 @@ import type {
   V4SwapEvent,
 } from './interfaces';
 import { EventBus } from './event-bus';
-import { PoolStatesManager } from './pool-states-manager';
 import { Blockchain } from './blockchain';
 import type { Logger } from '@/utils';
 import { dexPoolId, type DexPoolState, type EventMetadata } from '@/shared/data-model/layer1';
+import type { DexRegistry } from './dex-registry';
 
 type BlockManagerInput = {
   chainId: number;
   blockchain: Blockchain;
   eventBus: EventBus;
-  poolStatesManager: PoolStatesManager;
+  dexRegistry: DexRegistry;
   logger: Logger;
 };
 
@@ -32,7 +32,7 @@ export class BlockManager {
   private readonly logger: Logger;
   private readonly blockchain: Blockchain;
   private readonly eventBus: EventBus;
-  private readonly poolStatesManager: PoolStatesManager;
+  private readonly dexRegistry: DexRegistry;
   private poolAddressesSet: Set<string> = new Set();
 
   // Configuration
@@ -99,7 +99,7 @@ export class BlockManager {
     this.chainId = input.chainId;
     this.blockchain = input.blockchain;
     this.eventBus = input.eventBus;
-    this.poolStatesManager = input.poolStatesManager;
+    this.dexRegistry = input.dexRegistry;
     this.logger = input.logger;
   }
 
@@ -150,7 +150,7 @@ export class BlockManager {
    * 🎧 Listen for pool events
    */
   listenPoolEvents(): void {
-    // const poolAddresses = this.poolStatesManager.getPoolAddresses();
+    // const poolAddresses = this.dexRegistry.getPoolAddresses();
     // if (poolAddresses.length === 0) {
     //   this.logger.error('❌ No pools to monitor');
     //   return;
@@ -193,8 +193,8 @@ export class BlockManager {
 
     // Refresh all pool states
     this.logger.info('🔄 Refreshing pool states after reorg...');
-    await this.poolStatesManager.updateActivePools();
-    this.poolStatesManager.calculateAllPoolsLiquidityUSD();
+    await this.dexRegistry.updateAllPools();
+    this.dexRegistry.calculateAllPoolsLiquidityUSD();
 
     // resume arbitrage checking after recovery
     this.logger.info('✅ Reorg recovery completed. Current block number:', this.currentBlock.number);
@@ -219,7 +219,7 @@ export class BlockManager {
       this.eventBuffer.push(event);
 
       // Update pool state immediately - handlePoolEvent applies only if event is newer (by blockNumber, txIndex, logIndex)
-      this.poolStatesManager.handlePoolEvent(event);
+      this.dexRegistry.handlePoolEvent(event);
 
       // start processing timer to send all events in batch after timeout (with debounce)
       if (this.eventsProcessingTimer) clearTimeout(this.eventsProcessingTimer); // Reset timer (debounce)
