@@ -12,7 +12,7 @@ import { EventBus } from './event-bus';
 import { Blockchain } from './blockchain';
 import type { Logger } from '@/utils';
 import { dexPoolId, type DexPoolState, type EventMetadata } from '@/shared/data-model/layer1';
-import type { DexManager } from './dex-registry';
+import type { DexManager } from './dex-manager';
 
 type BlockManagerInput = {
   chainId: number;

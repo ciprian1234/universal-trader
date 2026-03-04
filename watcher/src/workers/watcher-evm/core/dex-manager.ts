@@ -1,5 +1,5 @@
-import { TokenManager } from '../core/token-manager';
-import { Blockchain } from '../core/blockchain';
+import { TokenManager } from './token-manager';
+import { Blockchain } from './blockchain';
 import { createLogger, type Logger } from '@/utils';
 import type { ChainConfig, DexConfig } from '@/config/models';
 import type { DexPoolState, DexVenueName } from '@/shared/data-model/layer1';

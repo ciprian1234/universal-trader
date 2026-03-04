@@ -6,7 +6,7 @@ import type { ChainConfig } from '@/config/models';
 import { Blockchain } from './core/blockchain';
 import { TokenManager } from './core/token-manager';
 import { EventBus } from './core/event-bus';
-import { DexManager } from './core/dex-registry';
+import { DexManager } from './core/dex-manager';
 import { BlockManager } from './core/block-manager';
 import { WorkerDb } from './db';
 

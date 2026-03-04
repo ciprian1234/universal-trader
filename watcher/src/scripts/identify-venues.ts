@@ -9,7 +9,7 @@ import { createLogger } from '@/utils';
 import { CacheService } from '@/utils/cache-service';
 import { TokenManager } from '@/workers/watcher-evm/core/token-manager';
 import { EventBus } from '@/workers/watcher-evm/core/event-bus';
-import { DexManager } from '@/workers/watcher-evm/core/dex-registry';
+import { DexManager } from '@/workers/watcher-evm/core/dex-manager';
 import { DEX_ADAPTER } from '@/workers/watcher-evm/core/dex-adapters';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;
