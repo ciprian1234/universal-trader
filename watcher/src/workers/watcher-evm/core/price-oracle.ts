@@ -1,207 +1,190 @@
 import { createLogger } from '@/utils/logger';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenManager } from './token-manager';
+import type { ChainConfig } from '@/config/models';
 
-const logger = createLogger('[PriceOracle]');
-
-type PriceoOracleInput = {
-  chainId: number;
+type PriceOracleInput = {
+  chainConfig: ChainConfig;
   tokenManager: TokenManager;
 };
 
-// Anchors: tokens whose prices we fetch externally
-// "chainId:address" → true
-const ANCHOR_ADDRESSES: Record<number, string[]> = {
-  1: [
-    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', // WETH
-    '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', // WBTC
-    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC
-    '0xdac17f958d2ee523a2206206994597c13d831ec7', // USDT
-    '0x6b175474e89094c44da98b954eedeac495271d0f', // DAI
-  ],
-};
-
-// DeFiLlama chain prefix
-const CHAIN_PREFIX: Record<number, string> = {
-  1: 'ethereum',
-  42161: 'arbitrum',
-  10: 'optimism',
-  8453: 'base',
-};
-
-export interface PriceEntry {
+type PriceEntryAnchor = {
   priceUSD: number;
-  source: 'anchor' | 'derived';
-  derivedVia?: string; // poolId used to derive
+  source: 'anchor';
   updatedAt: number;
-}
+};
+
+type PriceEntryDerived = {
+  priceUSD: number;
+  source: 'derived';
+  updatedAt: number;
+  derivedFrom: {
+    poolId: string;
+    poolLiquidityUSD: number;
+  };
+};
+
+type PriceEntry = PriceEntryAnchor | PriceEntryDerived;
 
 export class PriceOracle {
-  private readonly chainId: number;
+  private readonly logger;
+  private readonly chainConfig: ChainConfig;
   private readonly tokenManager: TokenManager;
-  // "chainId:address" → PriceEntry
-  private readonly prices = new Map<string, PriceEntry>();
+  private readonly prices = new Map<string, PriceEntry>(); // "address" → PriceEntry
+  private anchorAddresesSet = new Set<string>(); // for quick lookup of whether a token is an anchor token
+  private anchorAddressesQueryParam: string = ''; // "chain:addr1,chain:addr2,..."
+  private fetchIntervalId: NodeJS.Timeout | null = null;
 
-  constructor(input: PriceoOracleInput) {
-    this.chainId = input.chainId;
+  constructor(input: PriceOracleInput) {
+    this.logger = createLogger(`[${input.chainConfig.name}.PriceOracle]`);
+    this.chainConfig = input.chainConfig;
     this.tokenManager = input.tokenManager;
-    // Hardcode stablecoin anchors — no fetch needed
-    const stablecoins =
-      ANCHOR_ADDRESSES[this.chainId]?.filter((a) =>
-        ['usdc', 'usdt', 'dai', 'frax', 'lusd'].some(
-          (s) => this.prices.has(this.key(a)), // skip if already fetched
-        ),
-      ) ?? [];
+  }
 
-    // Pre-seed known stablecoins as $1.00
-    const STABLECOIN_ADDRESSES: Record<number, string[]> = {
-      1: [
-        '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC
-        '0xdac17f958d2ee523a2206206994597c13d831ec7', // USDT
-        '0x6b175474e89094c44da98b954eedeac495271d0f', // DAI
-        '0x853d955acef822db058eb8505911ed77f175b99e', // FRAX
-      ],
-    };
-
-    for (const address of STABLECOIN_ADDRESSES[this.chainId] ?? []) {
-      this.prices.set(this.key(address), {
-        priceUSD: 1.0,
-        source: 'anchor',
-        updatedAt: Date.now(),
-      });
+  destroy(): void {
+    if (this.fetchIntervalId) {
+      clearInterval(this.fetchIntervalId);
+      this.fetchIntervalId = null;
     }
   }
 
-  // ── External anchor fetch (only ~5 tokens) ───────────────────────────
+  async init(): Promise<void> {
+    // prepare anchor token address set and query param
+    this.anchorAddresesSet = new Set(
+      this.chainConfig.priceAnchorTokens.map((symbol) => {
+        const anchorToken = this.tokenManager.findTokenBySymbol(symbol);
+        if (!anchorToken) throw new Error('Price anchor token not registred');
+        return anchorToken.address;
+      }),
+    );
 
+    // construct the query param for fetching anchor tokens from defi-llama
+    const prefix = this.chainConfig.name; // "ethereum"
+    this.anchorAddressesQueryParam = Array.from(this.anchorAddresesSet)
+      .map((addr) => `${prefix}:${addr}`)
+      .join(',');
+
+    // fetch initial anchor prices and start periodic updates
+    await this.fetchAnchors();
+    this.fetchIntervalId = setInterval(() => this.fetchAnchors(), 60_000); // fetch every 60 seconds
+  }
+
+  // ── External anchor fetch (called on init and periodically to update prices)
   async fetchAnchors(): Promise<void> {
-    const addresses = ANCHOR_ADDRESSES[this.chainId];
-    if (!addresses?.length) return;
-
-    const prefix = CHAIN_PREFIX[this.chainId];
-    if (!prefix) return;
-
-    const coins = addresses.map((a) => `${prefix}:${a}`).join(',');
-
+    this.logger.info('Fetching anchor token prices');
     try {
-      const res = await fetch(`https://coins.llama.fi/prices/current/${coins}`, {
+      const res = await fetch(`https://coins.llama.fi/prices/current/${this.anchorAddressesQueryParam}`, {
         signal: AbortSignal.timeout(5_000),
       });
       const data = (await res.json()) as {
         coins: Record<string, { price: number; confidence: number }>;
       };
 
-      console.log('Anchor price data:', data);
-
       for (const [coinKey, val] of Object.entries(data.coins)) {
-        if (val.confidence < 0.5) continue;
+        if (val.confidence < 0.5) this.logger.warn(`Confidedence of ${coinKey} under 50% threshold:`, val);
         const address = coinKey.split(':')[1];
-        this.prices.set(this.key(address), {
+        this.prices.set(address.toLowerCase(), {
           priceUSD: val.price,
           source: 'anchor',
           updatedAt: Date.now(),
         });
       }
-
-      logger.info(`Anchors fetched: ${Object.keys(data.coins).length} prices`);
     } catch (err) {
-      logger.warn('Failed to fetch anchor prices:', err);
+      this.logger.warn('Failed to fetch anchor prices:', err);
     }
   }
 
-  // ── Derive all prices from pool states ───────────────────────────────
+  // PriceUSD derived from pool
+  // if both tokens are anchors => no need to derive
+  // if both p0 and p1 are missing => can't derive
+  // example:
+  // pool: WETH-NEW_TOKEN, lets say (1 WETH = 50 NEW_TOKEN) <=> (1 NEW_TOKEN = 0.02 WETH)
+  // if we know WETH = $2000 => NEW_TOKEN_USD = 0.02 * $2000 = $40
+  deriveFromPool(pool: DexPoolState): void {
+    const t0Addr = pool.tokenPair.token0.address;
+    const t1Addr = pool.tokenPair.token1.address;
+    let p0 = this.prices.get(t0Addr); // token0 price in USD (or undefined if not derived yet or not anchor)
+    let p1 = this.prices.get(t1Addr); // token1 price in USD (or undefined if not derived yet or not anchor)
 
-  /**
-   * BFS from known prices → derive unknown token prices through pools.
-   * Call this after every venue-state-batch update.
-   * Returns addresses whose prices changed.
-   */
-  deriveFromPools(pools: DexPoolState[]): string[] {
-    // Build adjacency: tokenAddress → pools it appears in
-    const adjacency = new Map<string, DexPoolState[]>();
-    for (const pool of pools) {
-      const t0 = pool.tokenPair.token0.address.toLowerCase();
-      const t1 = pool.tokenPair.token1.address.toLowerCase();
-      if (!adjacency.has(t0)) adjacency.set(t0, []);
-      if (!adjacency.has(t1)) adjacency.set(t1, []);
-      adjacency.get(t0)!.push(pool);
-      adjacency.get(t1)!.push(pool);
-    }
+    // if both prices are missing we can't derive
+    if (p0 === undefined && p1 === undefined)
+      throw new Error(`Can't derive prices for ${pool.tokenPair.key} - poolId: ${pool.id}`);
 
-    const changed: string[] = [];
+    const poolLiquidityUSD = this.estimatePoolLiquidityUSD(pool);
 
-    // BFS queue — start from all tokens with known prices
-    const queue: string[] = [];
-    for (const [k] of this.prices) {
-      const address = k.split(':')[1];
-      queue.push(address);
-    }
-
-    const visited = new Set<string>(queue);
-
-    while (queue.length > 0) {
-      const knownAddress = queue.shift()!;
-      const knownPrice = this.prices.get(this.key(knownAddress))!.priceUSD;
-      const neighborPools = adjacency.get(knownAddress) ?? [];
-
-      for (const pool of neighborPools) {
-        if (pool.spotPrice0to1 === 0 || pool.spotPrice1to0 === 0) continue; // no dynamic data yet
-
-        const t0 = pool.tokenPair.token0.address.toLowerCase();
-        const t1 = pool.tokenPair.token1.address.toLowerCase();
-
-        const [unknownAddress, derivedPrice] =
-          knownAddress === t0
-            ? [t1, knownPrice * pool.spotPrice0to1] // price of t1 in USD
-            : [t0, knownPrice * pool.spotPrice1to0]; // price of t0 in USD
-
-        if (visited.has(unknownAddress)) continue;
-        visited.add(unknownAddress);
-        queue.push(unknownAddress);
-
-        const existing = this.prices.get(this.key(unknownAddress));
-        if (existing?.priceUSD === derivedPrice) continue;
-
-        this.prices.set(this.key(unknownAddress), {
-          priceUSD: derivedPrice,
-          source: 'derived',
-          derivedVia: pool.id,
-          updatedAt: Date.now(),
-        });
-        changed.push(unknownAddress);
+    // A: update/derive p0 (from p1)
+    if (p1 !== undefined) {
+      if (p0 === undefined) {
+        // first time seeing p0 — derive it
+        p0 = this.setPriceEntryDerived(t0Addr, p1.priceUSD * pool.spotPrice0to1, pool.id, poolLiquidityUSD);
+      } else if (p0.source !== 'anchor' && poolLiquidityUSD > p0.derivedFrom.poolLiquidityUSD) {
+        // p0 is derived — only update if current pool has more liquidity (higher confidence price)
+        p0 = this.setPriceEntryDerived(t0Addr, p1.priceUSD * pool.spotPrice0to1, pool.id, poolLiquidityUSD);
       }
+      // p0.source === 'anchor' => skip — anchor prices come from DeFiLlama only
+      // poolLiquidityUSD <= p0.poolLiquidityUSD => skip — previous pool was more liquid, keep that price
     }
 
-    return changed;
+    // B: update/derive p1 (from p0)
+    if (p0 !== undefined) {
+      if (p1 === undefined) {
+        // first time seeing p1 — derive it
+        p1 = this.setPriceEntryDerived(t1Addr, p0.priceUSD * pool.spotPrice1to0, pool.id, poolLiquidityUSD);
+      } else if (p1.source !== 'anchor' && poolLiquidityUSD > p1.derivedFrom.poolLiquidityUSD) {
+        // p1 is derived — only update if current pool has more liquidity
+        p1 = this.setPriceEntryDerived(t1Addr, p0.priceUSD * pool.spotPrice1to0, pool.id, poolLiquidityUSD);
+      }
+      // p1.source === 'anchor' => skip — anchor prices come from DeFiLlama only
+      // poolLiquidityUSD <= p1.poolLiquidityUSD => skip — previous pool was more liquid, keep that price
+    }
+  }
+
+  // helper to create PriceEntryDerived
+  private setPriceEntryDerived(tokenAddr: string, priceUSD: number, poolId: string, poolLiquidityUSD: number): PriceEntryDerived {
+    const newPriceEntry: PriceEntryDerived = {
+      priceUSD,
+      source: 'derived',
+      updatedAt: Date.now(),
+      derivedFrom: {
+        poolId,
+        poolLiquidityUSD,
+      },
+    };
+    this.prices.set(tokenAddr, newPriceEntry);
+    return newPriceEntry;
   }
 
   // ── Query ────────────────────────────────────────────────────────────
-
-  getPrice(address: string): number | undefined {
-    return this.prices.get(this.key(address))?.priceUSD;
-  }
-
-  getEntry(address: string): PriceEntry | undefined {
-    return this.prices.get(this.key(address));
+  getPriceUSD(address: string) {
+    const priceEntry = this.prices.get(address);
+    if (priceEntry !== undefined) return priceEntry.priceUSD;
+    return undefined;
   }
 
   estimatePoolLiquidityUSD(pool: DexPoolState): number {
-    const p0 = this.getPrice(pool.tokenPair.token0.address);
-    const p1 = this.getPrice(pool.tokenPair.token1.address);
     const { token0, token1 } = pool.tokenPair;
+    const p0 = this.getPriceUSD(token0.address);
+    const p1 = this.getPriceUSD(token1.address);
 
     if (p0 !== undefined) {
       const r0 = Number(pool.reserve0) / 10 ** token0.decimals;
-      return r0 * p0 * 2; // × 2 because balanced pool
+      return r0 * p0 * 2; // × 2 because balanced pool (NOTE: assumption is wrong for non-50/50 pools)
     }
     if (p1 !== undefined) {
       const r1 = Number(pool.reserve1) / 10 ** token1.decimals;
-      return r1 * p1 * 2;
+      return r1 * p1 * 2; // × 2 because balanced pool (NOTE: assumption is wrong for non-50/50 pools)
     }
     return 0;
   }
 
-  private key(address: string): string {
-    return `${this.chainId}:${address.toLowerCase()}`;
+  // log all prices
+  logPrices(): void {
+    this.logger.info('Anchor prices in USD:');
+    for (const [addr, price] of this.prices.entries()) {
+      const token = this.tokenManager.getToken(addr)!;
+      this.logger.info(
+        `- ${token.symbol} (${addr}): $${price.priceUSD} (source: ${price.source}, updatedAt: ${new Date(price.updatedAt).toISOString()})`,
+      );
+    }
   }
 }

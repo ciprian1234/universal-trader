@@ -10,7 +10,7 @@
     "lint": "bunx biome check src/",
     "format": "bunx biome format --write src/",
     "identify-venues": "bun run ./src/scripts/identify-venues.ts",
-    "run-price-oracle": "bun run ./src/scripts/run-price-oracle.ts",
+    "exec-price-oracle": "bun run ./src/scripts/exec-price-oracle.ts",
     "compute-init-code-hash": "bun run ./src/scripts/compute-init-code-hash.ts"
   },
   "dependencies": {
