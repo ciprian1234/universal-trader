@@ -52,13 +52,13 @@ const priceOracle = new PriceOracle({
 async function main() {
   // init
   await cache.load();
-  await tokenManager.init(); // load tokens from DB and trusted tokens from coingecho
-  dexManager.init(platformConfig); // init contracts for dex venues
+  await tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
+  dexManager.init(); // init contracts for dex venues
 
   const pools = await db.loadAllPools();
   console.log(`Loaded ${pools.length} pools from DB`);
 
-  // fetch root prices
+  // fetch anchor token prices
   await priceOracle.fetchAnchors();
   const allPools = pools.map((storedPool) => storedPool.state);
 

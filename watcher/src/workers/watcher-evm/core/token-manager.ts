@@ -27,8 +27,8 @@ export class TokenManager {
   private readonly blockchain: Blockchain;
   private readonly eventBus: EventBus;
 
-  // token its the main list of active tokens - we register only root tokens and stablecoins at startup
-  // as pool events come in we register new tokens into this list => which triggers token pair creations with root tokens
+  // token its the main list of active tokens - we register only discovery tokens and stablecoins at startup
+  // as pool events come in we register new tokens into this list => which triggers token pair creations with discovery tokens
   private tokens: Map<string, TokenOnChain> = new Map(); // the main list of activeTokens
 
   // cached list of all stored tokens from DB
@@ -77,9 +77,10 @@ export class TokenManager {
     // load trusted tokens in cache (coingecko or uniswap token lists)
     await this.loadTrustedTokens('coingecko');
 
-    // ensure root tokens and stablecoins are registered
+    // ensure stablecoins, discovery tokens, and price anchor tokens are registered
     await Promise.all(this.chainConfig.stablecoinTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
-    await Promise.all(this.chainConfig.rootTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
+    await Promise.all(this.chainConfig.discoveryTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
+    await Promise.all(this.chainConfig.priceAnchorTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
   }
 
   /**
@@ -242,15 +243,15 @@ export class TokenManager {
   // ================================================================================================
 
   /**
-   * Create trading pairs between all root tokens
+   * Create trading pairs between all discovery tokens
    * emits event for new token pairs which triggers pool discovery in DexManager
    */
-  createTradingPairsBetweenRootTokens() {
-    for (const symbol0 of this.chainConfig.rootTokens) {
-      for (const symbol1 of this.chainConfig.rootTokens) {
+  createTradingPairsBetweenDiscoveryTokens() {
+    for (const symbol0 of this.chainConfig.discoveryTokens) {
+      for (const symbol1 of this.chainConfig.discoveryTokens) {
         const token0 = this.findTokenBySymbol(symbol0);
         const token1 = this.findTokenBySymbol(symbol1);
-        if (!token0 || !token1) throw new Error(`Root tokens ${symbol0} or ${symbol1} not found in registry`);
+        if (!token0 || !token1) throw new Error(`Discovery tokens ${symbol0} or ${symbol1} not found in registry`);
         if (token0.address === token1.address) continue; // Skip self-pairs
         // Enforce canonical order to avoid duplicates
         if (token0.address < token1.address) {
@@ -265,20 +266,20 @@ export class TokenManager {
   }
 
   /**
-   * Create token pairs between some input token and all root tokens
+   * Create token pairs between some input token and all discovery tokens
    * emits event for new token pairs which triggers pool discovery in DexManager
    */
   createTokenPairsForNewToken(newToken: TokenOnChain) {
     // TBD: improve this logic in future:
     // - create trading pairs only if some criteria are met to avoid unnecessary pool discoveries
     // - also cache token pairs stats to avoid creating pairs that are unlikely to be liquid (e.g. low market cap tokens)
-    for (const rootSymbol of this.chainConfig.rootTokens) {
-      const rootToken = this.findTokenBySymbol(rootSymbol);
-      if (!rootToken) throw new Error(`Root token ${rootSymbol} not found in registry`);
-      if (newToken.address === rootToken.address) continue; // Skip self-pair
+    for (const discoverySymbol of this.chainConfig.discoveryTokens) {
+      const discoveryToken = this.findTokenBySymbol(discoverySymbol)!;
+      if (newToken.address === discoveryToken.address) continue; // Skip self-pair
 
       // Enforce canonical order to avoid duplicates
-      const [token0, token1] = newToken.address < rootToken.address ? [newToken, rootToken] : [rootToken, newToken];
+      const [token0, token1] =
+        newToken.address < discoveryToken.address ? [newToken, discoveryToken] : [discoveryToken, newToken];
       const key = `${token0.symbol}-${token1.symbol}`;
       if (this.tokenPairs.has(key)) {
         this.logger.warn(`Token pair ${key} already exists, skipping creation`);

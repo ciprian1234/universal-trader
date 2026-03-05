@@ -15,7 +15,8 @@ const ethereum: ChainConfig = {
   nativeToken: 'ETH',
   wrappedNativeToken: 'WETH',
   stablecoinTokens: ['USDC', 'USDT', 'DAI'],
-  rootTokens: ['WETH', 'WBTC', 'USDC', 'USDT', 'DAI'], // used for pair discovery and as preferred borrow tokens
+  discoveryTokens: ['WETH', 'USDC', 'USDT', 'DAI'], // used for pair discovery and as preferred borrow tokens
+  priceAnchorTokens: ['WETH', 'WBTC', 'LINK', 'UNI', 'AAVE', 'USDT', 'USDC', 'DAI'], // used as USD price anchors for liquidity/profit calculatons
 
   // database URL for this chain's worker
   databaseUrl: process.env.APP_CONFIG_DATABASE_URL!,

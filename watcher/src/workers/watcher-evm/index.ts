@@ -34,12 +34,12 @@ class EVMWorker extends BaseWorker {
 
   setupEventPipeline() {
     // -- 1. "token-registered" ---------------------------------------------
-    // For each new token: create trading pairs with ROOT tokens and emit "token-pair-registered" events for those pairs
+    // For each new token: create trading pairs with DISCOVERY tokens and emit "token-pair-registered" events for those pairs
     this.eventBus.onTokenRegistered((token) => {
       this.logger.info(`✅ Registered token ${token.symbol} (addr: ${token.address})`);
       // this.sendEventMessage('token-registered', { token }); // send event to main thread
 
-      // create trading pairs for new token with all root tokens
+      // create trading pairs for new token with all discovery tokens
       // this.tokenManager.createTokenPairsForNewToken(token); // FOR NOW KEEP THIS DISABLED
     });
 
@@ -130,7 +130,7 @@ class EVMWorker extends BaseWorker {
     await this.dexManager.init(); // init contracts for dex venues
 
     // emit events with created trading pairs => this triggers pool discovery in DexManager
-    this.tokenManager.createTradingPairsBetweenRootTokens();
+    this.tokenManager.createTradingPairsBetweenDiscoveryTokens();
 
     // delay 10 seconds to allow initial token/pool registration before starting block manager
     await new Promise((resolve) => setTimeout(resolve, 15_000));

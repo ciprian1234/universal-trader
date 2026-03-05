@@ -54,13 +54,13 @@ IMPORTANT NOTE: (there may be multiple fake copies of any ERC20) => don't do cro
 ### EventBus: "token-registred"
 
 EMITTED: only by tokenManager.ensureTokenRegistered if token not registred yet.
-case 1: at init for rootTokens
+case 1: at init for discoveryTokens
 case 2: when a new
 TRIGGERS => route event on MainThread (nothing else for now)
 
 ### EventBus: "token-pair-registred"
 
-EMITTED: at init for few preconfigured ROOT TOKENS or when a new token gets registered
+EMITTED: at init for few preconfigured DISCOVERY TOKENS or when a new token gets registered
 TRIGGERS => DexManager.discoverPoolsForTokenPairs(newTokenPair) (pools discovery for a gven tokenPair on all venues)
 
 ### Blockchain pool event => BlockManager.handlePoolEvent => dexManager.handlePoolEvent(e) (BlockManager calls directly with no EventBus)
@@ -76,10 +76,10 @@ new Blockchain pool event: Pool(id1, t0, t1) => EMIT(t0), EMIT(t1)
 =>
 
 Case1: create only 1 TokenPair: (t0, t1)
-Case2: create (t0, rootToken0)...(t0m, rootTokenN), (t1, rootToken0)...(t1, rootTokenN)
+Case2: create (t0, discoveryToken0)...(t0m, discoveryTokenN), (t1, discoveryToken0)...(t1, discoveryTokenN)
 
 new TokenPair(t0, t1) => discover pools on all venues
-=> new Pool(id1, t0, t1)
+=> new Pool1(id1, t0, t1), Pool2(id2, t0, t1), Pool3(id3, t0, t1) => token are already registred => tokenPair(t0, t1) already exists => OK
 
 Q: Should I check
 
@@ -87,8 +87,8 @@ Q: Should I check
 
 We need token prices in USD just for liquidity calculation and for referance - arbitrage its not based on priceOracle data!
 
-- at init => fetch few RootPrices from external sources (WETH, WBTC, USD-stablecoins, and few other popular tokens)
-- every 5 minutes => fetch rootTokenPrices - if failed => just log a warning - don't stop the app (we can fallback to internal calculation)
+- at init => fetch few AnchorPrices from external sources (WETH, WBTC, USD-stablecoins, and few other popular tokens)
+- every 5 minutes => fetch discoveryTokenPrices - if failed => just log a warning - don't stop the app (we can fallback to internal calculation)
 
 ## REORG MECHANISM
 
