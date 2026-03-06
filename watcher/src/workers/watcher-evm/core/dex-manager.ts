@@ -69,7 +69,7 @@ export class DexManager {
   // EVENT HANDLERS
   // ================================================================================================
   async handlePoolEvent(event: PoolEvent) {
-    let pool: DexPoolState | null = this.pools.get(event.poolId) ?? null;
+    let pool = this.pools.get(event.poolId) ?? null;
     if (pool) {
       // => pool its registred - update state from event data
       pool = DEX_ADAPTER.updatePoolFromEvent(pool, event);
@@ -78,11 +78,6 @@ export class DexManager {
       const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, configs: this.chainConfig.dexConfigs };
       pool = await DEX_ADAPTER.handleEventForUnknownPool(ctx, event); // NOTE: this may take longer...
       if (!pool) return this.logger.error(`Unable to introspect pool, ignoring event for poolId: ${event.poolId}`);
-
-      // store new pool in DB
-      this.db
-        .upsertPool(pool, 'event', true)
-        .catch((e) => this.logger.error(`Failed to save new pool ${pool!.id} to DB:`, { error: e }));
     }
 
     // derive USD prices and calculate total liquidityUSD
@@ -94,9 +89,18 @@ export class DexManager {
       // SET POOL ERROR STATE/FLAG
     }
 
-    // update pools and storedPools cache
+    // update pools cache
     this.pools.set(pool.id, pool);
-    this.storedPools.set(pool.id, pool);
+
+    // update stored pools cache
+    if (!this.storedPools.has(pool.id)) {
+      this.storedPools.set(pool.id, pool);
+      this.db
+        .upsertPool(pool, 'event', true)
+        .catch((e) => this.logger.error(`Failed to save new pool ${pool!.id} to DB:`, { error: e }));
+    } else {
+      this.storedPools.set(pool.id, pool);
+    }
 
     // log event details
     const feePercent = DEX_ADAPTER.getFeePercent(pool);
@@ -194,6 +198,7 @@ export class DexManager {
 
         const updatedPool = await DEX_ADAPTER.updatePool(ctx, pool);
         this.pools.set(poolId, updatedPool);
+        this.storedPools.set(poolId, updatedPool);
 
         this.logger.info(
           `✅ Updated pool on ${updatedPool.venue.name.padEnd(15)} (${updatedPool.tokenPair.key}:${updatedPool.feeBps.toString().padEnd(5)}) (id: ${updatedPool.id})`,
