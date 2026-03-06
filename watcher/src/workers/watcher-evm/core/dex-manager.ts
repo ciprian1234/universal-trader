@@ -45,9 +45,10 @@ export class DexManager {
     this.priceOracle = input.priceOracle;
   }
 
-  /**
-   * Dex registry initialization
-   */
+  // ================================================================================================
+  // INITIALIZATION AND MANAGEMENT
+  // ================================================================================================
+
   async init() {
     this.logger.info('🔧 Initializing DexManager...');
 
@@ -64,89 +65,8 @@ export class DexManager {
     this.logger.info(`✅ Configured DEX venues: ${[...this.venueConfigs.keys()].join(', ')}`);
   }
 
-  async discoverAllPoolsForTokenPair(tokenPair: TokenPairOnChain) {
-    const foundPools: DexPoolState[] = [];
-    for (const [venueName, config] of this.venueConfigs.entries()) {
-      const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config };
-
-      try {
-        let foundPoolsForVenue = await DEX_ADAPTER.discoverPoolsForVenue(ctx, tokenPair);
-        if (foundPoolsForVenue.length === 0) continue;
-        foundPools.push(...foundPoolsForVenue);
-        foundPoolsForVenue.forEach((pool) => {
-          this.logger.info(
-            `✅ Found pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps
-              .toString()
-              .padEnd(5)}) (id: ${pool.id})`,
-          );
-        });
-      } catch (error) {
-        this.logger.error(`Error discovering pools for pair ${tokenPair.key} on venue ${venueName}`, {
-          error: (error as Error).message,
-        });
-        continue;
-      }
-    }
-    return foundPools;
-  }
-
   // ================================================================================================
-  // INITIALIZATION AND MANAGEMENT
-  // ================================================================================================
-
-  async discoverPoolsForTokenPair(tokenPair: TokenPairOnChain): Promise<void> {
-    const existingPools = this.findPoolsByTokenPair(tokenPair);
-    // TODO: revisit this logic - if 1 new pool exist due to new event => other pools are not discovered
-    if (existingPools.length >= 1) {
-      this.logger.info(`There are already ${existingPools.length} pools for pair ${tokenPair.key}, skipping discovery`);
-      return;
-    }
-    const discoveredPools = await this.discoverAllPoolsForTokenPair(tokenPair);
-    for (const pool of discoveredPools) {
-      const poolId = pool.id;
-      if (this.pools.has(pool.id)) {
-        this.logger.warn(`⚠️ Pool with ID ${poolId} already exists, skipping registration`);
-        continue;
-      }
-      this.pools.set(poolId, pool);
-      // this.storedPools.set(poolId, pool);
-      this.db
-        .upsertPool(pool, 'config', true)
-        .catch((e) => this.logger.error(`Failed to save new pool ${poolId} to DB:`, { error: e }));
-    }
-    this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${discoveredPools.length} new pools`);
-  }
-
-  async updateAllPools(): Promise<void> {
-    this.logger.info('🔄 Updating all pool states...');
-    for (const [poolId, pool] of this.pools.entries()) {
-      try {
-        const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
-        const updatedPoolState = await DEX_ADAPTER.updatePool(ctx, pool);
-        this.pools.set(poolId, updatedPoolState);
-
-        // derive USD prices and calculate total liquidityUSD
-        try {
-          this.priceOracle.deriveFromPool(pool);
-          const liquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(pool);
-          pool.totalLiquidityUSD = liquidityUSD;
-        } catch (error) {
-          this.logger.warn(`Failed to derive price for pool ${pool.id} after event, liquidityUSD will be missing:`, { error });
-        }
-
-        // Log pool initialization
-        this.logger.info(
-          `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
-        );
-      } catch (error) {
-        this.logger.warn(`❌ Failed to update pool ${poolId}:`, { error });
-      }
-    }
-    this.logger.info(`✅ Updated ${this.pools.size} active pool states`);
-  }
-
-  // ================================================================================================
-  // POOL EVENT HANDLER
+  // EVENT HANDLERS
   // ================================================================================================
   async handlePoolEvent(event: PoolEvent) {
     let pool: DexPoolState | null = this.pools.get(event.poolId) ?? null;
@@ -187,6 +107,96 @@ export class DexManager {
 
     // Emit pool update event
     // this.eventBus.emitPoolUpdate(updatedState, pool);
+  }
+
+  //
+  // Called when a new token pair its registred in the system (either via event or on init for preconfigured pairs)
+  //
+  async handlePoolsDiscoveryForTokenPair(tokenPair: TokenPairOnChain): Promise<void> {
+    const existingPools = this.findPoolsByTokenPair(tokenPair);
+    // TODO: revisit this logic - if 1 new pool exist due to new event => other pools are not discovered
+    if (existingPools.length >= 1) {
+      this.logger.info(`There are already ${existingPools.length} pools for pair ${tokenPair.key}, skipping discovery`);
+      return;
+    }
+    const discoveredPools = await this.discoverAllPoolsForTokenPair(tokenPair);
+    for (const pool of discoveredPools) {
+      const poolId = pool.id;
+      if (this.pools.has(pool.id)) {
+        this.logger.warn(`⚠️ Pool with ID ${poolId} already exists, skipping registration`);
+        continue;
+      }
+      this.pools.set(poolId, pool);
+      // this.storedPools.set(poolId, pool);
+      this.db
+        .upsertPool(pool, 'config', true)
+        .catch((e) => this.logger.error(`Failed to save new pool ${poolId} to DB:`, { error: e }));
+    }
+    this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${discoveredPools.length} new pools`);
+  }
+
+  // ================================================================================================
+  // INTERNAL CORE OPERATIONS
+  // ================================================================================================
+
+  //
+  // Called from handlePoolsDiscoveryForTokenPair when a new token pair its registred
+  //
+  private async discoverAllPoolsForTokenPair(tokenPair: TokenPairOnChain) {
+    const foundPools: DexPoolState[] = [];
+    for (const [venueName, config] of this.venueConfigs.entries()) {
+      const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config };
+
+      try {
+        let foundPoolsForVenue = await DEX_ADAPTER.discoverPoolsForVenue(ctx, tokenPair);
+        if (foundPoolsForVenue.length === 0) continue;
+        foundPools.push(...foundPoolsForVenue);
+        foundPoolsForVenue.forEach((pool) => {
+          this.logger.info(
+            `✅ Found pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps
+              .toString()
+              .padEnd(5)}) (id: ${pool.id})`,
+          );
+        });
+      } catch (error) {
+        this.logger.error(`Error discovering pools for pair ${tokenPair.key} on venue ${venueName}`, {
+          error: (error as Error).message,
+        });
+        continue;
+      }
+    }
+    return foundPools;
+  }
+
+  //
+  // called to to update the state on all registred pools
+  //
+  async updateAllPools(): Promise<void> {
+    this.logger.info('🔄 Updating all pool states...');
+    for (const [poolId, pool] of this.pools.entries()) {
+      try {
+        const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
+        const updatedPoolState = await DEX_ADAPTER.updatePool(ctx, pool);
+        this.pools.set(poolId, updatedPoolState);
+
+        // derive USD prices and calculate total liquidityUSD
+        try {
+          this.priceOracle.deriveFromPool(pool);
+          const liquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(pool);
+          pool.totalLiquidityUSD = liquidityUSD;
+        } catch (error) {
+          this.logger.warn(`Failed to derive price for pool ${pool.id} after event, liquidityUSD will be missing:`, { error });
+        }
+
+        // Log pool initialization
+        this.logger.info(
+          `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
+        );
+      } catch (error) {
+        this.logger.warn(`❌ Failed to update pool ${poolId}:`, { error });
+      }
+    }
+    this.logger.info(`✅ Updated ${this.pools.size} active pool states`);
   }
 
   // ================================================================================================

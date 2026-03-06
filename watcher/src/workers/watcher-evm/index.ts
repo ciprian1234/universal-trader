@@ -51,7 +51,7 @@ class EVMWorker extends BaseWorker {
       this.logger.info(`Token pair ${tokenPair.key} registered:`);
       this.logger.info(` • ${tokenPair.token0.symbol} (${tokenPair.token0.address})`);
       this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
-      this.dexManager.discoverPoolsForTokenPair(tokenPair); // discover pools for the new trading pair
+      this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPair); // discover pools for the new trading pair
     });
 
     // -- 3. "pool-update" ---------------------------------------------
