@@ -212,7 +212,7 @@ export async function updatePool(ctx: DexAdapterContext, pool: DexV3PoolState): 
   pool.liquidity = liquidity;
   pool.spotPrice0to1 = calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, true);
   pool.spotPrice1to0 = calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, false);
-  await fetchInitializedTicksMulticall3(ctx, pool); // fetch initialized ticks for multi-tick simulation
+  // await fetchInitializedTicksMulticall3(ctx, pool); // fetch initialized ticks for multi-tick simulation
   return pool;
 }
 

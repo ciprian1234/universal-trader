@@ -54,10 +54,11 @@ class EVMWorker extends BaseWorker {
       this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPair); // discover pools for the new trading pair
     });
 
-    // -- 3. "pool-update" ---------------------------------------------
-    // PriceOracle derives prices incrementally on each pool update
+    // -- 3. "pool-event" ---------------------------------------------
     // this.eventBus.onPoolUpdate((pool) => {
-    //   this.priceOracle.deriveFromPool(pool);
+    //   // notify main thread about pool state update (after processing the event and updating the state)
+    //   // TODO: notify liquidity graph to update
+    //   // this.sendEventMessage('pool-update', { pool });
     // });
 
     // -- 4. "pool-events-batch" ---------------------------------------------
