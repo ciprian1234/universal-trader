@@ -128,11 +128,18 @@ export class DexManager {
         this.logger.warn(`⚠️ Pool with ID ${pool.id} already exists, skipping registration`);
         continue;
       }
-      // NOTE: at this point the pool has only static data (no dynamic state yet)
-
-      // update pool with latest dynamic
+      // NOTE: at this point the pool has only static data (no dynamic state yet) => update pool with dynamic data
       const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
       const updatedPool = await DEX_ADAPTER.updatePool(ctx, pool);
+
+      // derive USD prices and calculate total liquidityUSD
+      try {
+        this.priceOracle.deriveFromPool(updatedPool);
+        updatedPool.totalLiquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(updatedPool);
+      } catch (error) {
+        this.logger.warn(`Failed to derive price for pool ${updatedPool.id}`, { error });
+        // SET POOL ERROR STATE/FLAG
+      }
 
       // store updated pool state in cache and DB
       this.pools.set(updatedPool.id, updatedPool);
@@ -186,17 +193,17 @@ export class DexManager {
     for (const [poolId, pool] of this.pools.entries()) {
       try {
         const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
+        const updatedPool = await DEX_ADAPTER.updatePool(ctx, pool);
 
         // derive USD prices and calculate total liquidityUSD
         try {
-          this.priceOracle.deriveFromPool(pool);
-          pool.totalLiquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(pool);
+          this.priceOracle.deriveFromPool(updatedPool);
+          updatedPool.totalLiquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(updatedPool);
         } catch (error) {
-          this.logger.warn(`Failed to derive price for pool ${pool.id} after event, liquidityUSD will be missing:`, { error });
+          this.logger.warn(`Failed to derive price for pool ${poolId}`, { error });
           // SET POOL ERROR STATE/FLAG
         }
 
-        const updatedPool = await DEX_ADAPTER.updatePool(ctx, pool);
         this.pools.set(poolId, updatedPool);
         this.storedPools.set(poolId, updatedPool);
 
