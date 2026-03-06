@@ -8,12 +8,14 @@ import type { PoolEvent } from './interfaces';
 import type { WorkerDb } from '../db';
 import { formatUnits } from 'ethers';
 import { DEX_ADAPTER } from './dex-adapters';
+import type { PriceOracle } from './price-oracle';
 
 type DexManagerInput = {
   chainConfig: ChainConfig;
   db: WorkerDb;
   blockchain: Blockchain;
   tokenManager: TokenManager;
+  priceOracle: PriceOracle;
 };
 
 export class DexManager {
@@ -23,7 +25,7 @@ export class DexManager {
   private readonly db: WorkerDb;
   private readonly blockchain: Blockchain;
   private readonly tokenManager: TokenManager;
-
+  private readonly priceOracle: PriceOracle;
   // map of DEX configs by venue name for quick access
   private readonly venueConfigs: Map<DexVenueName, DexConfig> = new Map();
 
@@ -40,6 +42,7 @@ export class DexManager {
     this.db = input.db;
     this.blockchain = input.blockchain;
     this.tokenManager = input.tokenManager;
+    this.priceOracle = input.priceOracle;
   }
 
   /**
@@ -122,6 +125,15 @@ export class DexManager {
         const updatedPoolState = await DEX_ADAPTER.updatePool(ctx, pool);
         this.pools.set(poolId, updatedPoolState);
 
+        // derive USD prices and calculate total liquidityUSD
+        try {
+          this.priceOracle.deriveFromPool(pool);
+          const liquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(pool);
+          pool.totalLiquidityUSD = liquidityUSD;
+        } catch (error) {
+          this.logger.warn(`Failed to derive price for pool ${pool.id} after event, liquidityUSD will be missing:`, { error });
+        }
+
         // Log pool initialization
         this.logger.info(
           `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
@@ -131,40 +143,6 @@ export class DexManager {
       }
     }
     this.logger.info(`✅ Updated ${this.pools.size} active pool states`);
-  }
-
-  // ================================================================================================
-  // Calculate liquidityUSD for all pools
-  // ================================================================================================
-  public calculateAllPoolsLiquidityUSD(): void {
-    for (const [key, pool] of this.pools.entries()) {
-      const token0 = pool.tokenPair.token0;
-      const token1 = pool.tokenPair.token1;
-
-      let totalLiquidityInUSD = 0;
-      if (pool.protocol === 'v2') {
-        try {
-          // TODO: update this when implemented price oracle
-          // const v0 = this.tokenManager.calculateUSDValue(token0.address, pool.reserve0) || 0;
-          // const v1 = this.tokenManager.calculateUSDValue(token1.address, pool.reserve1) || 0;
-          // totalLiquidityInUSD = v0 + v1;
-        } catch (e) {
-          throw new Error(`Error calculating USD value for pool ${key}: ${(e as Error).message}`);
-        }
-      }
-
-      // // skip if reserves are undefined
-      // if (pool.reserve0 === undefined || pool.reserve1 === undefined) {
-      //   throw new Error(`Error calculating LiquidityUSD for pool ${key} due to undefined reserves`);
-      //   continue;
-      // }
-
-      // calculate liquidityUSD (requires external price feed)
-
-      // update pool state
-      // pool.totalLiquidityInUSD = totalLiquidityInUSD;
-      this.pools.set(key, pool);
-    }
   }
 
   // ================================================================================================
@@ -190,6 +168,15 @@ export class DexManager {
       this.db
         .upsertPool(pool, 'event', true)
         .catch((e) => this.logger.error(`Failed to save new pool ${pool!.id} to DB:`, { error: e }));
+    }
+
+    // derive USD prices and calculate total liquidityUSD
+    try {
+      this.priceOracle.deriveFromPool(pool);
+      const liquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(pool);
+      pool.totalLiquidityUSD = liquidityUSD;
+    } catch (error) {
+      this.logger.warn(`Failed to derive price for pool ${pool.id} after event, liquidityUSD will be missing:`, { error });
     }
 
     // log event details
@@ -284,7 +271,7 @@ export class DexManager {
     this.logger.info(`💧 ${pool.venue.name} ${s0}-${s1} (feeBP: ${pool.feeBps}) - Pool ID: ${pool.id}`);
     this.logger.info(`   📈 Price: ${s0} = ${pool.spotPrice0to1}${s1}`);
     this.logger.info(`   📉 Price: ${s1} = ${pool.spotPrice1to0}${s0}`);
-    // this.logger.info(`   💰 Total Liquidity in USD: $${pool.totalLiquidityInUSD?.toFixed(2)}`);
+    this.logger.info(`   💰 Total Liquidity in USD: $${pool.totalLiquidityUSD?.toFixed(2)}`);
 
     if (pool.protocol === 'v3') {
       this.logger.info(`   🧱 Current Tick: ${pool.tick} (tickSpacing: ${pool.tickSpacing})`);

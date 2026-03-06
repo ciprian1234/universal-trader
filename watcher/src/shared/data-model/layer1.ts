@@ -62,7 +62,7 @@ export interface DexPoolStateBase extends VenueState {
   // derived fields (updated on each updatePool)
   spotPrice0to1: number; // price of token0 in terms of token1
   spotPrice1to0: number; // price of token1 in terms of token0
-  // totalLiquidityInUSD removed — belongs in Layer 2 VenuePricing.liquidityUSD
+  totalLiquidityUSD: number; // estimated total liquidity in USD (using price oracle)
 
   // Metadata of the latest event that caused a state update
   latestEventMeta?: EventMetadata;

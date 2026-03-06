@@ -100,7 +100,7 @@ export class PriceOracle {
   // example:
   // pool: WETH-NEW_TOKEN, lets say (1 WETH = 50 NEW_TOKEN) <=> (1 NEW_TOKEN = 0.02 WETH)
   // if we know WETH = $2000 => NEW_TOKEN_USD = 0.02 * $2000 = $40
-  deriveFromPool(pool: DexPoolState): void {
+  deriveFromPool(pool: DexPoolState) {
     const t0Addr = pool.tokenPair.token0.address;
     const t1Addr = pool.tokenPair.token1.address;
     let p0 = this.prices.get(t0Addr); // token0 price in USD (or undefined if not derived yet or not anchor)
@@ -137,6 +137,7 @@ export class PriceOracle {
       // p1.source === 'anchor' => skip — anchor prices come from DeFiLlama only
       // poolLiquidityUSD <= p1.poolLiquidityUSD => skip — previous pool was more liquid, keep that price
     }
+    return { liquidityUSD: poolLiquidityUSD };
   }
 
   // helper to create PriceEntryDerived
@@ -166,15 +167,14 @@ export class PriceOracle {
     const p0 = this.getPriceUSD(token0.address);
     const p1 = this.getPriceUSD(token1.address);
 
-    if (p0 !== undefined) {
-      const r0 = Number(pool.reserve0) / 10 ** token0.decimals;
-      return r0 * p0 * 2; // × 2 because balanced pool (NOTE: assumption is wrong for non-50/50 pools)
-    }
-    if (p1 !== undefined) {
-      const r1 = Number(pool.reserve1) / 10 ** token1.decimals;
-      return r1 * p1 * 2; // × 2 because balanced pool (NOTE: assumption is wrong for non-50/50 pools)
-    }
-    return 0;
+    // distinguish "price unknown" from "reserve is zero"
+    const v0 = p0 !== undefined ? (Number(pool.reserve0) / 10 ** token0.decimals) * p0 : undefined;
+    const v1 = p1 !== undefined ? (Number(pool.reserve1) / 10 ** token1.decimals) * p1 : undefined;
+
+    if (v0 !== undefined && v1 !== undefined) return v0 + v1; // both prices known — most accurate
+    if (v0 !== undefined) return v0 * 2; // only t0 price known — assume balanced
+    if (v1 !== undefined) return v1 * 2; // only t1 price known — assume balanced
+    return 0; // no prices known — can't estimate
   }
 
   // log all prices

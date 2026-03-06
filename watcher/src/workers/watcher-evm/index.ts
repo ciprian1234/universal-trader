@@ -3,9 +3,10 @@ import { BaseWorker } from '../common/base-worker';
 import { createLogger } from '@/utils';
 import { CacheService } from '@/utils/cache-service';
 import type { ChainConfig } from '@/config/models';
+import { EventBus } from './core/event-bus';
 import { Blockchain } from './core/blockchain';
 import { TokenManager } from './core/token-manager';
-import { EventBus } from './core/event-bus';
+import { PriceOracle } from './core/price-oracle';
 import { DexManager } from './core/dex-manager';
 import { BlockManager } from './core/block-manager';
 import { WorkerDb } from './db';
@@ -18,6 +19,7 @@ class EVMWorker extends BaseWorker {
 
   private blockchain!: Blockchain;
   private tokenManager!: TokenManager;
+  private priceOracle!: PriceOracle;
   private dexManager!: DexManager;
   private blockManager!: BlockManager;
 
@@ -120,11 +122,19 @@ class EVMWorker extends BaseWorker {
     });
     await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
 
+    // create price oracle
+    this.priceOracle = new PriceOracle({
+      chainConfig: this.chainConfig,
+      tokenManager: this.tokenManager,
+    });
+    await this.priceOracle.init(); // fetch initial anchor prices and start periodic updates
+
     // create dex registry and register adapters
     this.dexManager = new DexManager({
       chainConfig: this.chainConfig,
       blockchain: this.blockchain,
       tokenManager: this.tokenManager,
+      priceOracle: this.priceOracle,
       db: this.db,
     });
     await this.dexManager.init(); // init contracts for dex venues

@@ -185,6 +185,7 @@ async function initPool(
     reserve1: 0n,
     spotPrice0to1: 0,
     spotPrice1to0: 0,
+    totalLiquidityUSD: 0, // added later after we have dynamic data
   };
 
   if (input.event) updatePoolFromEvent(newPool, input.event);
@@ -312,7 +313,7 @@ export function getFeePercent(poolState: DexV3PoolState): number {
 // ================================================================================================
 
 /**
- * 🔄 UPDATE POOL STATE FROM EVENT: Fast V3 state updates
+ * 🔄 UPDATE POOL STATE FROM V3 EVENTS
  */
 export function updatePoolFromEvent(pool: DexV3PoolState, event: PoolEvent): DexV3PoolState {
   if (event.protocol !== 'v3' || event.name !== 'swap') return pool; // Only handle swap events for state updates (sync events not emitted in V3)
@@ -332,17 +333,6 @@ export function updatePoolFromEvent(pool: DexV3PoolState, event: PoolEvent): Dex
   const { token0, token1 } = pool.tokenPair;
   pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
   pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
-
-  // calculate liquidityUSD (requires external price feed)
-  try {
-    // TODO: update this when implemented price oracle
-    // const v0 = this.tokenManager.calculateUSDValue(pool.tokenPair.token0.address, pool.reserve0!) || 0;
-    // const v1 = this.tokenManager.calculateUSDValue(pool.tokenPair.token1.address, pool.reserve1!) || 0;
-    // pool.totalLiquidityInUSD = v0 + v1; // note: liquidity calculated from virtual reserves
-  } catch (error) {
-    // this.logger.warn(`❌ Failed to calculate USD liquidity for pool ${event.poolId.value}: ${(error as Error).message}`);
-    // pool.totalLiquidityInUSD = 0;
-  }
 
   return pool;
 }
