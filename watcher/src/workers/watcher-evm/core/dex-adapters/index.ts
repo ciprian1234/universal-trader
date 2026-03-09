@@ -6,83 +6,273 @@ import * as V2 from './uniswap-v2';
 import * as V3 from './uniswap-v3';
 import * as V4 from './uniswap-v4';
 import type { PoolEvent, V2SyncEvent, V3SwapEvent, V4SwapEvent } from '../interfaces';
-import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
-import type { DexConfig, DexV2Config, DexV3Config } from '@/config/models';
-import { safeStringify } from '@/utils';
+import type { ChainConfig, DexConfig, DexV2Config, DexV3Config } from '@/config/models';
+import { createLogger, safeStringify } from '@/utils';
 import type { Blockchain } from '../blockchain';
+import type { WorkerDb } from '../../db';
+import type { TokenManager } from '../token-manager';
+import type { PriceOracle } from '../price-oracle';
+import { formatUnits } from 'ethers';
 
-function initAllDexConfigContracts(blockchain: Blockchain, dexConfigs: DexConfig[]) {
-  // Register all DEXes defined in the chain config
-  for (const config of dexConfigs) {
-    if (config.protocol === 'v2') {
-      blockchain.initContract(config.factoryAddress, V2.FACTORY_ABI);
-      blockchain.initContract(config.routerAddress, V2.ROUTER_ABI);
-    } else if (config.protocol === 'v3') {
-      blockchain.initContract(config.factoryAddress, V3.FACTORY_ABI);
-      blockchain.initContract(config.quoterAddress, V3.QUOTER_ABI);
-      blockchain.initContract(config.routerAddress, V3.ROUTER_ABI);
-    } else if (config.protocol === 'v4') {
-      blockchain.initContract(config.poolManagerAddress, V4.POOL_MANAGER_ABI);
-      blockchain.initContract(config.stateViewAddress, V4.STATE_VIEW_ABI);
-    } else {
-      throw new Error(`Unsupported DexConfig: ${safeStringify(config)}`);
+type DexAdapterInput = {
+  db: WorkerDb;
+  chainConfig: ChainConfig;
+  blockchain: Blockchain;
+  tokenManager: TokenManager;
+  priceOracle: PriceOracle;
+};
+
+// This class serves as a router for DEX-specific logic, directing calls to the appropriate DEX adapter based on the protocol specified in the DexConfig. It also provides a single interface for the DexManager to interact with different DEX protocols without needing to know the details of each one.
+export class DexAdapter {
+  private readonly logger;
+  private readonly chainConfig: ChainConfig;
+  private readonly db: WorkerDb;
+  private readonly blockchain: Blockchain;
+  private readonly tokenManager: TokenManager;
+  private readonly priceOracle: PriceOracle;
+
+  // map of DEX configs by venue name for quick access
+  private readonly venueConfigs: Map<DexVenueName, DexConfig> = new Map();
+
+  // cached list of all stored pools from DB (used for quick introspection)
+  private storedPools: Map<string, DexPoolState> = new Map();
+
+  // ================================================================================================
+  // INITIALIZATION AND CONFIGURATION
+  // ================================================================================================
+  constructor(input: DexAdapterInput) {
+    this.logger = createLogger(`[${input.chainConfig.name}.DexAdapter]`);
+    this.chainConfig = input.chainConfig;
+    this.db = input.db;
+    this.blockchain = input.blockchain;
+    this.tokenManager = input.tokenManager;
+    this.priceOracle = input.priceOracle;
+
+    // Register all DEXes defined in the chain config
+    for (const config of this.chainConfig.dexConfigs) {
+      this.venueConfigs.set(config.name, config);
+
+      // Initialize necessary contracts for each DEX based on its protocol
+      if (config.protocol === 'v2') {
+        this.blockchain.initContract(config.factoryAddress, V2.FACTORY_ABI);
+        this.blockchain.initContract(config.routerAddress, V2.ROUTER_ABI);
+      } else if (config.protocol === 'v3') {
+        this.blockchain.initContract(config.factoryAddress, V3.FACTORY_ABI);
+        this.blockchain.initContract(config.quoterAddress, V3.QUOTER_ABI);
+        this.blockchain.initContract(config.routerAddress, V3.ROUTER_ABI);
+      } else if (config.protocol === 'v4') {
+        this.blockchain.initContract(config.poolManagerAddress, V4.POOL_MANAGER_ABI);
+        this.blockchain.initContract(config.stateViewAddress, V4.STATE_VIEW_ABI);
+      } else {
+        throw new Error(`Unsupported DexConfig: ${safeStringify(config)}`);
+      }
+    }
+    this.logger.info(`✅ Configured DEX venues: ${[...this.venueConfigs.keys()].join(', ')}`);
+  }
+
+  // init load stored pools from DB and cache them
+  async init() {
+    this.logger.info('🔧 Initializing DexAdapter...');
+    // load stored pools from DB into cache for quick lookup during pool discovery
+    const dbPools = await this.db.loadAllPools();
+    for (const pool of dbPools) this.storedPools.set(pool.id, pool.state);
+    this.logger.info(`📦 Loaded ${dbPools.length} pools from DB`);
+  }
+
+  // ================================================================================================
+  // ADAPTER ROUTING
+  // ================================================================================================
+  private async discoverPoolsForVenue(venueName: DexVenueName, tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
+    const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(venueName) };
+    if (ctx.config.protocol === 'v2') return await V2.discoverPools(ctx, tokenPair);
+    else if (ctx.config.protocol === 'v3') return await V3.discoverPools(ctx, tokenPair);
+    else if (ctx.config.protocol === 'v4') return await V4.discoverPools(ctx, tokenPair);
+    else return [];
+  }
+
+  updatePoolFromEvent(pool: DexPoolState, poolEvent: PoolEvent): DexPoolState {
+    if (pool.protocol === 'v2') V2.updatePoolFromEvent(pool, poolEvent as V2SyncEvent);
+    else if (pool.protocol === 'v3') V3.updatePoolFromEvent(pool, poolEvent);
+    else if (pool.protocol === 'v4') V4.updatePoolFromEvent(pool, poolEvent as V4SwapEvent);
+    else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)} and event: ${safeStringify(poolEvent)}`);
+    this.deriveTokenPricesAndLiquidity(pool);
+    this.syncToStorage(pool, false); // update cache but not persist to DB immediately for event updates
+    return pool;
+  }
+
+  async handleEventForUnknownPool(event: PoolEvent): Promise<DexPoolState | null> {
+    const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, configs: this.chainConfig.dexConfigs };
+    let pool: DexPoolState | null = null;
+    if (event.protocol === 'v2') pool = await V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
+    else if (event.protocol === 'v3') pool = await V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
+    else throw new Error(`Unsupported pool event: ${safeStringify(event)}`);
+    pool.venue.name = this.identifyVenueNameForPool(pool);
+    this.deriveTokenPricesAndLiquidity(pool);
+    this.syncToStorage(pool, true);
+    return pool;
+  }
+
+  async updatePool(pool: DexPoolState): Promise<DexPoolState> {
+    const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
+    if (pool.protocol === 'v2') V2.updatePool(ctx, pool);
+    else if (pool.protocol === 'v3') V3.updatePool(ctx, pool);
+    else if (pool.protocol === 'v4') V4.updatePool(ctx, pool);
+    else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)}`);
+    this.deriveTokenPricesAndLiquidity(pool);
+    this.syncToStorage(pool, true);
+    return pool;
+  }
+
+  getFeePercent(pool: DexPoolState): number {
+    if (pool.protocol === 'v2') return V2.getFeePercent(pool);
+    else if (pool.protocol === 'v3') return V3.getFeePercent(pool);
+    else if (pool.protocol === 'v4') return V4.getFeePercent(pool);
+    else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)}`);
+  }
+
+  // ================================================================================================
+  // CORE LOGIC
+  // ================================================================================================
+
+  //
+  // Find pools for a given token piar by iterating over all configured venues
+  //
+  async discoverPoolsForTokenPair(tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
+    const allPools: DexPoolState[] = [];
+    for (const [venueName, config] of this.venueConfigs.entries()) {
+      const foundPools = this.findInStoredPools(tokenPair, venueName);
+      // if at least 1 pool its cached => consider for now that the pair its discovered
+      if (foundPools.length > 0) {
+        this.logger.info(`There are already ${foundPools.length} pools for pair ${tokenPair.key}, skipping discovery`);
+        allPools.push(...foundPools);
+        continue;
+      } else {
+        const discoveredPools = await this.discoverPoolsForVenue(venueName, tokenPair);
+        allPools.push(...discoveredPools);
+        for (const pool of discoveredPools) {
+          this.logger.info(
+            `✅ Discovered new pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps
+              .toString()
+              .padEnd(5)}) (id: ${pool.id})`,
+          );
+        }
+      }
+    }
+
+    // update all discovered pools with derived USD prices and liquidity and persist to DB
+    await Promise.all(allPools.map((pool) => this.updatePool(pool)));
+    return allPools;
+  }
+
+  //
+  // derive USD prices and calculate total liquidityUSD for a pool
+  //
+  deriveTokenPricesAndLiquidity(pool: DexPoolState): void {
+    // derive USD prices and calculate total liquidityUSD
+    try {
+      this.priceOracle.deriveFromPool(pool);
+      pool.totalLiquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(pool);
+    } catch (error) {
+      this.logger.warn(`Failed to derive price for pool ${pool.id} after event, liquidityUSD will be missing:`, { error });
+      // TODO: SET POOL ERROR STATE/FLAG
     }
   }
-}
 
-async function discoverPoolsForVenue(ctx: DexAdapterContext, tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
-  if (ctx.config.protocol === 'v2') return await V2.discoverPools(ctx, tokenPair);
-  else if (ctx.config.protocol === 'v3') return await V3.discoverPools(ctx, tokenPair);
-  else if (ctx.config.protocol === 'v4') return await V4.discoverPools(ctx, tokenPair);
-  else return [];
-}
+  //
+  // handle stored pools cache and database sync
+  // note: for registered pool events - only update cache but not persist to DB imediately
+  syncToStorage(pool: DexPoolState, persist: boolean) {
+    // update stored pools cache - always
+    this.storedPools.set(pool.id, pool);
 
-async function handleEventForUnknownPool(ctx: PoolIntrospectContext, event: PoolEvent): Promise<DexPoolState | null> {
-  let pool: DexPoolState | null = null;
-  if (event.protocol === 'v2') pool = await V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
-  else if (event.protocol === 'v3') pool = await V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
-  else throw new Error(`Unsupported pool event: ${safeStringify(event)}`);
-  pool.venue.name = identifyVenueNameForPool(pool, ctx.configs);
-  return pool;
-}
+    if (persist) {
+      this.db
+        .upsertPool(pool, 'event', true)
+        .catch((e) => this.logger.error(`Failed to save new pool ${pool!.id} to DB:`, { error: e }));
+    }
+  }
 
-// helper to identify venue name for pool
-function identifyVenueNameForPool(pool: DexPoolState, dexConfigs: DexConfig[]): DexVenueName {
-  const dexConfigListByProtocol = dexConfigs.filter((config) => config.protocol === pool.protocol);
-  if (pool.protocol === 'v2') return V2.identifyVenueForPool(pool, dexConfigListByProtocol as DexV2Config[]);
-  else if (pool.protocol === 'v3') return V3.identifyVenueForPool(pool, dexConfigListByProtocol as DexV3Config[]);
-  else return 'unknown';
-}
+  // ================================================================================================
+  // HELPERS
+  // ================================================================================================
 
-async function updatePool(ctx: DexAdapterContext, pool: DexPoolState): Promise<DexPoolState> {
-  if (pool.protocol === 'v2') return V2.updatePool(ctx, pool);
-  else if (pool.protocol === 'v3') return V3.updatePool(ctx, pool);
-  else if (pool.protocol === 'v4') return V4.updatePool(ctx, pool);
-  else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)}`);
-}
+  /**
+   * 🔍 FIND STORED POOLS BY TOKEN PAIR
+   */
+  private findInStoredPools(tokenPair: TokenPairOnChain, venue: DexVenueName): DexPoolState[] {
+    const foundPools: DexPoolState[] = [];
+    for (const pool of this.storedPools.values()) {
+      if (pool.tokenPair.key === tokenPair.key && pool.venue.name === venue) foundPools.push(pool);
+    }
+    return foundPools;
+  }
 
-function getFeePercent(pool: DexPoolState): number {
-  if (pool.protocol === 'v2') return V2.getFeePercent(pool);
-  else if (pool.protocol === 'v3') return V3.getFeePercent(pool);
-  else if (pool.protocol === 'v4') return V4.getFeePercent(pool);
-  else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)}`);
-}
+  // helper to identify venue name for pool
+  private identifyVenueNameForPool(pool: DexPoolState): DexVenueName {
+    const dexConfigListByProtocol = this.chainConfig.dexConfigs.filter((config) => config.protocol === pool.protocol);
+    if (pool.protocol === 'v2') return V2.identifyVenueForPool(pool, dexConfigListByProtocol as DexV2Config[]);
+    else if (pool.protocol === 'v3') return V3.identifyVenueForPool(pool, dexConfigListByProtocol as DexV3Config[]);
+    else return 'unknown';
+  }
 
-function updatePoolFromEvent(pool: DexPoolState, poolEvent: PoolEvent): DexPoolState {
-  if (pool.protocol === 'v2') return V2.updatePoolFromEvent(pool, poolEvent as V2SyncEvent);
-  else if (pool.protocol === 'v3') return V3.updatePoolFromEvent(pool, poolEvent);
-  else if (pool.protocol === 'v4') return V4.updatePoolFromEvent(pool, poolEvent as V4SwapEvent);
-  else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)} and event: ${safeStringify(poolEvent)}`);
-}
+  // helper to get config for venue or throw if not exist
+  private requireConfig(venueName: DexVenueName) {
+    const config = this.venueConfigs.get(venueName);
+    if (!config) throw new Error(`No config for venue: ${venueName}`);
+    return config;
+  }
 
-// exported adapter functions for DexManager
-export const DEX_ADAPTER = {
-  initAllDexConfigContracts,
-  discoverPoolsForVenue,
-  handleEventForUnknownPool,
-  identifyVenueNameForPool, // this is used in identify-venues script only
-  updatePool,
-  getFeePercent,
-  updatePoolFromEvent,
-};
+  /**
+   * 🖥️ Display pool
+   */
+  displayPoolState(pool: DexPoolState): void {
+    const s0 = pool.tokenPair.token0.symbol;
+    const s1 = pool.tokenPair.token1.symbol;
+
+    this.logger.info(`💧 ${pool.venue.name} ${s0}-${s1} (feeBP: ${pool.feeBps}) - Pool ID: ${pool.id}`);
+    this.logger.info(`   📈 Price: ${s0} = ${pool.spotPrice0to1}${s1}`);
+    this.logger.info(`   📉 Price: ${s1} = ${pool.spotPrice1to0}${s0}`);
+    this.logger.info(`   💰 Total Liquidity in USD: $${pool.totalLiquidityUSD?.toFixed(2)}`);
+
+    if (pool.protocol === 'v3') {
+      this.logger.info(`   🧱 Current Tick: ${pool.tick} (tickSpacing: ${pool.tickSpacing})`);
+      // log tick ranges for each liquidity position
+      if (pool.ticks) {
+        pool.ticks.forEach((pos, index) => {
+          this.logger.info(`       🧱 Position ${index + 1}: Liquidity: ${pos.liquidityNet.toString()} - Tick: ${pos.tick}`);
+        });
+      }
+    }
+
+    this.logger.info(`\n\n`);
+  }
+
+  /**
+   * 🖥️ Display event
+   */
+  displayEvent(event: PoolEvent, previousState: DexPoolState, updatedState: DexPoolState): void {
+    const s0 = updatedState.tokenPair.token0.symbol;
+    const s1 = updatedState.tokenPair.token1.symbol;
+
+    // get info data
+    const oldSpotPriceToken0InToken1 = previousState.spotPrice0to1;
+    const oldSpotPriceToken1InToken0 = previousState.spotPrice1to0;
+    const newSpotPriceToken0InToken1 = updatedState.spotPrice0to1;
+    const newSpotPriceToken1InToken0 = updatedState.spotPrice1to0;
+
+    const oldNormalizedReserve0 = parseFloat(formatUnits(previousState.reserve0!, previousState.tokenPair.token0.decimals));
+    const oldNormalizedReserve1 = parseFloat(formatUnits(previousState.reserve1!, previousState.tokenPair.token1.decimals));
+    const newNormalizedReserve0 = parseFloat(formatUnits(updatedState.reserve0!, updatedState.tokenPair.token0.decimals));
+    const newNormalizedReserve1 = parseFloat(formatUnits(updatedState.reserve1!, updatedState.tokenPair.token1.decimals));
+
+    const priceChangePercent = ((newSpotPriceToken0InToken1 - oldSpotPriceToken0InToken1) / oldSpotPriceToken0InToken1) * 100;
+
+    this.logger.info(`   🔗 Block: ${event.meta.blockNumber} - 📄 TX: ${event.meta.transactionHash}`);
+    this.logger.info(`   💧 Reserve0: ${oldNormalizedReserve0} -> ${newNormalizedReserve0} (${s0})`);
+    this.logger.info(`   💧 Reserve1: ${oldNormalizedReserve1} -> ${newNormalizedReserve1} (${s1})`);
+    this.logger.info(`   📈 Price: 1${s0} costs ${newSpotPriceToken0InToken1}${s1} -> ${priceChangePercent.toFixed(6)}%`);
+    this.logger.info(`   📉 Price: 1${s1} costs ${newSpotPriceToken1InToken0}${s0} -> ${priceChangePercent.toFixed(6)}%`);
+    this.logger.info(`   ✅ Pool state synchronized successfully\n`);
+  }
+}

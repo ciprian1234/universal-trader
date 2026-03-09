@@ -13,6 +13,15 @@ export interface EventBusConfig {
 }
 
 // ================================================================================================
+// EVENT TYPES
+// ================================================================================================
+type PoolStateEvent = {
+  action: 'create' | 'update' | 'delete';
+  pool: DexPoolState;
+  previousState?: DexPoolState; // only available for 'update' actions
+};
+
+// ================================================================================================
 // EVENT BUS CLASS
 // ================================================================================================
 
@@ -56,19 +65,8 @@ export class EventBus extends EventEmitter {
     this.emit('poolEventsBatch', data);
   }
 
-  /**
-   * 📊 EMIT POOL UPDATE
-   * This its emited after sync/swap event gets processed and pool state is updated
-   * ArbitrageService listens to this event
-   */
-  emitPoolUpdate(poolState: DexPoolState, previousState?: DexPoolState): void {
-    const updateInfo = {
-      current: poolState,
-      previous: previousState,
-      // TODO: maybe add more info like price change, liquidity change, etc.
-    };
-
-    this.emit('pool-update', updateInfo);
+  emitPoolStateEvent(data: PoolStateEvent): void {
+    this.emit('pool-state-event', data);
   }
 
   /**
@@ -124,9 +122,9 @@ export class EventBus extends EventEmitter {
     return () => this.off('arbitrage-opportunity', callback); // Return unsubscribe function
   }
 
-  onPoolUpdate(callback: (updateInfo: any) => void): () => void {
-    this.on('pool-update', callback);
-    return () => this.off('pool-update', callback); // Return unsubscribe function
+  onPoolStateEvent(callback: (event: PoolStateEvent) => void): () => void {
+    this.on('pool-state-event', callback);
+    return () => this.off('pool-state-event', callback); // Return unsubscribe function
   }
 
   // ================================================================================================

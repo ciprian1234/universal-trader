@@ -2,6 +2,7 @@ import { createLogger } from '@/utils/logger';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenManager } from './token-manager';
 import type { ChainConfig } from '@/config/models';
+import type { TokenOnChain } from '@/shared/data-model/token';
 
 type PriceOracleInput = {
   chainConfig: ChainConfig;
@@ -30,9 +31,12 @@ export class PriceOracle {
   private readonly logger;
   private readonly chainConfig: ChainConfig;
   private readonly tokenManager: TokenManager;
-  private readonly prices = new Map<string, PriceEntry>(); // "address" → PriceEntry
-  private anchorAddresesSet = new Set<string>(); // for quick lookup of whether a token is an anchor token
-  private anchorAddressesQueryParam: string = ''; // "chain:addr1,chain:addr2,..."
+
+  private anchorTokens: TokenOnChain[] = []; // for quick lookup of whether a token is an anchor token
+  private readonly resolvedPrices = new Map<string, PriceEntry>(); // "address" → PriceEntry
+
+  private readonly anchorTokensSource = 'defi-llama';
+  private anchorAddressesQueryParam: string = ''; // defi-llama query param "chain:addr1,chain:addr2,..."
   private fetchIntervalId: NodeJS.Timeout | null = null;
 
   constructor(input: PriceOracleInput) {
@@ -50,19 +54,15 @@ export class PriceOracle {
 
   async init(): Promise<void> {
     // prepare anchor token address set and query param
-    this.anchorAddresesSet = new Set(
-      this.chainConfig.priceAnchorTokens.map((symbol) => {
-        const anchorToken = this.tokenManager.findTokenBySymbol(symbol);
-        if (!anchorToken) throw new Error('Price anchor token not registred');
-        return anchorToken.address;
-      }),
-    );
+    this.anchorTokens = this.chainConfig.priceAnchorTokens.map((symbol) => {
+      const anchorToken = this.tokenManager.findTokenBySymbol(symbol);
+      if (!anchorToken) throw new Error('Price anchor token not registred');
+      return anchorToken;
+    });
 
     // construct the query param for fetching anchor tokens from defi-llama
     const prefix = this.chainConfig.name; // "ethereum"
-    this.anchorAddressesQueryParam = Array.from(this.anchorAddresesSet)
-      .map((addr) => `${prefix}:${addr}`)
-      .join(',');
+    this.anchorAddressesQueryParam = this.anchorTokens.map((t) => `${prefix}:${t.address}`).join(',');
 
     // fetch initial anchor prices and start periodic updates
     await this.fetchAnchors();
@@ -83,7 +83,7 @@ export class PriceOracle {
       for (const [coinKey, val] of Object.entries(data.coins)) {
         if (val.confidence < 0.5) this.logger.warn(`Confidedence of ${coinKey} under 50% threshold:`, val);
         const address = coinKey.split(':')[1];
-        this.prices.set(address.toLowerCase(), {
+        this.resolvedPrices.set(address.toLowerCase(), {
           priceUSD: val.price,
           source: 'anchor',
           updatedAt: Date.now(),
@@ -103,8 +103,8 @@ export class PriceOracle {
   deriveFromPool(pool: DexPoolState) {
     const t0Addr = pool.tokenPair.token0.address;
     const t1Addr = pool.tokenPair.token1.address;
-    let p0 = this.prices.get(t0Addr); // token0 price in USD (or undefined if not derived yet or not anchor)
-    let p1 = this.prices.get(t1Addr); // token1 price in USD (or undefined if not derived yet or not anchor)
+    let p0 = this.resolvedPrices.get(t0Addr); // token0 price in USD (or undefined if not derived yet or not anchor)
+    let p1 = this.resolvedPrices.get(t1Addr); // token1 price in USD (or undefined if not derived yet or not anchor)
 
     // if both prices are missing we can't derive
     if (p0 === undefined && p1 === undefined)
@@ -151,13 +151,13 @@ export class PriceOracle {
         poolLiquidityUSD,
       },
     };
-    this.prices.set(tokenAddr, newPriceEntry);
+    this.resolvedPrices.set(tokenAddr, newPriceEntry);
     return newPriceEntry;
   }
 
   // ── Query ────────────────────────────────────────────────────────────
   getPriceUSD(address: string) {
-    const priceEntry = this.prices.get(address);
+    const priceEntry = this.resolvedPrices.get(address);
     if (priceEntry !== undefined) return priceEntry.priceUSD;
     return undefined;
   }
@@ -179,11 +179,14 @@ export class PriceOracle {
 
   // log all prices
   logPrices(): void {
-    this.logger.info('Anchor prices in USD:');
-    for (const [addr, price] of this.prices.entries()) {
-      const token = this.tokenManager.getToken(addr)!;
+    this.logger.info(
+      `Prices in USD available for ${this.resolvedPrices.size} of ${this.tokenManager.getAllTokens().size} tokens`,
+    );
+    this.logger.info(`Anchor tokens prices (fetched from DeFiLlama):`);
+    for (const t of this.anchorTokens) {
+      const p = this.resolvedPrices.get(t.address)!; // prices for anchor tokens should always be available
       this.logger.info(
-        `- ${token.symbol} (${addr}): $${price.priceUSD} (source: ${price.source}, updatedAt: ${new Date(price.updatedAt).toISOString()})`,
+        `- ${t.symbol}: $${p.priceUSD} (from ${this.anchorTokensSource}, updatedAt: ${new Date(p.updatedAt).toISOString()})`,
       );
     }
   }
