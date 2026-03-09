@@ -83,13 +83,6 @@ export class DexAdapter {
   // ================================================================================================
   // ADAPTER ROUTING
   // ================================================================================================
-  private async discoverPoolsForVenue(venueName: DexVenueName, tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
-    const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(venueName) };
-    if (ctx.config.protocol === 'v2') return await V2.discoverPools(ctx, tokenPair);
-    else if (ctx.config.protocol === 'v3') return await V3.discoverPools(ctx, tokenPair);
-    else if (ctx.config.protocol === 'v4') return await V4.discoverPools(ctx, tokenPair);
-    else return [];
-  }
 
   updatePoolFromEvent(pool: DexPoolState, poolEvent: PoolEvent): DexPoolState {
     if (pool.protocol === 'v2') V2.updatePoolFromEvent(pool, poolEvent as V2SyncEvent);
@@ -113,14 +106,38 @@ export class DexAdapter {
     return pool;
   }
 
-  async updatePool(pool: DexPoolState): Promise<DexPoolState> {
+  private async initPoolFromStorage(storedPool: DexPoolState) {
+    let initializedPool: DexPoolState;
+    if (storedPool.protocol === 'v2') {
+      initializedPool = V2.initPool(this.blockchain, {
+        poolAddress: storedPool.address,
+        tokenPair: storedPool.tokenPair,
+        venue: storedPool.venue,
+      });
+    } else if (storedPool.protocol === 'v3') {
+      initializedPool = await V3.initPool(this.blockchain, {
+        poolAddress: storedPool.address,
+        tokenPair: storedPool.tokenPair,
+        venue: storedPool.venue,
+        feeBps: storedPool.feeBps,
+        tickSpacing: storedPool.tickSpacing,
+      });
+    } else throw new Error(`Unsupported init operation for pool: ${safeStringify(storedPool)}`);
+    return initializedPool;
+  }
+
+  async updatePoolFromCall(pool: DexPoolState): Promise<DexPoolState> {
     const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
-    if (pool.protocol === 'v2') V2.updatePool(ctx, pool);
-    else if (pool.protocol === 'v3') V3.updatePool(ctx, pool);
-    else if (pool.protocol === 'v4') V4.updatePool(ctx, pool);
-    else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)}`);
+    if (pool.protocol === 'v2') await V2.updatePool(ctx, pool);
+    else if (pool.protocol === 'v3') await V3.updatePool(ctx, pool);
+    else if (pool.protocol === 'v4') await V4.updatePool(ctx, pool);
+    else throw new Error(`Unsupported update operation for pool: ${safeStringify(pool)}`);
     this.deriveTokenPricesAndLiquidity(pool);
     this.syncToStorage(pool, true);
+
+    this.logger.info(
+      `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
+    );
     return pool;
   }
 
@@ -131,22 +148,31 @@ export class DexAdapter {
     else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)}`);
   }
 
+  private async discoverPoolsForVenue(venueName: DexVenueName, tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
+    const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(venueName) };
+    if (ctx.config.protocol === 'v2') return await V2.discoverPools(ctx, tokenPair);
+    else if (ctx.config.protocol === 'v3') return await V3.discoverPools(ctx, tokenPair);
+    else if (ctx.config.protocol === 'v4') return await V4.discoverPools(ctx, tokenPair);
+    else return [];
+  }
   // ================================================================================================
   // CORE LOGIC
   // ================================================================================================
 
   //
-  // Find pools for a given token piar by iterating over all configured venues
+  // Find pools for a given token pair by iterating over all configured venues
   //
   async discoverPoolsForTokenPair(tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
     const allPools: DexPoolState[] = [];
     for (const [venueName, config] of this.venueConfigs.entries()) {
-      const foundPools = this.findInStoredPools(tokenPair, venueName);
+      const foundStoredPools = this.findInStoredPools(tokenPair, venueName);
       // if at least 1 pool its cached => consider for now that the pair its discovered
-      if (foundPools.length > 0) {
-        this.logger.info(`There are already ${foundPools.length} pools for pair ${tokenPair.key}, skipping discovery`);
-        allPools.push(...foundPools);
-        continue;
+      if (foundStoredPools.length > 0) {
+        this.logger.info(
+          `Found ${foundStoredPools.length} pools for pair ${tokenPair.key} in storage, skipping discovery for venue ${venueName}...`,
+        );
+        const initializedPools = await Promise.all(foundStoredPools.map((p) => this.initPoolFromStorage(p)));
+        allPools.push(...initializedPools);
       } else {
         const discoveredPools = await this.discoverPoolsForVenue(venueName, tokenPair);
         allPools.push(...discoveredPools);
@@ -161,14 +187,14 @@ export class DexAdapter {
     }
 
     // update all discovered pools with derived USD prices and liquidity and persist to DB
-    await Promise.all(allPools.map((pool) => this.updatePool(pool)));
+    await Promise.all(allPools.map((pool) => this.updatePoolFromCall(pool)));
     return allPools;
   }
 
   //
   // derive USD prices and calculate total liquidityUSD for a pool
   //
-  deriveTokenPricesAndLiquidity(pool: DexPoolState): void {
+  private deriveTokenPricesAndLiquidity(pool: DexPoolState): void {
     // derive USD prices and calculate total liquidityUSD
     try {
       this.priceOracle.deriveFromPool(pool);
@@ -182,7 +208,7 @@ export class DexAdapter {
   //
   // handle stored pools cache and database sync
   // note: for registered pool events - only update cache but not persist to DB imediately
-  syncToStorage(pool: DexPoolState, persist: boolean) {
+  private syncToStorage(pool: DexPoolState, persist: boolean) {
     // update stored pools cache - always
     this.storedPools.set(pool.id, pool);
 

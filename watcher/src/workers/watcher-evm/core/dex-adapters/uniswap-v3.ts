@@ -143,29 +143,31 @@ export function computePoolAddress(
 }
 
 /**
- * 🏗 INIT POOL: Initialize V3 pool state with static data (called once when pool is first discovered)
+ * 🏗 INIT POOL: Initialize V3 pool state with static data
+ *
  */
-async function initPool(
+export async function initPool(
   blockchain: Blockchain,
   input: {
     poolAddress: string;
     tokenPair: TokenPairOnChain;
     venue: DexVenue;
     feeBps: number;
+    tickSpacing?: number; // optional, can be fetched from chain or from storage (if we have it)
     event?: V3SwapEvent; // optional event for initializing dynamic fields if available (used when introspecting from event)
   },
 ): Promise<DexV3PoolState> {
   // init pool contract
   const contract = blockchain.initContract(input.poolAddress, POOL_ABI);
 
-  // Fetch pool static data
-  const [tickSpacing /* feeGrowthGlobal0X128, feeGrowthGlobal1X128 */] = await Promise.all([
-    contract.tickSpacing(),
-    // contract.feeGrowthGlobal0X128(),
-    // contract.feeGrowthGlobal1X128(),
-  ]);
-
+  const tickSpacing = input.tickSpacing ?? (await contract.tickSpacing());
   if (!tickSpacing) throw new Error(`Failed to fetch tick spacing for pool ${input.poolAddress}`);
+
+  // Fetch pool static data
+  // const [feeGrowthGlobal0X128, feeGrowthGlobal1X128] = await Promise.all([
+  //   contract.feeGrowthGlobal0X128(),
+  //   contract.feeGrowthGlobal1X128(),
+  // ]);
 
   const newPool: DexV3PoolState = {
     id: dexPoolId(blockchain.chainId, input.poolAddress),

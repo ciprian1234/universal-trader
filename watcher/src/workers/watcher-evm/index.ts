@@ -133,6 +133,7 @@ class EVMWorker extends BaseWorker {
     // create dex registry and register adapters
     this.dexManager = new DexManager({
       chainConfig: this.chainConfig,
+      eventBus: this.eventBus,
       blockchain: this.blockchain,
       tokenManager: this.tokenManager,
       priceOracle: this.priceOracle,

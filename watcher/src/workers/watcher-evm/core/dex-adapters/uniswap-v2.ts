@@ -108,15 +108,12 @@ export function computePoolAddress(tokenPair: TokenPairOnChain, factoryAddress: 
  * 🏗 INIT POOL: Initialize V2 pool state: called either from pool discovery or from introspection
  * If pool initialized from event => we have the dynamic fields
  */
-async function initPool(
+export function initPool(
   blockchain: Blockchain,
   input: { poolAddress: string; tokenPair: TokenPairOnChain; venue: DexVenue; event?: V2SyncEvent },
-): Promise<DexV2PoolState> {
+): DexV2PoolState {
   // init pool contract
   const contract = blockchain.initContract(input.poolAddress, POOL_ABI);
-  // Fetch pool static data (not needed since we already have tokenPair)
-  // const [token0Address, token1Address] = await Promise.all([contract.token0(), contract.token1()]);
-  // if (!token0Address || !token1Address) throw new Error(`Failed to fetch token addresses for pool ${poolAddress}`);
 
   const newPool: DexV2PoolState = {
     id: dexPoolId(blockchain.chainId, input.poolAddress),

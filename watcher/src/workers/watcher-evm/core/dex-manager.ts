@@ -92,12 +92,6 @@ export class DexManager {
       if (this.pools.has(pool.id)) {
         this.logger.info(`Pool with ID ${pool.id} already exists`);
         continue;
-      } else {
-        this.logger.info(
-          `✅ Found pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps
-            .toString()
-            .padEnd(5)}) (id: ${pool.id})`,
-        );
       }
 
       this.pools.set(pool.id, pool);
@@ -114,11 +108,8 @@ export class DexManager {
     this.logger.info('🔄 Updating all pool states...');
     for (const [poolId, pool] of this.pools.entries()) {
       try {
-        const updatedPool = await this.dexAdapter.updatePool(pool);
+        const updatedPool = await this.dexAdapter.updatePoolFromCall(pool);
         this.pools.set(poolId, updatedPool);
-        this.logger.info(
-          `✅ Updated pool on ${updatedPool.venue.name.padEnd(15)} (${updatedPool.tokenPair.key}:${updatedPool.feeBps.toString().padEnd(5)}) (id: ${updatedPool.id})`,
-        );
       } catch (error) {
         this.logger.warn(`❌ Failed to update pool ${poolId}:`, { error });
       }
