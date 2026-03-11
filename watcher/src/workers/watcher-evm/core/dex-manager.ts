@@ -33,6 +33,9 @@ export class DexManager {
   // list of registred pools in the system, updated on discovery and on events
   private pools: Map<string, DexPoolState> = new Map();
 
+  // used to process events in sequence for the same pool, avoiding multiple concurrent introspections for the same unknown pool
+  private promiseChainsPoolEventUpdates: Map<string, Promise<void>> = new Map();
+
   constructor(input: DexManagerInput) {
     this.logger = createLogger(`[${input.chainConfig.name}.DexManager]`);
     this.chainConfig = input.chainConfig;
@@ -61,25 +64,41 @@ export class DexManager {
   // ================================================================================================
   // EVENT HANDLERS
   // ================================================================================================
-  async handlePoolEvent(event: PoolEvent) {
+  handlePoolEvent(event: PoolEvent): void {
+    // get the last promise for this poolId, or a resolved promise if none exists
+    const prev = this.promiseChainsPoolEventUpdates.get(event.poolId) ?? Promise.resolve();
+
+    const next = prev
+      .then(() => this.processPoolEvent(event))
+      .catch((error) => this.logger.error(`Error handling pool event for ${event.poolId}:`, { error }))
+      .finally(() => {
+        // if the current promise chain is the same as the one we just executed, remove it from the map
+        // to prevent memory leaks; if it's different, it means another event for the same poolId was added while we were processing, so we keep it
+        if (this.promiseChainsPoolEventUpdates.get(event.poolId) === next) {
+          this.promiseChainsPoolEventUpdates.delete(event.poolId);
+        }
+      });
+
+    this.promiseChainsPoolEventUpdates.set(event.poolId, next);
+  }
+
+  private async processPoolEvent(event: PoolEvent): Promise<void> {
     let pool = this.pools.get(event.poolId) ?? null;
-    const isNewPool = !pool; // to determine if we need to emit a 'create' or 'update' event later
-    if (pool) {
-      pool = this.dexAdapter.updatePoolFromEvent(pool, event);
+
+    if (!pool) {
+      pool = await this.dexAdapter.handleEventForUnknownPool(event);
+      if (!pool) return void this.logger.error(`Unable to introspect pool, ignoring event for poolId: ${event.poolId}`);
     } else {
-      pool = await this.dexAdapter.handleEventForUnknownPool(event); // NOTE: this may take longer...
-      if (!pool) return this.logger.error(`Unable to introspect pool, ignoring event for poolId: ${event.poolId}`);
+      pool = this.dexAdapter.updatePoolFromEvent(pool, event);
     }
 
-    // log event details
     const feePercent = this.dexAdapter.getFeePercent(pool);
     const eventDetails = `📊 ${pool.venue.name} ${pool.tokenPair.key} (fee: ${feePercent}%) update event`;
     const deltaMs = Date.now() - event.meta.blockReceivedTimestamp;
     this.logger.info(`${eventDetails.padEnd(60)} 🔗 ${event.meta.blockNumber} (+${deltaMs}ms)`);
 
-    // update pools cache
     this.pools.set(pool.id, pool);
-    this.eventBus.emitPoolStateEvent({ action: isNewPool ? 'create' : 'update', pool }); // EMIT: pool-state-event
+    this.eventBus.emitPoolStateEvent({ pool }); // EMIT: pool-state-event
   }
 
   //
@@ -96,7 +115,7 @@ export class DexManager {
       }
 
       this.pools.set(pool.id, pool);
-      this.eventBus.emitPoolStateEvent({ action: 'create', pool }); // EMIT: pool-state-event
+      this.eventBus.emitPoolStateEvent({ pool }); // EMIT: pool-state-event
     }
 
     this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${foundPools.length} new pools`);

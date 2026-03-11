@@ -16,7 +16,6 @@ export interface EventBusConfig {
 // EVENT TYPES
 // ================================================================================================
 export type PoolStateEvent = {
-  action: 'create' | 'update' | 'delete';
   pool: DexPoolState;
   previousState?: DexPoolState; // only available for 'update' actions
 };
