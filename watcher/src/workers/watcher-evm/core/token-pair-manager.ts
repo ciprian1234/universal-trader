@@ -41,6 +41,9 @@ export class TokenPairManager {
   // TokenPair registry for quick lookup of trading pairs
   private tokenPairs: Map<string, TokenPairInfo> = new Map(); // key is `${token0.symbol}-${token1.symbol}` (token0/1 are ordered by address)
 
+  // config
+  private readonly ENABLE_DISCOVERY = false;
+
   constructor(input: TokenPairManagerInput) {
     this.logger = createLogger(`[${input.chainConfig.name}.token-pair-manager]`);
     this.db = input.db;
@@ -73,13 +76,14 @@ export class TokenPairManager {
       };
       this.tokenPairs.set(pool.tokenPair.key, tokenPairInfo);
 
+      if (!this.ENABLE_DISCOVERY) return;
       if (pool.totalLiquidityUSD >= 100_000) {
         tokenPairInfo.isDiscovered = true;
-        await this.dexManager.handlePoolsDiscoveryForTokenPair(pool.tokenPair, pool.id); // trigger pool discovery for this tokenPair
+        await this.dexManager.handlePoolsDiscoveryForTokenPair(pool.tokenPair, pool.id);
         // REMINDER: discover other TokenPair combinations with the new token?
       } else {
         this.logger.info(
-          `Skipping creation of token pair ${pool.tokenPair.key} due to low liquidity (${pool.totalLiquidityUSD} USD)`,
+          `Skipping discovery of token pair ${pool.tokenPair.key} due to low liquidity (${pool.totalLiquidityUSD} USD)`,
         );
       }
     } else {
@@ -90,9 +94,10 @@ export class TokenPairManager {
       for (const liquidity of tokenPairInfo.poolsLiquidity.values()) tokenPairInfo.totalLiquidityUSD += liquidity;
 
       // If we haven't marked this pair as discovered yet, check if it meets the criteria now
+      if (!this.ENABLE_DISCOVERY) return;
       if (!tokenPairInfo.isDiscovered && tokenPairInfo.totalLiquidityUSD >= 100_000) {
         tokenPairInfo.isDiscovered = true;
-        await this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPairInfo.tokenPair, pool.id); // discover pools for the new trading pair
+        await this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPairInfo.tokenPair, pool.id);
       }
     }
   }
