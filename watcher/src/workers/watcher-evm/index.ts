@@ -40,7 +40,7 @@ class EVMWorker extends BaseWorker {
     // -- 1. "token-registered" ---------------------------------------------
     // For each new token: create trading pairs with DISCOVERY tokens and emit "token-pair-registered" events for those pairs
     this.eventBus.onTokenRegistered((token) => {
-      this.logger.info(`✅ Registered token ${token.symbol} (addr: ${token.address})`);
+      this.logger.info(`✅ Registered token ${token.symbol} (addr: ${token.address}) (trusted: ${token.trusted})`);
       // this.sendEventMessage('token-registered', { token }); // send event to main thread
     });
 

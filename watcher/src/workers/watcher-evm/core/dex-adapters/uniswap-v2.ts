@@ -71,8 +71,8 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
   const token0 = await ctx.tokenManager.ensureTokenRegistered(token0Address, 'address');
   const token1 = await ctx.tokenManager.ensureTokenRegistered(token1Address, 'address');
 
-  if (!token0.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token0 ${token0.symbol} (${token0.address}) is not trusted!`);
-  if (!token1.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token1 ${token1.symbol} (${token1.address}) is not trusted!`);
+  // if (!token0.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token0 ${token0.symbol} (${token0.address}) is not trusted!`);
+  // if (!token1.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token1 ${token1.symbol} (${token1.address}) is not trusted!`);
   const tokenPair = { token0, token1, key: `${token0.symbol}-${token1.symbol}` };
 
   // note: venueName its from outer function (DEX_ADAPTER.handleEventForUnknownPool)

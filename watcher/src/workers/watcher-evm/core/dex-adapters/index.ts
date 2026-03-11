@@ -76,7 +76,10 @@ export class DexAdapter {
     this.logger.info('🔧 Initializing DexAdapter...');
     // load stored pools from DB into cache for quick lookup during pool discovery
     const dbPools = await this.db.loadAllPools();
-    for (const pool of dbPools) this.storedPools.set(pool.id, pool.state);
+    for (const pool of dbPools) {
+      this.storedPools.set(pool.id, pool.state);
+      // init contracts for faster execution of handleEventForUnknownPool later
+    }
     this.logger.info(`📦 Loaded ${dbPools.length} pools from DB`);
   }
 
@@ -96,23 +99,33 @@ export class DexAdapter {
 
   async handleEventForUnknownPool(event: PoolEvent): Promise<DexPoolState | null> {
     const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, configs: this.chainConfig.dexConfigs };
-    let pool: DexPoolState | null = null;
-    if (event.protocol === 'v2') pool = await V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
-    else if (event.protocol === 'v3') pool = await V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
-    else throw new Error(`Unsupported pool event: ${safeStringify(event)}`);
-    pool.venue.name = this.identifyVenueNameForPool(pool);
-    this.deriveTokenPricesAndLiquidity(pool);
-    this.syncToStorage(pool, true);
+    // first check if we can find the pool in storedPools, otherwise introspect pool from event data
+    let pool = this.storedPools.get(event.poolId) ?? null;
+    if (pool) {
+      this.logger.debug(`Found pool with id: ${pool.id} in storedPools cache, initializing from storage...`);
+      pool = await this.initPoolFromStorage(pool, event);
+      this.deriveTokenPricesAndLiquidity(pool);
+      this.syncToStorage(pool, false); // update cache only
+    } else {
+      this.logger.debug(`Pool for event ${event.poolId} not found in cache, introspecting from event data...`);
+      if (event.protocol === 'v2') pool = await V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
+      else if (event.protocol === 'v3') pool = await V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
+      else throw new Error(`Unsupported pool event: ${safeStringify(event)}`);
+      pool.venue.name = this.identifyVenueNameForPool(pool);
+      this.deriveTokenPricesAndLiquidity(pool);
+      this.syncToStorage(pool, true);
+    }
     return pool;
   }
 
-  private async initPoolFromStorage(storedPool: DexPoolState) {
+  private async initPoolFromStorage(storedPool: DexPoolState, poolEvent: PoolEvent | undefined): Promise<DexPoolState> {
     let initializedPool: DexPoolState;
     if (storedPool.protocol === 'v2') {
       initializedPool = V2.initPool(this.blockchain, {
         poolAddress: storedPool.address,
         tokenPair: storedPool.tokenPair,
         venue: storedPool.venue,
+        event: poolEvent as V2SyncEvent,
       });
     } else if (storedPool.protocol === 'v3') {
       initializedPool = await V3.initPool(this.blockchain, {
@@ -121,6 +134,7 @@ export class DexAdapter {
         venue: storedPool.venue,
         feeBps: storedPool.feeBps,
         tickSpacing: storedPool.tickSpacing,
+        event: poolEvent as V3SwapEvent,
       });
     } else throw new Error(`Unsupported init operation for pool: ${safeStringify(storedPool)}`);
     return initializedPool;
@@ -166,17 +180,18 @@ export class DexAdapter {
 
   //
   // Find pools for a given token pair by iterating over all configured venues
+  // if discoverPoolsForTokenPair its triggerd from event we can skip poolId that caused the event to avoid duplicate (re)discovery
   //
-  async discoverPoolsForTokenPair(tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
+  async discoverPoolsForTokenPair(tokenPair: TokenPairOnChain, skipPoolId = ''): Promise<DexPoolState[]> {
     const allPools: DexPoolState[] = [];
     for (const [venueName, config] of this.venueConfigs.entries()) {
       const foundStoredPools = this.findInStoredPools(tokenPair, venueName);
       // if at least 1 pool its cached => consider for now that the pair its discovered
       if (foundStoredPools.length > 0) {
-        this.logger.info(
+        this.logger.debug(
           `Found ${foundStoredPools.length} pools for pair ${tokenPair.key} in storage, skipping discovery for venue ${venueName}...`,
         );
-        const initializedPools = await Promise.all(foundStoredPools.map((p) => this.initPoolFromStorage(p)));
+        const initializedPools = await Promise.all(foundStoredPools.map((p) => this.initPoolFromStorage(p, undefined)));
         allPools.push(...initializedPools);
       } else {
         const discoveredPools = await this.discoverPoolsForVenue(venueName, tokenPair);
@@ -192,8 +207,8 @@ export class DexAdapter {
     }
 
     // update all discovered pools with derived USD prices and liquidity and persist to DB
-    await Promise.all(allPools.map((pool) => this.updatePoolFromCall(pool)));
-    return allPools;
+    // note: if skipPoolId provided, filter out that pool from update to avoid duplicate update after event trigger
+    return await Promise.all(allPools.filter((pool) => pool.id !== skipPoolId).map((pool) => this.updatePoolFromCall(pool)));
   }
 
   //
@@ -212,7 +227,7 @@ export class DexAdapter {
 
   //
   // handle stored pools cache and database sync
-  // note: for registered pool events - only update cache but not persist to DB imediately
+  // note: for registered pool events - only update cache but not persist to DB immediately
   private syncToStorage(pool: DexPoolState, persist: boolean) {
     // update stored pools cache - always
     this.storedPools.set(pool.id, pool);

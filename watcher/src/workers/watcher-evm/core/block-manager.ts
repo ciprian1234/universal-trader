@@ -193,8 +193,10 @@ export class BlockManager {
 
     // Refresh all pool states
     this.logger.info('🔄 Refreshing pool states after reorg...');
-    await this.dexManager.updateAllPools();
-    this.dexManager.calculateAllPoolsLiquidityUSD();
+    // TODO: implement HandleReorg efficiently without full refresh
+    process.exit(1); // for now just restart the process to ensure a clean state (TODO: implement proper in-process recovery without restart)
+    // await this.dexManager.updateAllPools();
+    // this.dexManager.calculateAllPoolsLiquidityUSD();
 
     // resume arbitrage checking after recovery
     this.logger.info('✅ Reorg recovery completed. Current block number:', this.currentBlock.number);

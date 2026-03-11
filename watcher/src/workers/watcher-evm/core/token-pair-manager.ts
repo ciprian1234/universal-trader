@@ -75,7 +75,7 @@ export class TokenPairManager {
 
       if (pool.totalLiquidityUSD >= 100_000) {
         tokenPairInfo.isDiscovered = true;
-        await this.dexManager.handlePoolsDiscoveryForTokenPair(pool.tokenPair); // trigger pool discovery for this tokenPair
+        await this.dexManager.handlePoolsDiscoveryForTokenPair(pool.tokenPair, pool.id); // trigger pool discovery for this tokenPair
         // REMINDER: discover other TokenPair combinations with the new token?
       } else {
         this.logger.info(
@@ -92,7 +92,7 @@ export class TokenPairManager {
       // If we haven't marked this pair as discovered yet, check if it meets the criteria now
       if (!tokenPairInfo.isDiscovered && tokenPairInfo.totalLiquidityUSD >= 100_000) {
         tokenPairInfo.isDiscovered = true;
-        await this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPairInfo.tokenPair); // discover pools for the new trading pair
+        await this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPairInfo.tokenPair, pool.id); // discover pools for the new trading pair
       }
     }
   }
@@ -165,7 +165,7 @@ export class TokenPairManager {
     this.logger.info(`Current token pairs:`);
     for (const tokenPairInfo of this.tokenPairs.values()) {
       this.logger.info(
-        ` • ${tokenPairInfo.tokenPair.key} | Discovered: ${tokenPairInfo.isDiscovered} | Total Liquidity: ${tokenPairInfo.totalLiquidityUSD} USD | Events: ${tokenPairInfo.numberOfEvents}`,
+        ` • ${tokenPairInfo.tokenPair.key} (Pools: ${tokenPairInfo.poolsLiquidity.size}) | Discovered: ${tokenPairInfo.isDiscovered} | Total Liquidity: ${tokenPairInfo.totalLiquidityUSD} USD | Events: ${tokenPairInfo.numberOfEvents}`,
       );
     }
   }

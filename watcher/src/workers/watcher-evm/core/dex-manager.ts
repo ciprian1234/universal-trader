@@ -71,26 +71,27 @@ export class DexManager {
       if (!pool) return this.logger.error(`Unable to introspect pool, ignoring event for poolId: ${event.poolId}`);
     }
 
-    // update pools cache
-    this.pools.set(pool.id, pool);
-    this.eventBus.emitPoolStateEvent({ action: isNewPool ? 'create' : 'update', pool }); // EMIT: pool-state-event
-
     // log event details
     const feePercent = this.dexAdapter.getFeePercent(pool);
     const eventDetails = `📊 ${pool.venue.name} ${pool.tokenPair.key} (fee: ${feePercent}%) update event`;
     const deltaMs = Date.now() - event.meta.blockReceivedTimestamp;
     this.logger.info(`${eventDetails.padEnd(60)} 🔗 ${event.meta.blockNumber} (+${deltaMs}ms)`);
+
+    // update pools cache
+    this.pools.set(pool.id, pool);
+    this.eventBus.emitPoolStateEvent({ action: isNewPool ? 'create' : 'update', pool }); // EMIT: pool-state-event
   }
 
   //
-  // Called when a new token pair its registred in the system (either via event or on init for preconfigured pairs)
+  // Called by TokenPairManager when a new tokenPair its registred
   //
-  async handlePoolsDiscoveryForTokenPair(tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
+  async handlePoolsDiscoveryForTokenPair(tokenPair: TokenPairOnChain, skipPoolId?: string): Promise<DexPoolState[]> {
     this.logger.info(`🔍 Starting discovery for new token pair: ${tokenPair.key}...`);
-    const foundPools = await this.dexAdapter.discoverPoolsForTokenPair(tokenPair);
+    const foundPools = await this.dexAdapter.discoverPoolsForTokenPair(tokenPair, skipPoolId);
     for (const pool of foundPools) {
       if (this.pools.has(pool.id)) {
-        this.logger.info(`Pool with ID ${pool.id} already exists`);
+        // this could happen only if we trigger tokenPair discovery on an already discovered pair
+        this.logger.warn(`Pool with ID ${pool.id} already exists`);
         continue;
       }
 
