@@ -107,7 +107,7 @@ export class DexAdapter {
       this.deriveTokenPricesAndLiquidity(pool);
       this.syncToStorage(pool, false); // update cache only
     } else {
-      this.logger.debug(`Pool for event ${event.poolId} not found in cache, introspecting from event data...`);
+      this.logger.info(`Pool for event ${event.poolId} not found in cache, introspecting from event data...`);
       if (event.protocol === 'v2') pool = await V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
       else if (event.protocol === 'v3') pool = await V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
       else throw new Error(`Unsupported pool event: ${safeStringify(event)}`);

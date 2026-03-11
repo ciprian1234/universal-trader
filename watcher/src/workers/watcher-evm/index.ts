@@ -149,8 +149,8 @@ class EVMWorker extends BaseWorker {
       dexManager: this.dexManager,
     });
     // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens();
-    this.logger.info('TokenPairManager initialized and discovery token pairs created');
-    this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
+    // this.logger.info('TokenPairManager initialized and discovery token pairs created');
+    // this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
 
     // delay 10 seconds to allow initial token/pool registration before starting block manager
     // await new Promise((resolve) => setTimeout(resolve, 15_000));

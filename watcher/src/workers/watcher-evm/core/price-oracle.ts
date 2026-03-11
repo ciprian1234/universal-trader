@@ -186,9 +186,7 @@ export class PriceOracle {
   logPrices(): void {
     for (const t of this.anchorTokens) {
       const p = this.resolvedPrices.get(t.address)!; // prices for anchor tokens should always be available
-      this.logger.info(
-        ` • ${t.symbol}: $${p.priceUSD} (from ${this.anchorTokensSource}, updatedAt: ${new Date(p.updatedAt).toISOString()})`,
-      );
+      this.logger.info(` • ${t.symbol}: $${p.priceUSD} (source: ${this.anchorTokensSource})`);
     }
     this.logger.info(`Resolved priceUSD count: ${this.resolvedPrices.size}/${this.tokenManager.getAllTokens().size} tokens`);
   }

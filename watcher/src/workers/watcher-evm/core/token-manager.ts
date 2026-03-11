@@ -47,7 +47,7 @@ export class TokenManager {
   ];
 
   constructor(input: TokenManagerInput) {
-    this.logger = createLogger(`[${input.chainConfig.name}.token-manager]`);
+    this.logger = createLogger(`[${input.chainConfig.name}.TokenManager]`);
     this.db = input.db;
     this.chainConfig = input.chainConfig;
     this.blockchain = input.blockchain;
@@ -55,7 +55,7 @@ export class TokenManager {
   }
 
   // ================================================================================================
-  // init - load tokens from db, also load trusted tokens and cache everthing
+  // init - load tokens from db, also load trusted tokens and cache everything
   // ================================================================================================
   async init() {
     const dbTokens = await this.db.loadAllTokens();
