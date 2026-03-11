@@ -158,11 +158,10 @@ class EVMWorker extends BaseWorker {
 
     // Initialize BlockManager
     this.blockManager = new BlockManager({
-      chainId: this.chainConfig.chainId,
+      chainConfig: this.chainConfig,
       blockchain: this.blockchain,
       eventBus: this.eventBus,
       dexManager: this.dexManager,
-      logger: createLogger(`[${this.chainConfig.name}.block-manager]`),
     });
     await this.blockManager.init();
 

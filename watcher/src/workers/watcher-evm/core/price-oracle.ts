@@ -9,6 +9,10 @@ type PriceOracleInput = {
   tokenManager: TokenManager;
 };
 
+type DefiLlamaPriceResponse = {
+  coins: Record<string, { price: number; confidence: number }>;
+};
+
 type PriceEntryAnchor = {
   priceUSD: number;
   source: 'anchor';
@@ -71,27 +75,28 @@ export class PriceOracle {
 
   // ── External anchor fetch (called on init and periodically to update prices)
   async fetchAnchors(): Promise<void> {
-    this.logger.info('Fetching anchor token prices');
-    try {
-      const res = await fetch(`https://coins.llama.fi/prices/current/${this.anchorAddressesQueryParam}`, {
-        signal: AbortSignal.timeout(5_000),
-      });
-      const data = (await res.json()) as {
-        coins: Record<string, { price: number; confidence: number }>;
-      };
+    this.logger.info(`🌐 Fetching priceUSD of ${this.anchorTokens.length} anchor tokens from DeFiLlama...`);
 
-      for (const [coinKey, val] of Object.entries(data.coins)) {
-        if (val.confidence < 0.5) this.logger.warn(`Confidedence of ${coinKey} under 50% threshold:`, val);
-        const address = coinKey.split(':')[1];
-        this.resolvedPrices.set(address.toLowerCase(), {
-          priceUSD: val.price,
-          source: 'anchor',
-          updatedAt: Date.now(),
-        });
-      }
-    } catch (err) {
-      this.logger.warn('Failed to fetch anchor prices:', err);
+    const res = await fetch(`https://coins.llama.fi/prices/current/${this.anchorAddressesQueryParam}`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    const response = (await res.json()) as DefiLlamaPriceResponse;
+    if (!response?.coins) throw new Error(`Failed to fetch data from DeFiLlama: ${JSON.stringify(response)}`);
+
+    for (const t of this.anchorTokens) {
+      const coinKey = `${this.chainConfig.name}:${t.address}`;
+      const val = response.coins[coinKey];
+      if (!val) throw new Error(`PriceUSD for anchor token ${t.symbol} (${t.address}) not found in response`);
+      if (val.confidence < 0.5) this.logger.warn(`⚠️ Confidence of ${t.symbol} under 50% threshold:`, val);
+      this.resolvedPrices.set(t.address, {
+        priceUSD: val.price,
+        source: 'anchor',
+        updatedAt: Date.now(),
+      });
     }
+
+    // log prices after fetching
+    this.logPrices();
   }
 
   // PriceUSD derived from pool
@@ -179,15 +184,12 @@ export class PriceOracle {
 
   // log all prices
   logPrices(): void {
-    this.logger.info(
-      `Prices in USD available for ${this.resolvedPrices.size} of ${this.tokenManager.getAllTokens().size} tokens`,
-    );
-    this.logger.info(`Anchor tokens prices (fetched from DeFiLlama):`);
     for (const t of this.anchorTokens) {
       const p = this.resolvedPrices.get(t.address)!; // prices for anchor tokens should always be available
       this.logger.info(
-        `- ${t.symbol}: $${p.priceUSD} (from ${this.anchorTokensSource}, updatedAt: ${new Date(p.updatedAt).toISOString()})`,
+        ` • ${t.symbol}: $${p.priceUSD} (from ${this.anchorTokensSource}, updatedAt: ${new Date(p.updatedAt).toISOString()})`,
       );
     }
+    this.logger.info(`Resolved priceUSD count: ${this.resolvedPrices.size}/${this.tokenManager.getAllTokens().size} tokens`);
   }
 }

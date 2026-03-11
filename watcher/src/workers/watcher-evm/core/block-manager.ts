@@ -10,16 +10,16 @@ import type {
 } from './interfaces';
 import { EventBus } from './event-bus';
 import { Blockchain } from './blockchain';
-import type { Logger } from '@/utils';
+import { createLogger, type Logger } from '@/utils';
 import { dexPoolId, type DexPoolState, type EventMetadata } from '@/shared/data-model/layer1';
 import type { DexManager } from './dex-manager';
+import type { ChainConfig } from '@/config/models';
 
 type BlockManagerInput = {
-  chainId: number;
+  chainConfig: ChainConfig;
   blockchain: Blockchain;
   eventBus: EventBus;
   dexManager: DexManager;
-  logger: Logger;
 };
 
 export interface BlockEntry {
@@ -28,6 +28,7 @@ export interface BlockEntry {
 }
 
 export class BlockManager {
+  private readonly chainConfig: ChainConfig;
   private readonly chainId: number;
   private readonly logger: Logger;
   private readonly blockchain: Blockchain;
@@ -96,11 +97,12 @@ export class BlockManager {
   };
 
   constructor(input: BlockManagerInput) {
-    this.chainId = input.chainId;
+    this.logger = createLogger(`[${input.chainConfig.name}.BlockManager]`);
+    this.chainConfig = input.chainConfig;
+    this.chainId = input.chainConfig.chainId;
     this.blockchain = input.blockchain;
     this.eventBus = input.eventBus;
     this.dexManager = input.dexManager;
-    this.logger = input.logger;
   }
 
   /**

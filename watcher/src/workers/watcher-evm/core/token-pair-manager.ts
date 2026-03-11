@@ -8,7 +8,6 @@ import type { EventBus, PoolStateEvent } from './event-bus';
 import type { ChainConfig } from '@/config/models';
 import type { TokenManager } from './token-manager';
 import type { DexManager } from './dex-manager';
-import { tr } from 'zod/locales';
 
 export interface TokenPairManagerInput {
   db: WorkerDb;
@@ -45,7 +44,7 @@ export class TokenPairManager {
   private readonly ENABLE_DISCOVERY = false;
 
   constructor(input: TokenPairManagerInput) {
-    this.logger = createLogger(`[${input.chainConfig.name}.token-pair-manager]`);
+    this.logger = createLogger(`[${input.chainConfig.name}.TokenPairManager]`);
     this.db = input.db;
     this.chainConfig = input.chainConfig;
     this.eventBus = input.eventBus;
