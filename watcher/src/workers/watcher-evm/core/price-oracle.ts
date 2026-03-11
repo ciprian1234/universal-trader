@@ -1,4 +1,4 @@
-import { createLogger } from '@/utils/logger';
+import { createLogger } from '@/utils';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenManager } from './token-manager';
 import type { ChainConfig } from '@/config/models';

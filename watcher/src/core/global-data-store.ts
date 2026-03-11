@@ -17,7 +17,7 @@ import type {
   TickData,
   DexType,
 } from './types.ts';
-import { log } from '../utils/logger.ts';
+import { createLogger } from '@/utils';
 
 type PoolChangeType = 'add' | 'update' | 'remove';
 type PoolChangeListener = (pool: PoolState, changeType: PoolChangeType) => void;

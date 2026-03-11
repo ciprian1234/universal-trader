@@ -7,7 +7,7 @@ import { dexPoolId, type DexPoolState, type DexV2PoolState, type DexVenue, type 
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
 import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
-import { createLogger } from '@/utils/logger';
+import { createLogger } from '@/utils';
 import type { Blockchain } from '../blockchain';
 import type { DexV2Config } from '@/config/models';
 

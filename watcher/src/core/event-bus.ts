@@ -6,7 +6,7 @@
 // ================================================================================================
 
 import { EventEmitter } from 'events';
-import { createLogger } from '../utils/logger.ts';
+import { createLogger } from '@/utils';
 // import type { ArbitrageOpportunity, PoolEvent, PoolState } from './types.ts';
 
 export interface BlockEntry {

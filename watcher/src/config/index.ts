@@ -1,6 +1,6 @@
 import { ChainConfigSchema, ExchangeConfigSchema, type AppConfig, type PlatformConfig } from './models.ts';
 import * as platforms from './platforms/index.ts';
-import { log } from '../utils/logger.ts';
+import { logger } from '../utils';
 
 if (!process.env.APP_CONFIG_ENABLED_PLATFORMS) throw new Error('APP_CONFIG_ENABLED_PLATFORMS env var is not set!');
 const enabledPlatforms = process.env.APP_CONFIG_ENABLED_PLATFORMS.split(',').map((s) => s.trim());
@@ -15,7 +15,7 @@ export const appConfig: AppConfig = {
 function loadConfigs(enabledPlatforms: string[]): Record<string, PlatformConfig> {
   const configs: Record<string, PlatformConfig> = {};
   for (const platformName of enabledPlatforms) {
-    log.info(`Loading config for platform: ${platformName}`);
+    logger.info(`Loading config for platform: ${platformName}`);
     const platformConfig = (platforms as any)[platformName];
     if (!platformConfig) throw new Error(`Platform "${platformName}" is enabled but no but no config found!`);
     // validate config data with zod
@@ -26,7 +26,7 @@ function loadConfigs(enabledPlatforms: string[]): Record<string, PlatformConfig>
       parsedConfig = ExchangeConfigSchema.parse(platformConfig);
     }
     configs[platformName] = parsedConfig;
-    log.info(`✅ Loaded config for platform: ${platformName}`);
+    logger.info(`✅ Loaded config for platform: ${platformName}`);
   }
   return configs;
 }

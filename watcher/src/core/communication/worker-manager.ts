@@ -1,6 +1,6 @@
 // import { globalStore } from './global-store';
 import type { BunMessageEvent } from 'bun';
-import { createLogger } from '../../utils/logger.ts';
+import { createLogger } from '@/utils';
 import type { EventMessage, Message, RequestMessage, ResponseMessage } from './types.ts';
 import { broadcastEventToWebsocketClients } from '@/api-server/index..ts';
 import type { EventBus } from '../event-bus.ts';

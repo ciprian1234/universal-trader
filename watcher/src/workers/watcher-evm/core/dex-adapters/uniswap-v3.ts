@@ -7,7 +7,7 @@ import * as SqrtMath from './lib/sqrtPriceMath';
 import { dexPoolId, type DexPoolState, type DexV3PoolState, type DexVenue, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { calculatePriceImpact } from './lib/math';
-import { createLogger } from '@/utils/logger';
+import { createLogger } from '@/utils';
 import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
 import type { Blockchain } from '../blockchain';
 import { AbiCoder } from 'ethers';

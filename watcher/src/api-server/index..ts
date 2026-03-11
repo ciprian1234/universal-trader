@@ -8,7 +8,7 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createLogger } from '../utils/logger.ts';
+import { createLogger } from '../utils';
 import { bigIntReplacer } from '../utils/serialization.ts';
 import type { GlobalDataStore } from '@/core/global-data-store.ts';
 import type { WorkerManager } from '../core/communication/worker-manager.ts';
@@ -251,10 +251,7 @@ export function createApiServer(input: ApiServerInput): Hono {
 // START API SERVER (Bun native HTTP + WebSocket)
 // ════════════════════════════════════════════════════════════════
 
-export function startApiServer(
-  port: number,
-  deps: ApiServerInput,
-): { server: ReturnType<typeof Bun.serve>; app: Hono } {
+export function startApiServer(port: number, deps: ApiServerInput): { server: ReturnType<typeof Bun.serve>; app: Hono } {
   const app = createApiServer(deps);
 
   const server = Bun.serve({

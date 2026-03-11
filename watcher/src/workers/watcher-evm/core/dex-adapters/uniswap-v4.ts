@@ -6,7 +6,7 @@ import type { TradeQuote, V4SwapEvent } from '../interfaces';
 import * as SqrtMath from './lib/sqrtPriceMath';
 import { dexPoolId, type DexV4PoolState } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
-import { createLogger } from '@/utils/logger';
+import { createLogger } from '@/utils';
 import type { DexAdapterContext } from './interfaces';
 
 // ================================================================================================

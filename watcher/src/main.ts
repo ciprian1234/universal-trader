@@ -16,7 +16,7 @@ import { WorkerManager } from './core/communication/worker-manager.ts';
 // import { CrossChainDetector } from './orchestrator/cross-chain-detector.ts';
 import { startApiServer } from './api-server/index..ts';
 import { GlobalDataStore } from './core/global-data-store.ts';
-import { log } from './utils';
+import { logger } from './utils';
 
 async function main(): Promise<void> {
   const store = new GlobalDataStore();
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
     if (!platformConfig.enabled) continue;
     workerManager.spawnWorker(platformConfig.name, path.resolve(__dirname, './workers/watcher-evm/index.ts'));
     await workerManager.sendRequest(platformConfig.name, 'init', platformConfig);
-    log.info(`✅ Worker "${platformConfig.name}" (${platformConfig.name}) initialized`);
+    logger.info(`✅ Worker "${platformConfig.name}" (${platformConfig.name}) initialized`);
   }
 
   // === 5. Wire up EventBus → WebSocket broadcast ===
@@ -95,11 +95,11 @@ async function main(): Promise<void> {
 
   // ── 10. Signal handling ──
   const shutdown = async () => {
-    log.info('Shutting down...');
+    logger.info('Shutting down...');
     // crossChainDetector.stop();
     await workerManager.terminateAll(); // Gracefully terminate all workers
     server.stop();
-    log.info('Goodbye.');
+    logger.info('Goodbye.');
     process.exit(0);
   };
 
@@ -115,6 +115,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log.error('Fatal error:', err);
+  logger.error('Fatal error:', err);
   process.exit(1);
 });
