@@ -285,6 +285,7 @@ async function initPool(ctx: DexAdapterContext, id, poolKeyData: any, tokenPair:
 
   const poolState: DexV4PoolState = {
     id: dexPoolId(ctx.blockchain.chainId, id), // TODO: ensure its correct
+    error: null,
     poolKey: id, // TODO: ensure its correct
     address: ctx.config.poolManagerAddress, // V4 uses PoolManager for all pools
     venue: { name: ctx.config.name, type: 'dex', chainId: ctx.blockchain.chainId },

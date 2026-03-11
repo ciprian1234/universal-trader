@@ -4,7 +4,7 @@
 import { ethers } from 'ethers';
 import { Blockchain } from './blockchain';
 import { createLogger, type Logger } from '@/utils';
-import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
+import type { TokenOnChain } from '@/shared/data-model/token';
 import type { WorkerDb } from '../db';
 import type { EventBus } from './event-bus';
 import type { ChainConfig } from '@/config/models';
@@ -36,9 +36,6 @@ export class TokenManager {
 
   // cached list of trusted tokens loaded from cache (e.g. coingecko or uniswap token lists)
   private trustedTokens: TokenOnChain[] = [];
-
-  // TokenPair registry for quick lookup of trading pairs
-  private tokenPairs: Map<string, TokenPairOnChain> = new Map(); // key is `${token0.symbol}-${token1.symbol}` (token0/1 are ordered by address)
 
   // Token metadata cache
   private erc20ABI = [
@@ -236,58 +233,5 @@ export class TokenManager {
     const contract = this.blockchain.getContract(tokenAddress);
     if (!contract) throw new Error(`Contract for token ${tokenAddress} not found`);
     return await contract.balanceOf(walletAddress);
-  }
-
-  // ================================================================================================
-  // UTILITY METHODS
-  // ================================================================================================
-
-  /**
-   * Create trading pairs between all discovery tokens
-   * emits event for new token pairs which triggers pool discovery in DexManager
-   */
-  createTradingPairsBetweenDiscoveryTokens() {
-    for (const symbol0 of this.chainConfig.discoveryTokens) {
-      for (const symbol1 of this.chainConfig.discoveryTokens) {
-        const token0 = this.findTokenBySymbol(symbol0);
-        const token1 = this.findTokenBySymbol(symbol1);
-        if (!token0 || !token1) throw new Error(`Discovery tokens ${symbol0} or ${symbol1} not found in registry`);
-        if (token0.address === token1.address) continue; // Skip self-pairs
-        // Enforce canonical order to avoid duplicates
-        if (token0.address < token1.address) {
-          const key = `${token0.symbol}-${token1.symbol}`;
-          if (this.tokenPairs.has(key)) continue; // Skip if pair already exists
-          const tokenPair: TokenPairOnChain = { key, token0, token1 };
-          this.tokenPairs.set(key, tokenPair);
-          this.eventBus.emitTokenPairRegistered(tokenPair); // Emit event for new token pair
-        }
-      }
-    }
-  }
-
-  /**
-   * Create token pairs between some input token and all discovery tokens
-   * emits event for new token pairs which triggers pool discovery in DexManager
-   */
-  createTokenPairsForNewToken(newToken: TokenOnChain) {
-    // TBD: improve this logic in future:
-    // - create trading pairs only if some criteria are met to avoid unnecessary pool discoveries
-    // - also cache token pairs stats to avoid creating pairs that are unlikely to be liquid (e.g. low market cap tokens)
-    for (const discoverySymbol of this.chainConfig.discoveryTokens) {
-      const discoveryToken = this.findTokenBySymbol(discoverySymbol)!;
-      if (newToken.address === discoveryToken.address) continue; // Skip self-pair
-
-      // Enforce canonical order to avoid duplicates
-      const [token0, token1] =
-        newToken.address < discoveryToken.address ? [newToken, discoveryToken] : [discoveryToken, newToken];
-      const key = `${token0.symbol}-${token1.symbol}`;
-      if (this.tokenPairs.has(key)) {
-        this.logger.warn(`Token pair ${key} already exists, skipping creation`);
-        continue; // Skip if pair already exists
-      }
-      const tokenPair: TokenPairOnChain = { key, token0, token1 };
-      this.tokenPairs.set(key, tokenPair);
-      this.eventBus.emitTokenPairRegistered(tokenPair); // Emit event for new token pair
-    }
   }
 }

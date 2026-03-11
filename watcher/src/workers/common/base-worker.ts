@@ -18,6 +18,24 @@ export abstract class BaseWorker {
       if (message.type === 'request') this.handleRequestMessage(message as RequestMessage);
       else if (message.type === 'event') this.handleEventMessage(message as EventMessage);
       else this.logger.warn(`Unknown message type: ${message.type}`);
+
+      // // Add at the bottom, outside the class, after `new EVMWorker();`
+      self.addEventListener('unhandledrejection', (event: any) => {
+        console.error(
+          '[base-worker] Unhandled promise rejection:',
+          event.reason instanceof Error ? event.reason.stack : String(event.reason),
+        );
+      });
+
+      self.addEventListener('error', (event) => {
+        console.error('[base-worker] Uncaught error:', {
+          message: event.message,
+          filename: event.filename,
+          lineno: event.lineno,
+          colno: event.colno,
+          error: event.error instanceof Error ? event.error.stack : String(event.error),
+        });
+      });
     };
   }
 

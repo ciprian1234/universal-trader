@@ -74,6 +74,7 @@ export class WorkerDb {
       await this.sql`
       CREATE TABLE IF NOT EXISTS pools (
         "id"              TEXT      PRIMARY KEY,
+        "error"           TEXT      DEFAULT NULL,
         "chainId"         INTEGER   NOT NULL,
         "venueName"       TEXT      NOT NULL,
         "tokenPairKey"    TEXT      NOT NULL,
@@ -139,9 +140,10 @@ export class WorkerDb {
   async upsertPool(pool: DexPoolState, source: StoredPool['source'], isEnabled: boolean): Promise<void> {
     // return;
     await this.sql`
-      INSERT INTO pools ("id", "chainId", "venueName", "tokenPairKey", "feeBps", "pairId", "state", "source", "isEnabled")
+      INSERT INTO pools ("id", "error", "chainId", "venueName", "tokenPairKey", "feeBps", "pairId", "state", "source", "isEnabled")
       VALUES (
         ${pool.id},
+        ${pool.error},
         ${pool.venue.chainId},
         ${pool.venue.name},
         ${pool.tokenPair.key},
@@ -152,6 +154,7 @@ export class WorkerDb {
         ${isEnabled}
       )
       ON CONFLICT ("id") DO UPDATE SET
+        "error" = EXCLUDED."error",
         "venueName" = EXCLUDED."venueName",
         "state" = EXCLUDED."state",
         "isEnabled" = EXCLUDED."isEnabled",

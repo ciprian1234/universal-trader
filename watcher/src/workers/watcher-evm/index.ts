@@ -10,6 +10,7 @@ import { PriceOracle } from './core/price-oracle';
 import { DexManager } from './core/dex-manager';
 import { BlockManager } from './core/block-manager';
 import { WorkerDb } from './db';
+import { TokenPairManager } from './core/token-pair-manager';
 
 class EVMWorker extends BaseWorker {
   private chainConfig!: ChainConfig;
@@ -19,6 +20,7 @@ class EVMWorker extends BaseWorker {
 
   private blockchain!: Blockchain;
   private tokenManager!: TokenManager;
+  private tokenPairManager!: TokenPairManager;
   private priceOracle!: PriceOracle;
   private dexManager!: DexManager;
   private blockManager!: BlockManager;
@@ -40,9 +42,6 @@ class EVMWorker extends BaseWorker {
     this.eventBus.onTokenRegistered((token) => {
       this.logger.info(`✅ Registered token ${token.symbol} (addr: ${token.address})`);
       // this.sendEventMessage('token-registered', { token }); // send event to main thread
-
-      // create trading pairs for new token with all discovery tokens
-      // this.tokenManager.createTokenPairsForNewToken(token); // FOR NOW KEEP THIS DISABLED
     });
 
     // -- 2. "token-pair-registered" ----------------------------------------
@@ -51,15 +50,15 @@ class EVMWorker extends BaseWorker {
       this.logger.info(`Token pair ${tokenPair.key} registered:`);
       this.logger.info(` • ${tokenPair.token0.symbol} (${tokenPair.token0.address})`);
       this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
-      this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPair); // discover pools for the new trading pair
     });
 
-    // -- 3. "pool-event" ---------------------------------------------
-    // this.eventBus.onPoolUpdate((pool) => {
-    //   // notify main thread about pool state update (after processing the event and updating the state)
-    //   // TODO: notify liquidity graph to update
-    //   // this.sendEventMessage('pool-update', { pool });
-    // });
+    // -- 3. "pool-state-event" ---------------------------------------------
+    this.eventBus.onPoolStateEvent((event) => {
+      this.tokenPairManager.handlePoolStateEvent(event); // update token pair stats and trigger discovery if criteria met
+      // TODO: notify main thread about pool state update (after processing the event and updating the state)
+      // TODO: notify liquidity graph to update
+      // this.sendEventMessage('pool-update', { pool });
+    });
 
     // -- 4. "pool-events-batch" ---------------------------------------------
     // send updated pools to main thread
@@ -141,12 +140,21 @@ class EVMWorker extends BaseWorker {
     });
     await this.dexManager.init(); // init contracts for dex venues
 
-    // emit events with created trading pairs => this triggers pool discovery in DexManager
-    this.tokenManager.createTradingPairsBetweenDiscoveryTokens();
+    // TokenPairManager handles token pair discovery and management based config and pool state updates
+    this.tokenPairManager = new TokenPairManager({
+      chainConfig: this.chainConfig,
+      db: this.db,
+      eventBus: this.eventBus,
+      tokenManager: this.tokenManager,
+      dexManager: this.dexManager,
+    });
+    // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens();
+    this.logger.info('TokenPairManager initialized and discovery token pairs created');
+    this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
 
     // delay 10 seconds to allow initial token/pool registration before starting block manager
-    await new Promise((resolve) => setTimeout(resolve, 15_000));
-    throw new Error('EVMWorker stopped temp');
+    // await new Promise((resolve) => setTimeout(resolve, 15_000));
+    // throw new Error('EVMWorker stopped temp');
 
     // Initialize BlockManager
     this.blockManager = new BlockManager({

@@ -85,7 +85,7 @@ export class DexManager {
   //
   // Called when a new token pair its registred in the system (either via event or on init for preconfigured pairs)
   //
-  async handlePoolsDiscoveryForTokenPair(tokenPair: TokenPairOnChain): Promise<void> {
+  async handlePoolsDiscoveryForTokenPair(tokenPair: TokenPairOnChain): Promise<DexPoolState[]> {
     this.logger.info(`🔍 Starting discovery for new token pair: ${tokenPair.key}...`);
     const foundPools = await this.dexAdapter.discoverPoolsForTokenPair(tokenPair);
     for (const pool of foundPools) {
@@ -99,6 +99,7 @@ export class DexManager {
     }
 
     this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${foundPools.length} new pools`);
+    return foundPools;
   }
 
   //

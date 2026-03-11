@@ -127,17 +127,22 @@ export class DexAdapter {
   }
 
   async updatePoolFromCall(pool: DexPoolState): Promise<DexPoolState> {
-    const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
-    if (pool.protocol === 'v2') await V2.updatePool(ctx, pool);
-    else if (pool.protocol === 'v3') await V3.updatePool(ctx, pool);
-    else if (pool.protocol === 'v4') await V4.updatePool(ctx, pool);
-    else throw new Error(`Unsupported update operation for pool: ${safeStringify(pool)}`);
-    this.deriveTokenPricesAndLiquidity(pool);
-    this.syncToStorage(pool, true);
+    try {
+      const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
+      if (pool.protocol === 'v2') await V2.updatePool(ctx, pool);
+      else if (pool.protocol === 'v3') await V3.updatePool(ctx, pool);
+      else if (pool.protocol === 'v4') await V4.updatePool(ctx, pool);
+      else throw new Error(`Unsupported update operation for pool: ${safeStringify(pool)}`);
+      this.deriveTokenPricesAndLiquidity(pool);
 
-    this.logger.info(
-      `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
-    );
+      this.logger.info(
+        `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
+      );
+    } catch (error) {
+      this.logger.error(`Failed to update pool ${pool.id} from call:`, { error });
+      pool.error = `${error instanceof Error ? error.message : String(error)}`;
+    }
+    this.syncToStorage(pool, true);
     return pool;
   }
 

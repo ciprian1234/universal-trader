@@ -39,6 +39,7 @@ export type Venue = DexVenue | CexVenue;
 
 export interface VenueState {
   id: string; // globally unique id: "1:0xabc..." for DEX, "binance:ETHUSDC" for CEX
+  error: string | null;
   venue: Venue;
   pairId: CanonicalPairId;
 }
