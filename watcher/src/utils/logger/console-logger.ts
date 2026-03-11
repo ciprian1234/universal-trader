@@ -3,6 +3,8 @@
 // Uses console with structured prefixes. No heavy deps like winston.
 // ================================================================================================
 
+import type { Logger } from './interface';
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const LOG_LEVELS: Record<LogLevel, number> = {
@@ -64,13 +66,6 @@ function write(level: LogLevel, context: string, args: unknown[]): void {
   if (level === 'error') console.error(line);
   else if (level === 'warn') console.warn(line);
   else console.log(line);
-}
-
-export interface Logger {
-  debug: (...args: unknown[]) => void;
-  info: (...args: unknown[]) => void;
-  warn: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
 }
 
 /** Create a namespaced logger */

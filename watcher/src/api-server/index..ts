@@ -8,13 +8,13 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createLogger } from '../utils';
-import { bigIntReplacer } from '../utils/serialization.ts';
+import { createLogger, bigIntReplacer } from '@/utils';
 import type { GlobalDataStore } from '@/core/global-data-store.ts';
 import type { WorkerManager } from '../core/communication/worker-manager.ts';
+
 // import type { CrossChainDetector } from '../../orchestrator/cross-chain-detector.ts';
 
-const log = createLogger('[main.server]');
+const logger = createLogger('[main.server]');
 
 interface ApiServerInput {
   store: GlobalDataStore;
@@ -77,7 +77,7 @@ export function createApiServer(input: ApiServerInput): Hono {
       const response = await workerManager.sendRequest('worker-eth', 'pause', null);
       return c.json({ response });
     } catch (error: any) {
-      log.error('Error sending request to worker:', error);
+      logger.error('Error sending request to worker:', error);
       return c.json({ error: error.message }, 500);
     }
   });
@@ -90,7 +90,7 @@ export function createApiServer(input: ApiServerInput): Hono {
     paused = true;
     workerManager.pauseAll();
     broadcastEvent('status', { paused: true });
-    log.info('⏸️  Arbitrage PAUSED');
+    logger.info('⏸️  Arbitrage PAUSED');
     return json(c, { paused: true });
   });
 
@@ -98,7 +98,7 @@ export function createApiServer(input: ApiServerInput): Hono {
     paused = false;
     workerManager.resumeAll();
     broadcastEvent('status', { paused: false });
-    log.info('▶️  Arbitrage RESUMED');
+    logger.info('▶️  Arbitrage RESUMED');
     return json(c, { paused: false });
   });
 
@@ -174,14 +174,14 @@ export function createApiServer(input: ApiServerInput): Hono {
   app.post('/pools/:address/disable', (c) => {
     const addr = c.req.param('address');
     // if (!store.setDisabled(addr, true)) return c.json({ error: 'Pool not found' }, 404);
-    log.info(`🚫 Pool ${addr} DISABLED`);
+    logger.info(`🚫 Pool ${addr} DISABLED`);
     return json(c, { disabled: true, address: addr });
   });
 
   app.post('/pools/:address/enable', (c) => {
     const addr = c.req.param('address');
     // if (!store.setDisabled(addr, false)) return c.json({ error: 'Pool not found' }, 404);
-    log.info(`✅ Pool ${addr} ENABLED`);
+    logger.info(`✅ Pool ${addr} ENABLED`);
     return json(c, { disabled: false, address: addr });
   });
 
@@ -270,7 +270,7 @@ export function startApiServer(port: number, deps: ApiServerInput): { server: Re
     websocket: {
       open(ws) {
         wsClients.add(ws);
-        log.info('🔌 Admin WS client connected');
+        logger.info('🔌 Admin WS client connected');
 
         // Send current status on connect
         ws.send(
@@ -290,13 +290,13 @@ export function startApiServer(port: number, deps: ApiServerInput): { server: Re
       },
       close(ws) {
         wsClients.delete(ws);
-        log.info('🔌 Admin WS client disconnected');
+        logger.info('🔌 Admin WS client disconnected');
       },
     },
   });
 
-  log.info(`🖥️  Admin API on http://localhost:${port}`);
-  log.info(`🔌 Admin WS on ws://localhost:${port}`);
+  logger.info(`🖥️  Admin API on http://localhost:${port}`);
+  logger.info(`🔌 Admin WS on ws://localhost:${port}`);
 
   return { server, app };
 }

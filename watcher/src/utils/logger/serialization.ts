@@ -11,7 +11,7 @@ export function bigIntReplacer(_key: string, value: unknown): unknown {
 }
 
 /** Safe JSON.stringify for logging */
-export function safeStringify_v2(obj: unknown, indent?: number): string {
+export function safeStringify_old(obj: unknown, indent?: number): string {
   try {
     return JSON.stringify(obj, bigIntReplacer, indent);
   } catch {
@@ -31,7 +31,7 @@ export function safeStringify(obj: any, indent = 2): string {
 
   return JSON.stringify(
     obj,
-    (key, value) => {
+    (_key, value) => {
       // Handle BigInt
       if (typeof value === 'bigint') {
         return value.toString() + 'n'; // Add 'n' suffix to indicate BigInt

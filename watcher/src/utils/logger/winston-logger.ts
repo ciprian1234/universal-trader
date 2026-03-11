@@ -2,6 +2,7 @@ import winston from 'winston';
 import path from 'path';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import { formatMeta } from './serialization';
+import type { Logger } from './interface';
 
 // Define log levels
 const levels = {
@@ -93,7 +94,7 @@ const transports: winston.transport[] = [infoFileRotateTransport, errorFileRotat
 if (process.env.NODE_ENV === 'development') transports.push(consoleTransport); // Only log to console in development
 
 // Create the logger
-const logger = winston.createLogger({
+export const logger = winston.createLogger({
   levels,
   transports,
 
@@ -103,7 +104,7 @@ const logger = winston.createLogger({
 });
 
 // Create child logger with context
-export function createLogger(context: string) {
+export function createLogger(context: string): Logger {
   return {
     error: (message: string, meta?: any) => logger.error(message, { context, ...meta }),
     warn: (message: string, meta?: any) => logger.warn(message, { context, ...meta }),
@@ -111,5 +112,3 @@ export function createLogger(context: string) {
     debug: (message: string, meta?: any) => logger.debug(message, { context, ...meta }),
   };
 }
-
-export default logger;
