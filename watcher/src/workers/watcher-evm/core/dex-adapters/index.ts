@@ -8,7 +8,7 @@ import * as V4 from './uniswap-v4';
 import type { PoolEvent, V2SyncEvent, V3SwapEvent, V4SwapEvent } from '../interfaces';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { ChainConfig, DexConfig, DexV2Config, DexV3Config } from '@/config/models';
-import { createLogger, safeStringify } from '@/utils';
+import { createLogger, printPool, safeStringify } from '@/utils';
 import type { Blockchain } from '../blockchain';
 import type { WorkerDb } from '../../db';
 import type { TokenManager } from '../token-manager';
@@ -152,8 +152,8 @@ export class DexAdapter {
       this.logger.info(
         `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
       );
-    } catch (error) {
-      this.logger.error(`Failed to update pool ${pool.id} from call:`, { error });
+    } catch (error: any) {
+      this.logger.error(`Failed to update pool from call: ${printPool(pool)} - ${error.message}`);
       pool.error = `${error instanceof Error ? error.message : String(error)}`;
     }
     this.syncToStorage(pool, true);
@@ -220,7 +220,7 @@ export class DexAdapter {
       this.priceOracle.deriveFromPool(pool);
       pool.totalLiquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(pool);
     } catch (error) {
-      this.logger.warn(`Failed to derive price for pool ${pool.id} after event, liquidityUSD will be missing:`, { error });
+      this.logger.warn(`Failed to derive priceUSD/liquidity for pool: ${printPool(pool)}`);
       // TODO: SET POOL ERROR STATE/FLAG
     }
   }
@@ -235,7 +235,7 @@ export class DexAdapter {
     if (persist) {
       this.db
         .upsertPool(pool, 'event', true)
-        .catch((e) => this.logger.error(`Failed to save new pool ${pool!.id} to DB:`, { error: e }));
+        .catch((e) => this.logger.error(`Failed to save new pool ${printPool(pool)} to DB:`, { error: e }));
     }
   }
 

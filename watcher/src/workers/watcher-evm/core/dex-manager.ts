@@ -1,6 +1,6 @@
 import { TokenManager } from './token-manager';
 import { Blockchain } from './blockchain';
-import { createLogger, type Logger } from '@/utils';
+import { createLogger, printPool, printPoolInEvent, type Logger } from '@/utils';
 import type { ChainConfig } from '@/config/models';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
@@ -70,7 +70,7 @@ export class DexManager {
 
     const next = prev
       .then(() => this.processPoolEvent(event))
-      .catch((error) => this.logger.error(`Error handling pool event for ${event.poolId}:`, { error }))
+      .catch((error) => this.logger.error(`Error handling pool event`, { event, error }))
       .finally(() => {
         // if the current promise chain is the same as the one we just executed, remove it from the map
         // to prevent memory leaks; if it's different, it means another event for the same poolId was added while we were processing, so we keep it
@@ -87,16 +87,12 @@ export class DexManager {
 
     if (!pool) {
       pool = await this.dexAdapter.handleEventForUnknownPool(event);
-      if (!pool) return void this.logger.error(`Unable to introspect pool, ignoring event for poolId: ${event.poolId}`);
+      if (!pool) return void this.logger.error(`Unable to introspect pool from event`, { event });
     } else {
       pool = this.dexAdapter.updatePoolFromEvent(pool, event);
     }
 
-    const feePercent = this.dexAdapter.getFeePercent(pool);
-    const eventDetails = `📊 ${pool.venue.name} ${pool.tokenPair.key} (fee: ${feePercent}%) update event`;
-    const deltaMs = Date.now() - event.meta.blockReceivedTimestamp;
-    this.logger.info(`${eventDetails.padEnd(60)} 🔗 ${event.meta.blockNumber} (+${deltaMs}ms)`);
-
+    this.logger.info(printPoolInEvent(pool, event));
     this.pools.set(pool.id, pool);
     this.eventBus.emitPoolStateEvent({ pool }); // EMIT: pool-state-event
   }
@@ -110,7 +106,7 @@ export class DexManager {
     for (const pool of foundPools) {
       if (this.pools.has(pool.id)) {
         // this could happen only if we trigger tokenPair discovery on an already discovered pair
-        this.logger.warn(`Pool with ID ${pool.id} already exists`);
+        this.logger.warn(`Pool already registered: ${printPool(pool)}, skipping...`);
         continue;
       }
 
@@ -132,7 +128,7 @@ export class DexManager {
         const updatedPool = await this.dexAdapter.updatePoolFromCall(pool);
         this.pools.set(poolId, updatedPool);
       } catch (error) {
-        this.logger.warn(`❌ Failed to update pool ${poolId}:`, { error });
+        this.logger.warn(`❌ Failed updatePoolFromCall`, { poolId, pool, error });
       }
     }
     this.logger.info(`✅ Updated ${this.pools.size} active pool states`);
