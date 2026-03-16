@@ -1,0 +1,166 @@
+import { PoolStatesManager } from '../../services/pool-states-manager';
+import { createLogger } from '../../utils/logger';
+import { ArbitrageOpportunity, SwapStep, Token } from '../interfaces';
+import { IPathFinder, WeightedEdge } from './interfaces';
+import { LiquidityGraph } from './liquidity-graph';
+import { PathFinderConfig } from './path-finder';
+
+/**
+ * 🔍 Bellman-Ford Path Finder: Uses negative cycle detection
+ */
+export class BellmanFordPathFinder implements IPathFinder {
+  private readonly logger = createLogger('[BellmanFordPathFinder]');
+
+  constructor(
+    private readonly graph: LiquidityGraph,
+    private readonly config: PathFinderConfig,
+  ) {}
+
+  /**
+   * 🔍 Find arbitrage cycles using Bellman-Ford
+   */
+  findCycles(affectedTokens: Set<string>): ArbitrageOpportunity[] {
+    const paths: ArbitrageOpportunity[] = [];
+
+    // Get weighted edges
+    const edges = this.graph.getAllWeightedEdges();
+    const vertices = this.graph.getTokenAddresses();
+
+    // Run from each preferred borrow token
+    for (const startTokenAddr of affectedTokens) {
+      const token = this.config.tokenManager.getToken(startTokenAddr);
+      if (!token || !this.config.preferredBorrowTokens.includes(token.symbol)) {
+        continue;
+      }
+
+      // Run Bellman-Ford from this token
+      const cycles = this.findNegativeCycles(startTokenAddr, edges, vertices);
+      paths.push(...cycles);
+
+      if (paths.length >= this.config.maxPathsPerToken) break;
+    }
+
+    return paths;
+  }
+
+  /**
+   * 🔄 Bellman-Ford algorithm to detect negative cycles
+   */
+  private findNegativeCycles(source: string, edges: WeightedEdge[], vertices: string[]): ArbitrageOpportunity[] {
+    const dist = new Map<string, number>();
+    const predecessor = new Map<string, WeightedEdge | null>();
+
+    // Initialize distances
+    for (const v of vertices) {
+      dist.set(v, v === source ? 0 : Infinity);
+      predecessor.set(v, null);
+    }
+
+    // Relax edges V-1 times
+    for (let i = 0; i < vertices.length - 1; i++) {
+      for (const edge of edges) {
+        const distFrom = dist.get(edge.tokenIn.address)!;
+        const distTo = dist.get(edge.tokenOut.address)!;
+
+        if (distFrom + edge.weight < distTo) {
+          dist.set(edge.tokenOut.address, distFrom + edge.weight);
+          predecessor.set(edge.tokenOut.address, edge);
+        }
+      }
+    }
+
+    // Detect negative cycles
+    const cycles: ArbitrageOpportunity[] = [];
+
+    for (const edge of edges) {
+      const distFrom = dist.get(edge.tokenIn.address)!;
+      const distTo = dist.get(edge.tokenOut.address)!;
+
+      if (distFrom + edge.weight < distTo) {
+        // Found negative cycle! Reconstruct it
+        const cycle = this.reconstructCycle(edge, predecessor, source);
+        if (cycle) {
+          cycles.push(cycle);
+
+          if (cycles.length >= this.config.maxPathsPerToken) {
+            break;
+          }
+        }
+      }
+    }
+
+    return cycles;
+  }
+
+  /**
+   * 🔄 Reconstruct cycle from predecessor map
+   */
+  private reconstructCycle(edge: WeightedEdge, predecessor: Map<string, WeightedEdge | null>, source: string): ArbitrageOpportunity | null {
+    const visited = new Set<string>();
+    const path: WeightedEdge[] = [];
+
+    // Walk backwards from edge.tokenIn.address to find the cycle
+    let current = edge.tokenIn.address;
+
+    while (!visited.has(current)) {
+      visited.add(current);
+      const pred = predecessor.get(current);
+
+      if (!pred) break;
+
+      path.unshift(pred);
+      current = pred.tokenIn.address;
+
+      // Stop if we've completed a cycle back to source
+      if (current === source && path.length >= 2) {
+        break;
+      }
+    }
+
+    if (path.length < 2 || path[0].tokenIn.address !== source) {
+      return null;
+    }
+
+    // Convert to ArbitragePath
+    const borrowToken = this.config.tokenManager.getToken(source);
+    if (!borrowToken) return null;
+
+    return this.createPathFromEdges(borrowToken, path);
+  }
+
+  /**
+   * 🛠️ Convert edge list to ArbitragePath (without amounts yet)
+   */
+  private createPathFromEdges(borrowToken: Token, edges: WeightedEdge[]): ArbitrageOpportunity | null {
+    if (edges.length === 0) return null;
+
+    // Create swap steps (amounts will be filled during evaluation)
+    const steps: SwapStep[] = edges.map((edge) => ({
+      pool: edge.pool,
+      tokenIn: edge.tokenIn,
+      tokenOut: edge.tokenOut,
+      amountIn: 0n,
+      amountOut: 0n,
+      spotPrice: edge.spotPrice,
+      executionPrice: 0,
+      priceImpact: 0,
+      slippage: 0,
+    }));
+
+    const pathKey = edges.map((e) => e.pool.id).join('→');
+
+    return {
+      id: `${Date.now()}_${pathKey}`,
+      steps,
+      borrowToken,
+      borrowAmount: 0n,
+      grossProfitToken: 0n,
+      grossProfitUSD: 0,
+      netProfitUSD: 0,
+      totalSlippage: 0,
+      totalPriceImpact: 0,
+      minConfidence: 0.99,
+      timestamp: Date.now(),
+    };
+  }
+}

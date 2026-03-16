@@ -11,6 +11,8 @@ import { DexManager } from './core/dex-manager';
 import { BlockManager } from './core/block-manager';
 import { WorkerDb } from './db';
 import { TokenPairManager } from './core/token-pair-manager';
+import { GasManager } from './core/gas-manager';
+import { WalletManager } from './core/wallet-manager';
 
 class EVMWorker extends BaseWorker {
   private chainConfig!: ChainConfig;
@@ -24,6 +26,8 @@ class EVMWorker extends BaseWorker {
   private priceOracle!: PriceOracle;
   private dexManager!: DexManager;
   private blockManager!: BlockManager;
+  private gasManager!: GasManager;
+  private walletManager!: WalletManager;
 
   async handleRequest(message: RequestMessage) {
     this.sendResponseMessage({
@@ -164,6 +168,27 @@ class EVMWorker extends BaseWorker {
       dexManager: this.dexManager,
     });
     await this.blockManager.init();
+
+    // Initialize GasManager
+    this.gasManager = new GasManager({
+      chainConfig: this.chainConfig,
+      blockchain: this.blockchain,
+      eventBus: this.eventBus,
+      walletManager: this.walletManager,
+      tokenManager: this.tokenManager,
+      priceOracle: this.priceOracle,
+    });
+
+    // Initialize wallet manager
+    this.walletManager = new WalletManager({
+      chainConfig: this.chainConfig,
+      blockchain: this.blockchain,
+      tokenManager: this.tokenManager,
+      priceOracle: this.priceOracle,
+    });
+    await this.walletManager.initAndValidateWallet();
+
+    throw new Error('STOP');
 
     // start listening for block and pool events
     this.blockManager.listenBlockEvents();

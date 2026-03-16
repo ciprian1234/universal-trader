@@ -124,38 +124,6 @@ export interface GasAnalysis {
   gasTxSettings: GasTxSettings;
 }
 
-// export interface ArbitrageOpportunity {
-//   id: string; // Unique identifier for the opportunity
-//   tokenPair: TokenPair;
-//   zeroForOne: boolean; // true if entry swap its: token0 -> token1
-
-//   // Buy side (cheaper)
-//   entryPool: PoolState;
-//   entryQuote: TradeQuote;
-
-//   // Sell side (expensive)
-//   exitPool: PoolState;
-//   exitQuote: TradeQuote;
-
-//   // Info data (used for display and logging)
-//   priceDiff: number; // difference in price between entry and exit pools
-//   priceDiffPercent: number; // percentage difference in price
-
-//   // Profitability
-//   tradeAmount: bigint;
-
-//   grossProfitUSD: number;
-//   gasAnalysis?: GasAnalysis;
-//   netProfitUSD: number;
-
-//   // Risk metrics
-//   totalSlippage: number;
-//   confidence: number;
-//   urgency: number; // 0-1, how quickly this needs to be executed
-
-//   timestamp: number;
-// }
-
 export interface SwapStep {
   pool: DexPoolState;
   tokenIn: TokenOnChain;
@@ -195,7 +163,7 @@ export interface ArbitrageOpportunity {
 
   // Metadata
   timestamp: number;
-  blockNumber?: number;
+  blockNumber: number;
 }
 
 // ================================================================================================

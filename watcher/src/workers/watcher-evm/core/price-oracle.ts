@@ -3,6 +3,7 @@ import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenManager } from './token-manager';
 import type { ChainConfig } from '@/config/models';
 import type { TokenOnChain } from '@/shared/data-model/token';
+import { ethers } from 'ethers';
 
 type PriceOracleInput = {
   chainConfig: ChainConfig;
@@ -14,12 +15,14 @@ type DefiLlamaPriceResponse = {
 };
 
 type PriceEntryAnchor = {
+  token: TokenOnChain;
   priceUSD: number;
   source: 'anchor';
   updatedAt: number;
 };
 
 type PriceEntryDerived = {
+  token: TokenOnChain;
   priceUSD: number;
   source: 'derived';
   updatedAt: number;
@@ -89,6 +92,7 @@ export class PriceOracle {
       if (!val) throw new Error(`PriceUSD for anchor token ${t.symbol} (${t.address}) not found in response`);
       if (val.confidence < 0.5) this.logger.warn(`⚠️ Confidence of ${t.symbol} under 50% threshold:`, val);
       this.resolvedPrices.set(t.address, {
+        token: t,
         priceUSD: val.price,
         source: 'anchor',
         updatedAt: Date.now(),
@@ -106,10 +110,10 @@ export class PriceOracle {
   // pool: WETH-NEW_TOKEN, lets say (1 WETH = 50 NEW_TOKEN) <=> (1 NEW_TOKEN = 0.02 WETH)
   // if we know WETH = $2000 => NEW_TOKEN_USD = 0.02 * $2000 = $40
   deriveFromPool(pool: DexPoolState) {
-    const t0Addr = pool.tokenPair.token0.address;
-    const t1Addr = pool.tokenPair.token1.address;
-    let p0 = this.resolvedPrices.get(t0Addr); // token0 price in USD (or undefined if not derived yet or not anchor)
-    let p1 = this.resolvedPrices.get(t1Addr); // token1 price in USD (or undefined if not derived yet or not anchor)
+    const t0 = pool.tokenPair.token0;
+    const t1 = pool.tokenPair.token1;
+    let p0 = this.resolvedPrices.get(t0.address); // token0 price in USD (or undefined if not derived yet or not anchor)
+    let p1 = this.resolvedPrices.get(t1.address); // token1 price in USD (or undefined if not derived yet or not anchor)
 
     // if both prices are missing we can't derive
     if (p0 === undefined && p1 === undefined)
@@ -121,10 +125,10 @@ export class PriceOracle {
     if (p1 !== undefined) {
       if (p0 === undefined) {
         // first time seeing p0 — derive it
-        p0 = this.setPriceEntryDerived(t0Addr, p1.priceUSD * pool.spotPrice0to1, pool.id, poolLiquidityUSD);
+        p0 = this.setPriceEntryDerived(t0, p1.priceUSD * pool.spotPrice0to1, pool.id, poolLiquidityUSD);
       } else if (p0.source !== 'anchor' && poolLiquidityUSD > p0.derivedFrom.poolLiquidityUSD) {
         // p0 is derived — only update if current pool has more liquidity (higher confidence price)
-        p0 = this.setPriceEntryDerived(t0Addr, p1.priceUSD * pool.spotPrice0to1, pool.id, poolLiquidityUSD);
+        p0 = this.setPriceEntryDerived(t0, p1.priceUSD * pool.spotPrice0to1, pool.id, poolLiquidityUSD);
       }
       // p0.source === 'anchor' => skip — anchor prices come from DeFiLlama only
       // poolLiquidityUSD <= p0.poolLiquidityUSD => skip — previous pool was more liquid, keep that price
@@ -134,10 +138,10 @@ export class PriceOracle {
     if (p0 !== undefined) {
       if (p1 === undefined) {
         // first time seeing p1 — derive it
-        p1 = this.setPriceEntryDerived(t1Addr, p0.priceUSD * pool.spotPrice1to0, pool.id, poolLiquidityUSD);
+        p1 = this.setPriceEntryDerived(t1, p0.priceUSD * pool.spotPrice1to0, pool.id, poolLiquidityUSD);
       } else if (p1.source !== 'anchor' && poolLiquidityUSD > p1.derivedFrom.poolLiquidityUSD) {
         // p1 is derived — only update if current pool has more liquidity
-        p1 = this.setPriceEntryDerived(t1Addr, p0.priceUSD * pool.spotPrice1to0, pool.id, poolLiquidityUSD);
+        p1 = this.setPriceEntryDerived(t1, p0.priceUSD * pool.spotPrice1to0, pool.id, poolLiquidityUSD);
       }
       // p1.source === 'anchor' => skip — anchor prices come from DeFiLlama only
       // poolLiquidityUSD <= p1.poolLiquidityUSD => skip — previous pool was more liquid, keep that price
@@ -146,8 +150,14 @@ export class PriceOracle {
   }
 
   // helper to create PriceEntryDerived
-  private setPriceEntryDerived(tokenAddr: string, priceUSD: number, poolId: string, poolLiquidityUSD: number): PriceEntryDerived {
+  private setPriceEntryDerived(
+    token: TokenOnChain,
+    priceUSD: number,
+    poolId: string,
+    poolLiquidityUSD: number,
+  ): PriceEntryDerived {
     const newPriceEntry: PriceEntryDerived = {
+      token,
       priceUSD,
       source: 'derived',
       updatedAt: Date.now(),
@@ -156,7 +166,7 @@ export class PriceOracle {
         poolLiquidityUSD,
       },
     };
-    this.resolvedPrices.set(tokenAddr, newPriceEntry);
+    this.resolvedPrices.set(token.address, newPriceEntry);
     return newPriceEntry;
   }
 
@@ -189,5 +199,16 @@ export class PriceOracle {
       this.logger.info(` • ${t.symbol}: $${p.priceUSD} (source: ${this.anchorTokensSource})`);
     }
     this.logger.info(`Resolved priceUSD count: ${this.resolvedPrices.size}/${this.tokenManager.getAllTokens().size} tokens`);
+  }
+
+  /**
+   * 💵 CALCULATE USD VALUE: Get USD value of token amount
+   */
+  calculateUSDValue(address: string, rawAmount: bigint): number {
+    const priceEntry = this.resolvedPrices.get(address);
+    if (!priceEntry) throw new Error(`Token ${address} not registered or price not available`);
+
+    const humanAmount = Number(ethers.formatUnits(rawAmount, priceEntry.token.decimals));
+    return humanAmount * priceEntry.priceUSD;
   }
 }

@@ -78,6 +78,9 @@ export class TokenManager {
     await Promise.all(this.chainConfig.stablecoinTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
     await Promise.all(this.chainConfig.discoveryTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
     await Promise.all(this.chainConfig.priceAnchorTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
+
+    // init contracts for registered tokens
+    this.tokens.forEach((token) => this.blockchain.initContract(token.address, this.erc20ABI));
   }
 
   /**
@@ -178,6 +181,10 @@ export class TokenManager {
    */
   getToken(address: string): TokenOnChain | undefined {
     return this.tokens.get(address.toLowerCase());
+  }
+
+  getTokenBySymbol(symbol: string): TokenOnChain | undefined {
+    return Array.from(this.tokens.values()).find((token) => token.symbol === symbol);
   }
 
   /**
