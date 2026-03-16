@@ -1,6 +1,5 @@
 import type { EventMessage, RequestMessage } from '@/core/communication/types';
 import { BaseWorker } from '../common/base-worker';
-import { createLogger } from '@/utils';
 import { CacheService } from '@/utils/cache-service';
 import type { ChainConfig } from '@/config/models';
 import { EventBus } from './core/event-bus';
@@ -105,17 +104,11 @@ class EVMWorker extends BaseWorker {
     await this.db.createTables();
 
     // init event bus and setup event pipeline
-    this.eventBus = new EventBus({ logger: createLogger(`[${this.chainConfig.name}.event-bus]`) });
+    this.eventBus = new EventBus();
     this.setupEventPipeline();
 
     // init blockchain
-    this.blockchain = new Blockchain({
-      chainId: this.chainConfig.chainId,
-      chainName: this.chainConfig.name,
-      providerURL: this.chainConfig.providerRpcUrl,
-      cache: this.cache,
-      logger: createLogger(`[${this.chainConfig.name}.blockchain]`),
-    });
+    this.blockchain = new Blockchain({ chainConfig: this.chainConfig, cache: this.cache });
 
     // create token manager
     this.tokenManager = new TokenManager({
@@ -153,12 +146,7 @@ class EVMWorker extends BaseWorker {
       dexManager: this.dexManager,
     });
     // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens();
-    // this.logger.info('TokenPairManager initialized and discovery token pairs created');
     // this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
-
-    // delay 10 seconds to allow initial token/pool registration before starting block manager
-    // await new Promise((resolve) => setTimeout(resolve, 15_000));
-    // throw new Error('EVMWorker stopped temp');
 
     // Initialize BlockManager
     this.blockManager = new BlockManager({
@@ -188,11 +176,9 @@ class EVMWorker extends BaseWorker {
     });
     await this.walletManager.initAndValidateWallet();
 
-    throw new Error('STOP');
-
     // start listening for block and pool events
     this.blockManager.listenBlockEvents();
-    this.blockManager.listenPoolEvents();
+    // this.blockManager.listenPoolEvents();
   }
 
   async stop() {

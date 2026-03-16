@@ -4,13 +4,8 @@
 import { EventEmitter } from 'events';
 import type { PoolEvent, ArbitrageOpportunity } from './interfaces';
 import type { BlockEntry } from './block-manager';
-import type { Logger } from '@/utils';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
-
-export interface EventBusConfig {
-  logger: Logger;
-}
 
 // ================================================================================================
 // EVENT TYPES
@@ -25,13 +20,11 @@ export type PoolStateEvent = {
 // ================================================================================================
 
 export class EventBus extends EventEmitter {
-  private readonly logger: Logger;
   private recentOpportunities: Map<string, number> = new Map(); // For deduplication
   private cleanupInterval: NodeJS.Timeout | null = null;
 
-  constructor(config: EventBusConfig) {
+  constructor() {
     super();
-    this.logger = config.logger;
     this.setMaxListeners(1024); // Allow many subscribers
 
     // Start cleanup interval

@@ -1,18 +1,16 @@
-import type { Logger } from '@/utils';
+import type { ChainConfig } from '@/config/models';
+import { createLogger, type Logger } from '@/utils';
 import type { CacheService } from '@/utils/cache-service';
 import { ethers } from 'ethers';
 
 type BlockchainInput = {
-  chainId: number;
-  chainName: string;
-  providerURL: string;
+  chainConfig: ChainConfig;
   cache: CacheService;
-  logger: Logger;
 };
 
 export class Blockchain {
   private readonly logger: Logger;
-  readonly name: string;
+  private readonly chainConfig: ChainConfig;
   readonly chainId: number;
   readonly provider: ethers.Provider;
   private readonly cache: CacheService;
@@ -43,22 +41,23 @@ export class Blockchain {
   };
 
   constructor(input: BlockchainInput) {
-    this.name = input.chainName;
-    this.logger = input.logger;
-    this.chainId = input.chainId;
+    this.logger = createLogger(`[${input.chainConfig.name}.Blockchain]`);
+    this.chainConfig = input.chainConfig;
+    this.chainId = input.chainConfig.chainId;
     this.cache = input.cache;
 
     // init blockchain provider either WS or HTTP
-    if (input.providerURL.startsWith('http')) {
-      this.logger.info(`🌐 Initializing HTTP provider for ${this.name} (${this.chainId})`);
-      this.provider = new ethers.JsonRpcProvider(input.providerURL, this.chainId, { staticNetwork: true });
-    } else if (input.providerURL.startsWith('ws')) {
-      this.logger.info(`🌐 Initializing WebSocket provider for ${this.name} (${this.chainId})`);
-      this.provider = new ethers.WebSocketProvider(input.providerURL, this.chainId, { staticNetwork: true });
-    } else {
-      throw new Error(`Unsupported provider URL: ${input.providerURL}`);
-    }
-    this.provider = new ethers.WebSocketProvider(input.providerURL, this.chainId, {
+    const providerURL = this.chainConfig.providerRpcUrl;
+    if (!providerURL) throw new Error(`Provider RPC URL is required for chain ${this.chainConfig.name}`);
+    if (providerURL.startsWith('http')) {
+      this.logger.info(`🌐 Initializing HTTP provider for ${this.chainConfig.name} (${this.chainId})`);
+      this.provider = new ethers.JsonRpcProvider(providerURL, this.chainId, { staticNetwork: true });
+    } else if (providerURL.startsWith('ws')) {
+      this.logger.info(`🌐 Initializing WebSocket provider for ${this.chainConfig.name} (${this.chainId})`);
+      this.provider = new ethers.WebSocketProvider(providerURL, this.chainId, { staticNetwork: true });
+    } else throw new Error(`Unsupported provider URL: ${providerURL}`);
+
+    this.provider = new ethers.WebSocketProvider(providerURL, this.chainId, {
       staticNetwork: true,
     });
 
