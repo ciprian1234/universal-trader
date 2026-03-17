@@ -2,7 +2,7 @@ import { TokenManager } from './token-manager';
 import { Blockchain } from './blockchain';
 import { createLogger, printPool, printPoolInEvent, type Logger } from '@/utils';
 import type { ChainConfig } from '@/config/models';
-import type { DexPoolState } from '@/shared/data-model/layer1';
+import type { DexPoolState, DexVenueName } from '@/shared/data-model/layer1';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { PoolEvent } from './interfaces';
 import type { WorkerDb } from '../db';
@@ -168,5 +168,9 @@ export class DexManager {
   // ================================================================================================
   simulateSwap(pool: DexPoolState, amountIn: bigint, zeroForOne: boolean): bigint {
     return this.dexAdapter.simulateSwap(pool, amountIn, zeroForOne);
+  }
+
+  getVenueConfig(venueName: DexVenueName) {
+    return this.dexAdapter.requireConfig(venueName);
   }
 }

@@ -13,6 +13,7 @@ import { TokenPairManager } from './core/token-pair-manager';
 import { GasManager } from './core/gas-manager';
 import { WalletManager } from './core/wallet-manager';
 import { ArbitrageOrchestrator } from './core/arbitrage/arbitrage-orchestrator';
+import { FlashArbitrageHandler } from './core/flash-arbitrage-handler';
 
 class EVMWorker extends BaseWorker {
   private chainConfig!: ChainConfig;
@@ -29,6 +30,7 @@ class EVMWorker extends BaseWorker {
   private gasManager!: GasManager;
   private walletManager!: WalletManager;
   private arbitrageOrchestrator!: ArbitrageOrchestrator;
+  private flashArbitrageHandler!: FlashArbitrageHandler;
 
   async handleRequest(message: RequestMessage) {
     this.sendResponseMessage({
@@ -192,6 +194,18 @@ class EVMWorker extends BaseWorker {
     // start listening for block and pool events
     this.blockManager.listenBlockEvents();
     // this.blockManager.listenPoolEvents();
+
+    this.flashArbitrageHandler = new FlashArbitrageHandler({
+      chainConfig: this.chainConfig,
+      eventBus: this.eventBus,
+      db: this.db,
+      blockchain: this.blockchain,
+      blockManager: this.blockManager,
+      walletManager: this.walletManager,
+    });
+
+    // log monitoring
+    // this.logPeriodicStats();
   }
 
   async stop() {

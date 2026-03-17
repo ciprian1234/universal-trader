@@ -5,10 +5,10 @@
 
 ## Arbitrage Features
 
-- integrate arbitrage finding
 - MVP: check for arbitrage only for V2 protocols
 - allow only trade within price tick for V3 pools for pools which do not have ticks => find optimum within current tick range
 - for the other use full liquidity ranges
+- add GasUsage/GasCostUSD per Edge in LiquidityGraph? => if gasCostUSD > grossProfitUSD && TokenOut in preferredBorrowTokens => exit
 
 ## Upgrade arbitrage contract
 

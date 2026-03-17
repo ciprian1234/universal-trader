@@ -271,7 +271,7 @@ export class DexAdapter {
   }
 
   // helper to get config for venue or throw if not exist
-  private requireConfig(venueName: DexVenueName) {
+  requireConfig(venueName: DexVenueName) {
     const config = this.venueConfigs.get(venueName);
     if (!config) throw new Error(`No config for venue: ${venueName}`);
     return config;
