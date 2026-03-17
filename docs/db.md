@@ -11,6 +11,12 @@
 > docker exec <container_name> pg_dump -U <user> -d <database> > backup.sql
 > OR
 > docker exec <container_name> pg_dump -U <user> -Fc -d <database> > backup.dump
+> OR
+> docker exec <container_name> pg_dump -U <user> -Fc -d <database> -f /tmp/backup.dump
+
+#### 1.1 Copy out of the container to your host (binary-safe):
+
+> docker cp <container_name>:/tmp/backup.dump ./backup.dump
 
 ### 2. Restore
 
