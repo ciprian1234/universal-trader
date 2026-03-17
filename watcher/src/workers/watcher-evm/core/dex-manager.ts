@@ -162,4 +162,11 @@ export class DexManager {
   getPoolState(id: string): DexPoolState | undefined {
     return this.pools.get(id);
   }
+
+  // ================================================================================================
+  // ADAPTER ROUTING
+  // ================================================================================================
+  simulateSwap(pool: DexPoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+    return this.dexAdapter.simulateSwap(pool, amountIn, zeroForOne);
+  }
 }

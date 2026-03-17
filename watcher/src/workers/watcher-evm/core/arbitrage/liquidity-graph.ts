@@ -1,14 +1,19 @@
-import { createLogger } from '../../utils/logger';
-import { PoolState, Token } from '../interfaces';
-import { GraphStats, WeightedEdge } from './interfaces';
-import { DexRegistry } from '../../services/dex-registry';
-import { TokenManager } from '../token-manager';
-import { PoolStatesManager } from '../../services/pool-states-manager';
-import { getFeeMultiplier } from '../utils';
+import type { GraphStats, WeightedEdge } from './interfaces';
+import { getFeeMultiplier } from '@/utils';
+import type { Logger } from '@/utils';
+import type { DexManager } from '../dex-manager';
+import type { TokenOnChain } from '@/shared/data-model/token';
+import type { DexPoolState } from '@/shared/data-model/layer1';
 
-export interface GraphConfig {
+export type LiquidityGraphConfig = {
   minLiquidityUSD: number;
   maxEdgesPerToken: number;
+};
+
+export interface LiquidityGraphInput {
+  logger: Logger;
+  dexManager: DexManager;
+  config: LiquidityGraphConfig;
 }
 
 /**
@@ -19,21 +24,22 @@ export interface GraphConfig {
  * - Edges: Pools (weighted by liquidity and price)
  */
 export class LiquidityGraph {
-  private readonly logger = createLogger('[LiquidityGraph]');
+  private readonly logger: Logger;
+  private readonly dexManager: DexManager;
+  private readonly config: LiquidityGraphConfig;
 
   // Adjacency list: tokenAddress -> outgoing edges
   private readonly edges = new Map<string, WeightedEdge[]>();
 
   // Quick lookups
-  private readonly tokens = new Map<string, Token>();
+  private readonly tokens = new Map<string, TokenOnChain>();
   private readonly poolToEdges = new Map<string, [string, string]>(); // poolKey -> [tokenIn, tokenOut]
 
-  constructor(
-    private readonly dexRegistry: DexRegistry,
-    private readonly tokenManager: TokenManager,
-    private readonly poolStatesManager: PoolStatesManager,
-    private readonly config: GraphConfig,
-  ) {}
+  constructor(input: LiquidityGraphInput) {
+    this.logger = input.logger;
+    this.dexManager = input.dexManager;
+    this.config = input.config;
+  }
 
   // ============================================
   // GRAPH BUILDING
@@ -47,13 +53,10 @@ export class LiquidityGraph {
 
     this.clear();
 
-    const allPools = this.poolStatesManager.getAll();
-    let addedEdges = 0;
+    const allPools = this.dexManager.getAllPools();
 
     for (const [_, pool] of allPools) {
-      if (this.addPoolToGraph(pool)) {
-        addedEdges += 2; // Bidirectional
-      }
+      this.addPoolToGraph(pool); // bidirectional edges are added inside this method
     }
 
     // LOGGING: Verify bidirectional edges
@@ -66,20 +69,20 @@ export class LiquidityGraph {
         this.logger.debug(`Token ${token.symbol}: ${edges.length} edges`);
         for (const edge of edges) {
           this.logger.debug(
-            `  → ${edge.tokenOut.symbol} via ${edge.pool.dexName} (fee: ${edge.fee}, liquidity: $${edge.liquidityUSD.toFixed(2)})`,
+            `  → ${edge.tokenOut.symbol} via ${edge.pool.venue.name} (fee: ${edge.feeBps}, liquidity: $${edge.liquidityUSD.toFixed(2)})`,
           );
         }
       }
     }
 
     const duration = Date.now() - startTime;
-    this.logger.info(`🌐 Built graph: ${this.tokens.size} tokens, ${addedEdges} edges (${duration}ms)`);
+    this.logger.info(`🌐 Built graph: ${this.tokens.size} tokens, ${this.edges.size} edges (${duration}ms)`);
   }
 
   /**
    * 🔄 Update graph for specific pools (incremental)
    */
-  updatePools(updatedPools: PoolState[]): Set<string> {
+  updatePools(updatedPools: DexPoolState[]): Set<string> {
     const affectedTokens = new Set<string>();
 
     for (const pool of updatedPools) {
@@ -98,12 +101,10 @@ export class LiquidityGraph {
   /**
    * ➕ Add single pool as bidirectional edges
    */
-  private addPoolToGraph(pool: PoolState): boolean {
-    const adapter = this.dexRegistry.getAdapter(pool.dexName);
-    if (!adapter) return false;
-
+  private addPoolToGraph(pool: DexPoolState): boolean {
+    // TODO: rename to updateGraphFromPool
     // Check liquidity threshold
-    if (pool.totalLiquidityInUSD < this.config.minLiquidityUSD) return false;
+    if (pool.totalLiquidityUSD < this.config.minLiquidityUSD) return false;
 
     const { token0, token1 } = pool.tokenPair;
 
@@ -118,8 +119,8 @@ export class LiquidityGraph {
       tokenOut: token1,
       spotPrice: pool.spotPrice0to1,
       weight: this.calculateEdgeWeight(pool.spotPrice0to1, pool),
-      liquidityUSD: pool.totalLiquidityInUSD,
-      fee: pool.fee,
+      liquidityUSD: pool.totalLiquidityUSD,
+      feeBps: pool.feeBps,
       updated: Date.now(),
     });
 
@@ -130,8 +131,8 @@ export class LiquidityGraph {
       tokenOut: token0,
       spotPrice: pool.spotPrice1to0,
       weight: this.calculateEdgeWeight(pool.spotPrice1to0, pool),
-      liquidityUSD: pool.totalLiquidityInUSD,
-      fee: pool.fee,
+      liquidityUSD: pool.totalLiquidityUSD,
+      feeBps: pool.feeBps,
       updated: Date.now(),
     });
 
@@ -167,7 +168,7 @@ export class LiquidityGraph {
     }
   }
 
-  private removePoolFromGraph(pool: PoolState): void {
+  private removePoolFromGraph(pool: DexPoolState): void {
     const tokenPair = this.poolToEdges.get(pool.id);
     if (!tokenPair) return;
 
@@ -213,7 +214,7 @@ export class LiquidityGraph {
   /**
    * 🔍 Get all tokens in graph
    */
-  getTokens(): Token[] {
+  getTokens(): TokenOnChain[] {
     return Array.from(this.tokens.values());
   }
 
@@ -263,9 +264,9 @@ export class LiquidityGraph {
   /**
    * Calculate weight for an edge
    */
-  calculateEdgeWeight(spotPrice: number, pool: PoolState): number {
+  calculateEdgeWeight(spotPrice: number, pool: DexPoolState): number {
     const rate = spotPrice;
-    const feeMultiplier = getFeeMultiplier(pool.fee, pool.dexType);
+    const feeMultiplier = getFeeMultiplier(pool.feeBps, pool.protocol);
     return -Math.log(rate * feeMultiplier);
   }
 }

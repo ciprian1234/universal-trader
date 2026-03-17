@@ -1,13 +1,21 @@
-import { DexRegistry } from '../../services/dex-registry';
-import { createLogger } from '../../utils/logger';
-import { GasManager } from '../gasManager';
-import { ArbitrageOpportunity, SwapStep } from '../interfaces';
-import { TokenManager } from '../token-manager';
 import { ethers } from 'ethers';
+import type { Logger } from '@/utils';
+import type { ArbitrageOpportunity, SwapStep } from '../interfaces';
+import type { DexManager } from '../dex-manager';
+import type { GasManager } from '../gas-manager';
+import type { PriceOracle } from '../price-oracle';
 
 export interface EvaluatorConfig {
   minGrossProfitUSD: number;
   maxTotalSlippage: number;
+}
+
+export interface PathEvaluatorInput {
+  logger: Logger;
+  dexManager: DexManager;
+  priceOracle: PriceOracle;
+  gasManager: GasManager;
+  config: EvaluatorConfig;
 }
 
 /**
@@ -19,14 +27,19 @@ export interface EvaluatorConfig {
  * 4. Add gas analysis
  */
 export class PathEvaluator {
-  private readonly logger = createLogger('[PathEvaluator]');
+  private readonly logger: Logger;
+  private readonly dexManager: DexManager;
+  private readonly priceOracle: PriceOracle;
+  private readonly gasManager: GasManager;
+  private readonly config: EvaluatorConfig;
 
-  constructor(
-    private readonly dexRegistry: DexRegistry,
-    private readonly tokenManager: TokenManager,
-    private readonly gasManager: GasManager,
-    private readonly config: EvaluatorConfig,
-  ) {}
+  constructor(input: PathEvaluatorInput) {
+    this.logger = input.logger;
+    this.dexManager = input.dexManager;
+    this.priceOracle = input.priceOracle;
+    this.gasManager = input.gasManager;
+    this.config = input.config;
+  }
 
   // ============================================
   // EVALUATION
@@ -64,7 +77,7 @@ export class PathEvaluator {
         return null;
       }
 
-      const grossProfitUSD = this.tokenManager.calculateUSDValue(path.borrowToken.address, grossProfitToken) || 0;
+      const grossProfitUSD = this.priceOracle.calculateUSDValue(path.borrowToken.address, grossProfitToken) || 0;
 
       if (grossProfitUSD < this.config.minGrossProfitUSD) {
         // this.logger.debug(`Path ${path.id} gross profit $${grossProfitUSD.toFixed(2)} below threshold`);
@@ -114,8 +127,8 @@ export class PathEvaluator {
     this.logger.info(`🛤️ Arbitrage Path: ${path.id}`);
     for (const [index, step] of path.steps.entries()) {
       this.logger.info(
-        `  Step ${index + 1}: ${step.tokenIn.symbol} -> ${step.tokenOut.symbol} via ${step.pool.dexName} (${
-          step.pool.fee
+        `  Step ${index + 1}: ${step.tokenIn.symbol} -> ${step.tokenOut.symbol} via ${step.pool.venue.name} (${
+          step.pool.feeBps
         }) | In: ${step.amountIn.toString()} | Out: ${step.amountOut.toString()} | Spot Price: ${step.spotPrice.toFixed(
           6,
         )} | Exec Price: ${step.executionPrice.toFixed(6)} | Price Impact: ${step.priceImpact.toFixed(
@@ -139,14 +152,14 @@ export class PathEvaluator {
     const reserve = zeroForOne ? firstStep.pool.reserve0! : firstStep.pool.reserve1!;
 
     // Find bottleneck pool (smallest liquidity)
-    let smallestLiquidityUSD = path.steps[0].pool.totalLiquidityInUSD;
+    let smallestLiquidityUSD = path.steps[0].pool.totalLiquidityUSD;
     for (let i = 1; i < path.steps.length; i++) {
-      if (path.steps[i].pool.totalLiquidityInUSD < smallestLiquidityUSD) {
-        smallestLiquidityUSD = path.steps[i].pool.totalLiquidityInUSD;
+      if (path.steps[i].pool.totalLiquidityUSD < smallestLiquidityUSD) {
+        smallestLiquidityUSD = path.steps[i].pool.totalLiquidityUSD;
       }
     }
 
-    const firstPoolLiquidityUSD = firstStep.pool.totalLiquidityInUSD;
+    const firstPoolLiquidityUSD = firstStep.pool.totalLiquidityUSD;
     const liquidityRatio = firstPoolLiquidityUSD / smallestLiquidityUSD;
 
     let left = 1n;
@@ -194,22 +207,22 @@ export class PathEvaluator {
     // Find bottleneck pool (smallest liquidity)
     let smallestLiquidityUSD = Number.MAX_VALUE;
     for (const step of path.steps) {
-      // console.log(`Pool ${step.pool.dexName} liquidity USD: $${step.pool.totalLiquidityInUSD.toFixed(2)}`);
-      if (step.pool.totalLiquidityInUSD < smallestLiquidityUSD) {
-        smallestLiquidityUSD = step.pool.totalLiquidityInUSD;
+      // console.log(`Pool ${step.pool.dexName} liquidity USD: $${step.pool.totalLiquidityUSD.toFixed(2)}`);
+      if (step.pool.totalLiquidityUSD < smallestLiquidityUSD) {
+        smallestLiquidityUSD = step.pool.totalLiquidityUSD;
       }
 
-      const liquidity = step.pool.totalLiquidityInUSD;
+      const liquidity = step.pool.totalLiquidityUSD;
       // Skip pools with invalid liquidity data
       if (!liquidity || liquidity <= 0 || !Number.isFinite(liquidity)) {
-        this.logger.debug(`Pool ${step.pool.dexName} has invalid liquidity: ${liquidity}`);
+        this.logger.debug(`Pool ${step.pool.venue.name} has invalid liquidity: ${liquidity}`);
         continue;
       }
     }
     // console.log(`Smallest liquidity USD in path: $${smallestLiquidityUSD.toFixed(2)}`);
 
     // Scale max amount based on bottleneck
-    const firstPoolLiquidityUSD = firstStep.pool.totalLiquidityInUSD;
+    const firstPoolLiquidityUSD = firstStep.pool.totalLiquidityUSD;
     const liquidityRatio = firstPoolLiquidityUSD / smallestLiquidityUSD;
 
     // console.log(`Liquidity ratio: ${liquidityRatio.toFixed(4)}`);
@@ -273,9 +286,8 @@ export class PathEvaluator {
     if (inputAmount <= 0n) return -1_000_000_000_000_000n;
     let currentAmount = inputAmount;
     for (const step of steps) {
-      const adapter = this.dexRegistry.getAdapter(step.pool.dexName)!;
       const zeroForOne = step.tokenIn.address === step.pool.tokenPair.token0.address;
-      const amountOut = adapter.simulateSwap(step.pool, currentAmount, zeroForOne);
+      const amountOut = this.dexManager.simulateSwap(step.pool, currentAmount, zeroForOne);
       currentAmount = amountOut;
     }
     return currentAmount;
@@ -298,11 +310,10 @@ export class PathEvaluator {
     let currentAmount = initialAmount;
 
     for (const step of steps) {
-      const adapter = this.dexRegistry.getAdapter(step.pool.dexName)!;
       const zeroForOne = step.tokenIn.address === step.pool.tokenPair.token0.address;
 
       try {
-        const amountOut = adapter.simulateSwap(step.pool, currentAmount, zeroForOne);
+        const amountOut = this.dexManager.simulateSwap(step.pool, currentAmount, zeroForOne);
         if (amountOut <= 0n) return null;
 
         // Calculate metrics

@@ -1,4 +1,6 @@
-import { ArbitrageOpportunity, PoolState, Token } from '../interfaces';
+import type { DexPoolState } from '@/shared/data-model/layer1';
+import type { ArbitrageOpportunity } from '../interfaces';
+import type { TokenOnChain } from '@/shared/data-model/token';
 
 /**
  * 🔄 Single swap in an arbitrage path
@@ -6,9 +8,9 @@ import { ArbitrageOpportunity, PoolState, Token } from '../interfaces';
 
 // 🔗 Edge in liquidity graph - bellman ford perspective
 export interface WeightedEdge {
-  pool: PoolState; // original pool reference
-  tokenIn: Token; // token address
-  tokenOut: Token; // token address
+  pool: DexPoolState; // original pool reference
+  tokenIn: TokenOnChain; // token address
+  tokenOut: TokenOnChain; // token address
 
   // Bellman-Ford specific fields weighted field
   weight: number; // -log(rate * (1 - fee))
@@ -16,7 +18,7 @@ export interface WeightedEdge {
   // extra fields for reference (decide if needed)
   spotPrice: number;
   liquidityUSD: number;
-  fee: number;
+  feeBps: number;
   updated: number;
 }
 

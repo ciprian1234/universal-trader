@@ -174,6 +174,14 @@ export class DexAdapter {
     else if (ctx.config.protocol === 'v4') return await V4.discoverPools(ctx, tokenPair);
     else return [];
   }
+
+  simulateSwap(pool: DexPoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+    if (pool.protocol === 'v2') return V2.simulateSwap(pool, amountIn, zeroForOne);
+    else if (pool.protocol === 'v3') return V3.simulateSwap(pool, amountIn, zeroForOne);
+    else if (pool.protocol === 'v4') return V4.simulateSwap(pool, amountIn, zeroForOne);
+    else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)}`);
+  }
+
   // ================================================================================================
   // CORE LOGIC
   // ================================================================================================

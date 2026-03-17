@@ -1,20 +1,27 @@
-import { createLogger } from '../../utils/logger';
-import { ArbitrageOpportunity, SwapStep, Token } from '../interfaces';
-import { IPathFinder, WeightedEdge } from './interfaces';
+import type { ArbitrageOpportunity, SwapStep } from '../interfaces';
+import type { IPathFinder, WeightedEdge } from './interfaces';
+import type { TokenOnChain } from '@/shared/data-model/token';
 import { LiquidityGraph } from './liquidity-graph';
-import { getFeeMultiplier } from '../utils';
+import { getFeeMultiplier } from '@/utils';
 import { TokenManager } from '../token-manager';
+import type { Logger } from '@/utils';
 
 export interface PathFinderConfig {
   profitThreshold: number;
   maxHops: number;
   maxPathsPerToken: number;
   preferredBorrowTokens: string[];
+}
+
+export interface PathFinderInput {
+  logger: Logger;
+  config: PathFinderConfig;
+  graph: LiquidityGraph;
   tokenManager: TokenManager;
 }
 
 interface DFSState {
-  currentToken: Token;
+  currentToken: TokenOnChain;
   path: WeightedEdge[];
   visitedPools: Set<string>;
   visitedTokens: Set<string>;
@@ -32,12 +39,17 @@ interface DFSState {
  * 4. Prune unpromising paths early
  */
 export class PathFinder implements IPathFinder {
-  private readonly logger = createLogger('[PathFinder]');
+  private readonly logger: Logger;
+  private readonly graph: LiquidityGraph;
+  private readonly config: PathFinderConfig;
+  private readonly tokenManager: TokenManager;
 
-  constructor(
-    private readonly graph: LiquidityGraph,
-    private readonly config: PathFinderConfig,
-  ) {}
+  constructor(input: PathFinderInput) {
+    this.logger = input.logger;
+    this.config = input.config;
+    this.graph = input.graph;
+    this.tokenManager = input.tokenManager;
+  }
 
   // ============================================
   // PATH DISCOVERY
@@ -52,7 +64,7 @@ export class PathFinder implements IPathFinder {
     const paths: ArbitrageOpportunity[] = [];
 
     for (const startToken of startTokens) {
-      const token = this.config.tokenManager.getToken(startToken);
+      const token = this.tokenManager.getToken(startToken);
 
       // this.logger.debug(`🔎 DFS from ${token?.symbol || startToken}...`);
 
@@ -77,7 +89,7 @@ export class PathFinder implements IPathFinder {
   /**
    * 🔄 Find all cycles starting from a specific token
    */
-  private findCyclesFromToken(borrowToken: Token): ArbitrageOpportunity[] {
+  private findCyclesFromToken(borrowToken: TokenOnChain): ArbitrageOpportunity[] {
     const paths: ArbitrageOpportunity[] = [];
     const startKey = borrowToken.address;
 
@@ -130,7 +142,7 @@ export class PathFinder implements IPathFinder {
         // if (edge.liquidityUSD < 1000) continue; // skip pools with less than $1,000 liquidity
 
         // Calculate estimated profit multiplier for this edge
-        const feeMultiplier = getFeeMultiplier(edge.fee, edge.pool.dexType);
+        const feeMultiplier = getFeeMultiplier(edge.feeBps, edge.pool.protocol);
         const newEstimatedProfit = state.estimatedProfit * edge.spotPrice * feeMultiplier;
 
         // Prune paths that can't mathematically be profitable
@@ -184,7 +196,7 @@ export class PathFinder implements IPathFinder {
   /**
    * 🛠️ Convert edge list to ArbitrageOpportunity (without amounts yet)
    */
-  private createPathFromEdges(borrowToken: Token, edges: WeightedEdge[]): ArbitrageOpportunity {
+  private createPathFromEdges(borrowToken: TokenOnChain, edges: WeightedEdge[]): ArbitrageOpportunity {
     // Create swap steps (amounts will be filled during evaluation)
     const steps: SwapStep[] = edges.map((edge) => ({
       pool: edge.pool,
@@ -198,7 +210,7 @@ export class PathFinder implements IPathFinder {
       slippage: 0,
     }));
 
-    const pathKey = edges.map((e) => e.pool.id).join('→');
+    const pathKey = edges.map((e) => `${e.pool.venue.name}(${e.pool.tokenPair.key}:${e.feeBps})`).join('→');
 
     return {
       id: `${Date.now()}_${pathKey}`,
@@ -223,8 +235,10 @@ export class PathFinder implements IPathFinder {
    * 📝 Log path exploration details for debugging
    */
   private logExplorationDetails(state: DFSState, edge: WeightedEdge, newEstimatedProfit: number): void {
-    const pathString = state.path.map((e) => `${e.tokenIn.symbol}---${e.pool.dexName}(${e.fee})--->${e.tokenOut.symbol}`).join('--->');
-    const currentPathString = pathString + `---${edge.pool.dexName}(${edge.pool.fee})--->${edge.tokenOut.symbol}`;
+    const pathString = state.path
+      .map((e) => `${e.tokenIn.symbol}---${e.pool.venue.name}(${e.feeBps})--->${e.tokenOut.symbol}`)
+      .join('--->');
+    const currentPathString = pathString + `---${edge.pool.venue.name}(${edge.feeBps})--->${edge.tokenOut.symbol}`;
     const depthInfo = `depth ${state.depth + 1}, prevProfit:${state.estimatedProfit.toFixed(
       4,
     )} newEstimatedProfit ${newEstimatedProfit.toFixed(4)}`;
@@ -236,7 +250,7 @@ export class PathFinder implements IPathFinder {
     const result = new Set<string>();
 
     for (const addr of affectedTokens) {
-      const token = this.config.tokenManager.getToken(addr);
+      const token = this.tokenManager.getToken(addr);
       if (token && this.config.preferredBorrowTokens.includes(token.symbol)) {
         // if (token.symbol === 'USDC') {
         // this.logger.debug(`TEMP Only adding USDC as start token: ${token.symbol} (${addr})`);
@@ -248,8 +262,8 @@ export class PathFinder implements IPathFinder {
     return result;
   }
 
-  private getBorrowTokens(affectedTokens: Set<string>): Token[] {
-    const borrowTokens: Token[] = [];
+  private getBorrowTokens(affectedTokens: Set<string>): TokenOnChain[] {
+    const borrowTokens: TokenOnChain[] = [];
 
     for (const tokenAddr of affectedTokens) {
       const token = this.graph.getTokens().find((t) => t.address.toLowerCase() === tokenAddr);

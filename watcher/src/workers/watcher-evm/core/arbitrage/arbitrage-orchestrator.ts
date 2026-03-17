@@ -2,39 +2,30 @@ import { createLogger } from '@/utils';
 import type { ArbitrageOpportunity, PoolEvent } from '../interfaces';
 import type { IPathFinder } from './interfaces';
 import { EventBus } from '../event-bus';
-import { LiquidityGraph, type GraphConfig } from './liquidity-graph';
-import { PathFinder, type PathFinderConfig } from './path-finder';
-import { PathEvaluator, type EvaluatorConfig } from './path-evaluator';
+import { LiquidityGraph } from './liquidity-graph';
+import { PathFinder } from './path-finder';
+import { PathEvaluator } from './path-evaluator';
 import { formatUnits } from 'ethers';
 import { TokenManager } from '../token-manager';
 import { GasManager } from '../gas-manager';
 import { DexManager } from '../dex-manager';
-// import CONFIG from '../../config';
 import { BellmanFordPathFinder } from './bellman-ford-path-finder';
 import type { WorkerDb } from '../../db';
 import type { ChainConfig } from '@/config/models';
+import type { PriceOracle } from '../price-oracle';
 
 // ============================================
 // CONFIGURATION
 // ============================================
 
-export interface ArbitrageOrchestratorConfig {
-  minGrossProfitUSD: number;
-  maxSlippage: number;
-  minLiquidityUSD: number;
-  maxHops: number;
-  maxPathsPerToken: number;
-  fastMode: boolean;
-}
-
 export interface ArbitrageOrchestratorInput {
   chainConfig: ChainConfig;
   eventBus: EventBus;
   db: WorkerDb;
-  tokenManager: TokenManager;
-  gasManager: GasManager;
   dexManager: DexManager;
-  config: ArbitrageOrchestratorConfig;
+  gasManager: GasManager;
+  tokenManager: TokenManager;
+  priceOracle: PriceOracle;
 }
 
 export interface ArbitrageStatistics {
@@ -57,9 +48,10 @@ export class ArbitrageOrchestrator {
   private readonly chainConfig: ChainConfig;
   private readonly eventBus: EventBus;
   private readonly db: WorkerDb;
-  private readonly tokenManager: TokenManager;
-  private readonly gasManager: GasManager;
   private readonly dexManager: DexManager;
+  private readonly gasManager: GasManager;
+  private readonly tokenManager: TokenManager;
+  private readonly priceOracle: PriceOracle;
 
   // Sub-services
   private readonly graph: LiquidityGraph;
@@ -80,36 +72,44 @@ export class ArbitrageOrchestrator {
     this.chainConfig = input.chainConfig;
     this.eventBus = input.eventBus;
     this.db = input.db;
-    this.tokenManager = input.tokenManager;
     this.gasManager = input.gasManager;
     this.dexManager = input.dexManager;
-    // Initialize graph
-    const graphConfig: GraphConfig = {
-      minLiquidityUSD: input.config.minLiquidityUSD,
-      maxEdgesPerToken: 1000,
-    };
+    this.tokenManager = input.tokenManager;
+    this.priceOracle = input.priceOracle;
 
-    this.graph = new LiquidityGraph(this.dexManager, this.tokenManager, graphConfig);
+    this.graph = new LiquidityGraph({
+      logger: createLogger(`[${input.chainConfig.name}.LiquidityGraph]`),
+      dexManager: this.dexManager,
+      config: {
+        minLiquidityUSD: input.chainConfig.arbitrage.minLiquidityUSD,
+        maxEdgesPerToken: 1000,
+      },
+    });
 
-    // Initialize path finder
-    const finderConfig: PathFinderConfig = {
-      profitThreshold: 1.0001, // 0.01% profit threshold
-      maxHops: input.config.maxHops || 4,
-      maxPathsPerToken: input.config.maxPathsPerToken || 10000,
-      preferredBorrowTokens: this.chainConfig.discoveryTokens, // WE CONSIDER DISCOVERY TOKENS AS PREFFERRED BORROW TOKENS
+    // Initialize path finder (PathFinder or BellmanFordPathFinder)
+    this.pathFinder = new PathFinder({
+      logger: createLogger(`[${input.chainConfig.name}.PathFinder]`),
+      graph: this.graph,
       tokenManager: this.tokenManager,
-    };
-
-    this.pathFinder = new PathFinder(this.graph, finderConfig);
-    // this.pathFinder = new BellmanFordPathFinder(this.graph, finderConfig);
+      config: {
+        profitThreshold: 1.0001, // 0.01% profit threshold
+        maxHops: input.chainConfig.arbitrage.maxHops,
+        maxPathsPerToken: 10000,
+        preferredBorrowTokens: this.chainConfig.discoveryTokens, // WE CONSIDER DISCOVERY TOKENS AS PREFFERRED BORROW TOKENS
+      },
+    });
 
     // Initialize evaluator
-    const evaluatorConfig: EvaluatorConfig = {
-      minGrossProfitUSD: input.config.minGrossProfitUSD,
-      maxTotalSlippage: input.config.maxSlippage,
-    };
-
-    this.pathEvaluator = new PathEvaluator(this.dexManager, this.tokenManager, this.gasManager, evaluatorConfig);
+    this.pathEvaluator = new PathEvaluator({
+      logger: createLogger(`[${input.chainConfig.name}.PathEvaluator]`),
+      dexManager: this.dexManager,
+      priceOracle: this.priceOracle,
+      gasManager: this.gasManager,
+      config: {
+        minGrossProfitUSD: this.chainConfig.arbitrage.minGrossProfitUSD,
+        maxTotalSlippage: 100,
+      },
+    });
 
     this.setupEventListeners();
   }
@@ -121,8 +121,8 @@ export class ArbitrageOrchestrator {
   private setupEventListeners(): void {
     // Pool events
     this.eventBus.onPoolEventsBatch(async ({ events }) => {
-      const { blockNumber, blockReceiveTimestamp } = events[0].meta;
-      this.logger.info(`🔍 Block ${blockNumber}: ${events.length} events (+${Date.now() - blockReceiveTimestamp}ms)`);
+      const { blockNumber, blockReceivedTimestamp } = events[0].meta;
+      this.logger.info(`🔍 Block ${blockNumber}: ${events.length} events (+${Date.now() - blockReceivedTimestamp}ms)`);
       const startTime = Date.now();
       await this.processPoolEvents(events);
       const duration = Date.now() - startTime;
@@ -182,7 +182,7 @@ export class ArbitrageOrchestrator {
       const selectedPaths = this.selectBestPaths(evaluatedPaths);
 
       // 6. Save and emit
-      await this.db.saveOpportunities(evaluatedPaths);
+      await this.db.saveOpportunities(evaluatedPaths); // TODO
 
       for (const path of selectedPaths) {
         this.displayPath(path);
@@ -198,7 +198,7 @@ export class ArbitrageOrchestrator {
 
     for (const event of events) {
       const poolId = event.poolId;
-      const pool = this.db.getPoolState(poolId);
+      const pool = this.dexManager.getPoolState(poolId);
       if (pool && !pools.has(poolId)) pools.set(poolId, pool);
     }
 
@@ -258,7 +258,7 @@ export class ArbitrageOrchestrator {
       this.logger.info(
         `   ${i + 1}. ${formatUnits(s.amountIn, s.tokenIn.decimals)} ${s.tokenIn.symbol} → ` +
           `${formatUnits(s.amountOut, s.tokenOut.decimals)} ${s.tokenOut.symbol} ` +
-          `(${s.pool.dexName}, impact: ${s.priceImpact.toFixed(2)}%)`,
+          `(${s.pool.venue.name}, impact: ${s.priceImpact.toFixed(2)}%)`,
       );
     }
 

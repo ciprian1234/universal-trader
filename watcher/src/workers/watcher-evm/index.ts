@@ -12,6 +12,7 @@ import { WorkerDb } from './db';
 import { TokenPairManager } from './core/token-pair-manager';
 import { GasManager } from './core/gas-manager';
 import { WalletManager } from './core/wallet-manager';
+import { ArbitrageOrchestrator } from './core/arbitrage/arbitrage-orchestrator';
 
 class EVMWorker extends BaseWorker {
   private chainConfig!: ChainConfig;
@@ -27,6 +28,7 @@ class EVMWorker extends BaseWorker {
   private blockManager!: BlockManager;
   private gasManager!: GasManager;
   private walletManager!: WalletManager;
+  private arbitrageOrchestrator!: ArbitrageOrchestrator;
 
   async handleRequest(message: RequestMessage) {
     this.sendResponseMessage({
@@ -175,6 +177,17 @@ class EVMWorker extends BaseWorker {
       priceOracle: this.priceOracle,
     });
     await this.walletManager.initAndValidateWallet();
+
+    // initialize arbitrage orchestrator
+    this.arbitrageOrchestrator = new ArbitrageOrchestrator({
+      chainConfig: this.chainConfig,
+      eventBus: this.eventBus,
+      db: this.db,
+      dexManager: this.dexManager,
+      gasManager: this.gasManager,
+      tokenManager: this.tokenManager,
+      priceOracle: this.priceOracle,
+    });
 
     // start listening for block and pool events
     this.blockManager.listenBlockEvents();

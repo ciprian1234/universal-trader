@@ -163,7 +163,7 @@ export interface ArbitrageOpportunity {
 
   // Metadata
   timestamp: number;
-  blockNumber: number;
+  blockNumber?: number;
 }
 
 // ================================================================================================
