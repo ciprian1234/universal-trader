@@ -1,5 +1,5 @@
 import type { DexPoolState } from '@/shared/data-model/layer1';
-import type { ArbitrageOpportunity } from '../interfaces';
+import type { ArbitrageOpportunity, SwapStep } from '../interfaces';
 import type { TokenOnChain } from '@/shared/data-model/token';
 
 /**
@@ -32,6 +32,12 @@ export interface GraphStats {
   lastUpdate: number;
 }
 
+export interface ArbitragePath {
+  id: string;
+  borrowToken: TokenOnChain; // First token in = last token out
+  steps: SwapStep[];
+}
+
 export interface IPathFinder {
-  findCycles(affectedTokens: Set<string>): ArbitrageOpportunity[];
+  findCycles(affectedTokens: Set<string>): ArbitragePath[];
 }

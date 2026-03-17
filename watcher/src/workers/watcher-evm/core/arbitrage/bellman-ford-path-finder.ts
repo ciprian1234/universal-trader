@@ -1,6 +1,6 @@
 import type { Logger } from '@/utils';
 import type { ArbitrageOpportunity, SwapStep } from '../interfaces';
-import type { IPathFinder, WeightedEdge } from './interfaces';
+import type { ArbitragePath, IPathFinder, WeightedEdge } from './interfaces';
 import { LiquidityGraph } from './liquidity-graph';
 import type { PathFinderConfig, PathFinderInput } from './path-finder';
 import type { TokenManager } from '../token-manager';
@@ -25,8 +25,8 @@ export class BellmanFordPathFinder implements IPathFinder {
   /**
    * 🔍 Find arbitrage cycles using Bellman-Ford
    */
-  findCycles(affectedTokens: Set<string>): ArbitrageOpportunity[] {
-    const paths: ArbitrageOpportunity[] = [];
+  findCycles(affectedTokens: Set<string>): ArbitragePath[] {
+    const paths: ArbitragePath[] = [];
 
     // Get weighted edges
     const edges = this.graph.getAllWeightedEdges();
@@ -52,7 +52,7 @@ export class BellmanFordPathFinder implements IPathFinder {
   /**
    * 🔄 Bellman-Ford algorithm to detect negative cycles
    */
-  private findNegativeCycles(source: string, edges: WeightedEdge[], vertices: string[]): ArbitrageOpportunity[] {
+  private findNegativeCycles(source: string, edges: WeightedEdge[], vertices: string[]): ArbitragePath[] {
     const dist = new Map<string, number>();
     const predecessor = new Map<string, WeightedEdge | null>();
 
@@ -76,7 +76,7 @@ export class BellmanFordPathFinder implements IPathFinder {
     }
 
     // Detect negative cycles
-    const cycles: ArbitrageOpportunity[] = [];
+    const cycles: ArbitragePath[] = [];
 
     for (const edge of edges) {
       const distFrom = dist.get(edge.tokenIn.address)!;
@@ -105,7 +105,7 @@ export class BellmanFordPathFinder implements IPathFinder {
     edge: WeightedEdge,
     predecessor: Map<string, WeightedEdge | null>,
     source: string,
-  ): ArbitrageOpportunity | null {
+  ): ArbitragePath | null {
     const visited = new Set<string>();
     const path: WeightedEdge[] = [];
 
@@ -141,7 +141,7 @@ export class BellmanFordPathFinder implements IPathFinder {
   /**
    * 🛠️ Convert edge list to ArbitragePath (without amounts yet)
    */
-  private createPathFromEdges(borrowToken: TokenOnChain, edges: WeightedEdge[]): ArbitrageOpportunity | null {
+  private createPathFromEdges(borrowToken: TokenOnChain, edges: WeightedEdge[]): ArbitragePath | null {
     if (edges.length === 0) return null;
 
     // Create swap steps (amounts will be filled during evaluation)
@@ -163,14 +163,6 @@ export class BellmanFordPathFinder implements IPathFinder {
       id: `${Date.now()}_${pathKey}`,
       steps,
       borrowToken,
-      borrowAmount: 0n,
-      grossProfitToken: 0n,
-      grossProfitUSD: 0,
-      netProfitUSD: 0,
-      totalSlippage: 0,
-      totalPriceImpact: 0,
-      minConfidence: 0.99,
-      timestamp: Date.now(),
     };
   }
 }

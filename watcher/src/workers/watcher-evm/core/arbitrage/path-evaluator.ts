@@ -4,6 +4,7 @@ import type { ArbitrageOpportunity, SwapStep } from '../interfaces';
 import type { DexManager } from '../dex-manager';
 import type { GasManager } from '../gas-manager';
 import type { PriceOracle } from '../price-oracle';
+import type { ArbitragePath } from './interfaces';
 
 export interface EvaluatorConfig {
   minGrossProfitUSD: number;
@@ -48,7 +49,7 @@ export class PathEvaluator {
   /**
    * 📊 Evaluate path profitability
    */
-  async evaluate(path: ArbitrageOpportunity) {
+  async evaluate(path: ArbitragePath) {
     try {
       // 0. display path being evaluated
       // this.displayPath(path);
@@ -92,14 +93,21 @@ export class PathEvaluator {
 
       // 4. Create evaluated path
       const evaluatedPath: ArbitrageOpportunity = {
-        ...path,
-        steps: simulatedSteps,
+        id: path.id,
+        chainId: 1, // TO-BE-ADDED
+        status: 'new',
+
+        borrowToken: path.borrowToken,
         borrowAmount: optimalAmount,
         grossProfitToken,
         grossProfitUSD,
         netProfitUSD: 0, // Set after gas analysis
+
+        steps: simulatedSteps,
         totalSlippage,
         totalPriceImpact: simulatedSteps.reduce((sum, s) => sum + s.priceImpact, 0),
+        executions: [],
+        timestamp: Date.now(),
       };
 
       this.logger.debug(`Evaluated path ${path.id}: Profit $${grossProfitUSD.toFixed(2)}, Slippage ${totalSlippage.toFixed(4)}%`);
@@ -145,7 +153,7 @@ export class PathEvaluator {
   /**
    * 🎯 Find optimal borrow amount using Ternary Search
    */
-  private findOptimalAmountTernarySearch(path: ArbitrageOpportunity): bigint {
+  private findOptimalAmountTernarySearch(path: ArbitragePath): bigint {
     const firstStep = path.steps[0];
     const borrowToken = path.borrowToken;
     const zeroForOne = borrowToken.address === firstStep.pool.tokenPair.token0.address;
@@ -198,7 +206,7 @@ export class PathEvaluator {
    * 🎯 Find optimal borrow amount using Golden Section Search
    * This is the BEST algorithm for unimodal profit functions
    */
-  private findOptimalAmountGoldenSectionSearch(path: ArbitrageOpportunity): bigint {
+  private findOptimalAmountGoldenSectionSearch(path: ArbitragePath): bigint {
     const firstStep = path.steps[0];
     const borrowToken = path.borrowToken;
     const zeroForOne = borrowToken.address === firstStep.pool.tokenPair.token0.address;

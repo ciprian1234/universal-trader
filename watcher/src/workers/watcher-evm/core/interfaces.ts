@@ -136,36 +136,46 @@ export interface SwapStep {
   slippage: number;
 }
 
-/**
- * 🛤️ Complete arbitrage path (N hops)
- */
+// ================================================================================================
+// ARBITRAGE OPPORTUNITIES
+// ================================================================================================
 export interface ArbitrageOpportunity {
-  // Identity
   id: string;
+  chainId: number;
+  status: 'new' | 'evaluating' | 'executable' | 'executing' | 'executed' | 'failed';
 
-  // Path structure
-  steps: SwapStep[];
-  borrowToken: TokenOnChain; // First token in = last token out
-  borrowAmount: bigint;
-
-  // Profitability
+  // info
   grossProfitToken: bigint; // Profit in borrow token
   grossProfitUSD: number;
   netProfitUSD: number;
+  borrowToken: TokenOnChain; // First token in = last token out
+  borrowAmount: bigint;
+
+  // details
+  steps: SwapStep[];
+  gasAnalysis?: GasAnalysis;
+  executions: ArbitrageExecution[];
 
   // Metrics
   totalSlippage: number;
   totalPriceImpact: number;
   minConfidence?: number;
 
-  // Gas analysis
-  gasAnalysis?: GasAnalysis;
-
   // Metadata
   timestamp: number;
-  blockNumber?: number;
+  foundAtBlock?: number;
 }
 
+export interface ArbitrageExecution {
+  status: 'pending' | 'success' | 'failed' | 'dropped' | 'timeout';
+  trade: any; // trade parameters sent to contract
+  tx: any; // transaction object from ethers
+  txReceipt?: any; // transaction receipt after confirmation
+  errorMessage?: string; // error message if failed
+  submittedAt: number;
+  submittedAtBlock: number;
+  confirmetAtBlock?: number;
+}
 // ================================================================================================
 // TRADE OPTIMIZER INTERFACE
 // ================================================================================================

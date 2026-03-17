@@ -2,6 +2,7 @@ import { SQL } from 'bun';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenOnChain } from '@/shared/data-model/token';
 import { createLogger } from '@/utils';
+import type { ArbitrageOpportunity } from '../core/interfaces';
 
 // ════════════════════════════════════════════════════════════
 // DB TYPES — static data only, no dynamic fields
@@ -53,9 +54,12 @@ export class WorkerDb {
     this.logger.info('✅ DB reset complete');
   }
 
-  // ── Schema ───────────────────────────────────────────────────────────
+  // ================================================================================================
+  // SCHEMA SETUP
+  // ================================================================================================
   async createTables(): Promise<void> {
     try {
+      // Create 'tokens' table
       await this.sql`
       CREATE TABLE IF NOT EXISTS tokens (
         "chainId"         INTEGER   NOT NULL,
@@ -71,6 +75,7 @@ export class WorkerDb {
       )
     `;
 
+      // Create 'pools' table
       await this.sql`
       CREATE TABLE IF NOT EXISTS pools (
         "id"              TEXT      PRIMARY KEY,
@@ -87,6 +92,29 @@ export class WorkerDb {
         "updatedAt"       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `;
+
+      // create 'arbitrage_opportunities' table
+      await this.sql`
+      CREATE TABLE IF NOT EXISTS arbitrage_opportunities (
+        "id"                TEXT      PRIMARY KEY,
+        "chainId"           INTEGER   NOT NULL,
+        "status"            TEXT      NOT NULL,
+
+        "grossProfitToken"  BIGINT    NOT NULL,
+        "grossProfitUSD"    FLOAT     NOT NULL,
+        "netProfitUSD"      FLOAT     NOT NULL,
+        "borrowToken"       JSONB     NOT NULL,
+        "borrowAmount"      BIGINT    NOT NULL,
+
+        "steps"             JSONB     NOT NULL,
+        "gasAnalysis"       JSONB     NOT NULL,
+        "executions"        JSONB     NOT NULL,
+        
+        "blockNumber"       INTEGER   NOT NULL,
+        "createdAt"         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt"         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
     } catch (error) {
       this.logger.error(`Error creating tables: ${error instanceof Error ? error.stack : String(error)}`);
       throw error;
@@ -100,7 +128,9 @@ export class WorkerDb {
     this.logger.info('✅ DB schema ready');
   }
 
-  // ── Tokens ───────────────────────────────────────────────────────────
+  // ================================================================================================
+  // TOKENS
+  // ================================================================================================
   async upsertToken(token: StoredToken): Promise<void> {
     await this.sql`
       INSERT INTO tokens ("chainId", "address", "symbol", "name", "decimals", "source", "isEnabled")
@@ -136,7 +166,9 @@ export class WorkerDb {
     }));
   }
 
-  // ── Pools ────────────────────────────────────────────────────────────
+  // ================================================================================================
+  // POOLS
+  // ================================================================================================
   async upsertPool(pool: DexPoolState, source: StoredPool['source'], isEnabled: boolean): Promise<void> {
     // return;
     await this.sql`
@@ -188,7 +220,46 @@ export class WorkerDb {
     }));
   }
 
-  // ── Lifecycle ────────────────────────────────────────────────────────
+  // ================================================================================================
+  // ARBITRAGE OPPORTUNITIES
+  // ================================================================================================
+  async upsertArbitrageOpportunity(opportunity: ArbitrageOpportunity): Promise<void> {
+    await this.sql`
+      INSERT INTO arbitrage_opportunities (
+        "id", "chainId", "status", 
+        "grossProfitToken", "grossProfitUSD", "netProfitUSD", "borrowToken", "borrowAmount", 
+        "steps", "gasAnalysis", "executions", "blockNumber"
+      )
+      VALUES (
+        ${opportunity.id},
+        ${opportunity.chainId},
+        ${opportunity.status},
+
+        ${opportunity.grossProfitToken},
+        ${opportunity.grossProfitUSD},
+        ${opportunity.netProfitUSD},
+        ${opportunity.borrowToken},
+        ${opportunity.borrowAmount},
+
+        ${serializeObject(opportunity.steps)},
+        ${serializeObject(opportunity.gasAnalysis)},
+        ${serializeObject(opportunity.executions)},
+        ${opportunity.foundAtBlock || 0}
+      )
+      ON CONFLICT ("id") DO UPDATE SET
+        "status" = EXCLUDED."status",
+        "netProfitUSD" = EXCLUDED."netProfitUSD",
+        "steps" = EXCLUDED."steps",
+        "gasAnalysis" = EXCLUDED."gasAnalysis",
+        "executions" = EXCLUDED."executions",
+        "blockNumber" = EXCLUDED."blockNumber",
+        "updatedAt" = CURRENT_TIMESTAMP
+    `;
+  }
+
+  // ================================================================================================
+  // LIFECYCLE
+  // ================================================================================================
   async destroy(): Promise<void> {
     await this.sql.end?.();
   }

@@ -1,5 +1,5 @@
-import type { ArbitrageOpportunity, SwapStep } from '../interfaces';
-import type { IPathFinder, WeightedEdge } from './interfaces';
+import type { SwapStep } from '../interfaces';
+import type { ArbitragePath, IPathFinder, WeightedEdge } from './interfaces';
 import type { TokenOnChain } from '@/shared/data-model/token';
 import { LiquidityGraph } from './liquidity-graph';
 import { getFeeMultiplier } from '@/utils';
@@ -58,10 +58,10 @@ export class PathFinder implements IPathFinder {
   /**
    * 🔍 Find all cycles starting from affected tokens
    */
-  findCycles(affectedTokens: Set<string>): ArbitrageOpportunity[] {
+  findCycles(affectedTokens: Set<string>): ArbitragePath[] {
     const startTokens = this.getStartTokens(affectedTokens); // Get start tokens (intersection with preferred borrow tokens)
 
-    const paths: ArbitrageOpportunity[] = [];
+    const paths: ArbitragePath[] = [];
 
     for (const startToken of startTokens) {
       const token = this.tokenManager.getToken(startToken);
@@ -89,8 +89,8 @@ export class PathFinder implements IPathFinder {
   /**
    * 🔄 Find all cycles starting from a specific token
    */
-  private findCyclesFromToken(borrowToken: TokenOnChain): ArbitrageOpportunity[] {
-    const paths: ArbitrageOpportunity[] = [];
+  private findCyclesFromToken(borrowToken: TokenOnChain): ArbitragePath[] {
+    const paths: ArbitragePath[] = [];
     const startKey = borrowToken.address;
 
     // DFS state
@@ -196,7 +196,7 @@ export class PathFinder implements IPathFinder {
   /**
    * 🛠️ Convert edge list to ArbitrageOpportunity (without amounts yet)
    */
-  private createPathFromEdges(borrowToken: TokenOnChain, edges: WeightedEdge[]): ArbitrageOpportunity {
+  private createPathFromEdges(borrowToken: TokenOnChain, edges: WeightedEdge[]): ArbitragePath {
     // Create swap steps (amounts will be filled during evaluation)
     const steps: SwapStep[] = edges.map((edge) => ({
       pool: edge.pool,
@@ -216,14 +216,6 @@ export class PathFinder implements IPathFinder {
       id: `${Date.now()}_${pathKey}`,
       steps,
       borrowToken,
-      borrowAmount: 0n,
-      grossProfitToken: 0n,
-      grossProfitUSD: 0,
-      netProfitUSD: 0,
-      totalSlippage: 0,
-      totalPriceImpact: 0,
-      minConfidence: 0.99,
-      timestamp: Date.now(),
     };
   }
 

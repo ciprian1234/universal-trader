@@ -1,6 +1,6 @@
 import { createLogger } from '@/utils';
 import type { ArbitrageOpportunity, PoolEvent } from '../interfaces';
-import type { IPathFinder } from './interfaces';
+import type { ArbitragePath, IPathFinder } from './interfaces';
 import { EventBus } from '../event-bus';
 import { LiquidityGraph } from './liquidity-graph';
 import { PathFinder } from './path-finder';
@@ -182,7 +182,8 @@ export class ArbitrageOrchestrator {
       const selectedPaths = this.selectBestPaths(evaluatedPaths);
 
       // 6. Save and emit
-      await this.db.saveOpportunities(evaluatedPaths); // TODO
+      const savePromises = selectedPaths.map((path) => this.db.upsertArbitrageOpportunity(path));
+      await Promise.all(savePromises);
 
       for (const path of selectedPaths) {
         this.displayPath(path);
@@ -205,7 +206,7 @@ export class ArbitrageOrchestrator {
     return Array.from(pools.values());
   }
 
-  private async evaluatePathsConcurrently(paths: ArbitrageOpportunity[], batchSize: number): Promise<ArbitrageOpportunity[]> {
+  private async evaluatePathsConcurrently(paths: ArbitragePath[], batchSize: number): Promise<ArbitrageOpportunity[]> {
     const results: ArbitrageOpportunity[] = [];
 
     for (let i = 0; i < paths.length; i += batchSize) {
