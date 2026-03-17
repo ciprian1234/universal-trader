@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import { createLogger, type Logger } from '@/utils';
 import type { ArbitrageOpportunity } from '../interfaces';
-import { FLASH_ARBITRAGE_ABI, DexTypeEnum, type Trade, type SwapStep } from './flashArbitrageConfig';
+import { FLASH_ARBITRAGE_ABI, DexTypeEnum, type Trade, type SwapStep } from './flash-arbitrage-config';
 import { EventBus } from '../event-bus';
 import type { ChainConfig } from '@/config/models';
 import type { Blockchain } from '../blockchain';

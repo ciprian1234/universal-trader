@@ -202,6 +202,7 @@ class EVMWorker extends BaseWorker {
       blockchain: this.blockchain,
       blockManager: this.blockManager,
       walletManager: this.walletManager,
+      dexManager: this.dexManager,
     });
 
     // log monitoring
