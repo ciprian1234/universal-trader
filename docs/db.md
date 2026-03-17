@@ -24,8 +24,14 @@ Create database if not exist:
 
 > docker exec -it <container_name> psql -U <user> -c "CREATE DATABASE <database>;"
 
+Copy bak file into container:
+
+> docker cp /tmp/backup.dump <container_name>:/tmp/backup.dump
+
 Restore:
 
 > docker exec -i <container_name> psql -U <user> -d <database> < backup.sql
 > OR
 > docker exec -i <container_name> pg_restore -U <user> -d <database> < backup.dump
+> OR
+> docker exec <container_name> pg_restore -U <user> -d <database> -f /tmp/backup.dump
