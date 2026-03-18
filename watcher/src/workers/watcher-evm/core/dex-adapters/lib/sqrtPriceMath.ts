@@ -2,7 +2,7 @@
 // UNISWAP V3 MATH LIBRARIES (Port from Solidity)
 // ================================================================================================
 
-import type { PoolState } from '../../interfaces';
+import type { DexV3PoolState } from '@/shared/data-model/layer1';
 
 // Constants for fixed point math
 export const Q96 = 1n << 96n; // 2**96
@@ -144,7 +144,7 @@ function mulDivRoundingUp(a: bigint, b: bigint, denominator: bigint): bigint {
  * 🧮 SIMULATE V3 SWAP - Multi-tick implementation
  * Mirrors the Uniswap V3 core swap loop to handle tick crossings correctly.
  */
-export function simulateSwap(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+export function simulateSwap(poolState: DexV3PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
   const sqrtPriceX96 = poolState.sqrtPriceX96!;
   let liquidity = poolState.liquidity!;
 
@@ -152,18 +152,18 @@ export function simulateSwap(poolState: PoolState, amountIn: bigint, zeroForOne:
   if (liquidity <= 0n) throw new Error(`Insufficient liquidity`);
 
   // If no tick data available, fall back to single-tick simulation
-  if (!poolState.initializedTicks || poolState.initializedTicks.length === 0) {
+  if (!poolState.ticks || poolState.ticks.length === 0) {
     return simulateSwapSingleTick(poolState, amountIn, zeroForOne);
   }
 
-  const feePpm = BigInt(poolState.fee);
+  const feePpm = BigInt(poolState.feeBps);
   let amountRemaining = amountIn;
   let totalAmountOut = 0n;
   let currentSqrtPrice = sqrtPriceX96;
   let currentTick = poolState.tick!;
 
   // Get sorted initialized ticks
-  const ticks = poolState.initializedTicks;
+  const ticks = poolState.ticks;
 
   // Price limits (same as V3 core MIN/MAX sqrt prices)
   const MIN_SQRT_RATIO = 4295128739n + 1n;
@@ -235,11 +235,11 @@ export function simulateSwap(poolState: PoolState, amountIn: bigint, zeroForOne:
 /**
  * Single-tick fallback (original implementation)
  */
-function simulateSwapSingleTick(poolState: PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+function simulateSwapSingleTick(poolState: DexV3PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
   const sqrtPriceX96 = poolState.sqrtPriceX96!;
   const liquidity = poolState.liquidity!;
 
-  const feePpm = BigInt(poolState.fee);
+  const feePpm = BigInt(poolState.feeBps);
   const amountInAfterFee = (amountIn * (1_000_000n - feePpm)) / 1_000_000n;
 
   if (zeroForOne) {

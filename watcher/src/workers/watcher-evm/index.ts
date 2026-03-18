@@ -51,7 +51,6 @@ class EVMWorker extends BaseWorker {
 
     // "new-block" routing => update GasManager
     this.eventBus.onNewBlock((payload) => {
-      console.log(`New block event received in worker: ${JSON.stringify(payload)}`);
       this.gasManager.handleNewBlockEvent(payload);
     });
 
