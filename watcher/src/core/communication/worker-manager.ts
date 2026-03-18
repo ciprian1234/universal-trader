@@ -28,6 +28,7 @@ export class WorkerManager {
       resolve: (value: any) => void;
       reject: (reason?: any) => void;
       timer: ReturnType<typeof setTimeout>;
+      ctx: { requestName: string; requestData: any };
     }
   > = new Map();
   DEFAULT_TIMEOUT_MS = 10_000;
@@ -91,7 +92,7 @@ export class WorkerManager {
       }, this.DEFAULT_TIMEOUT_MS);
 
       // Store the pending request
-      this.pendingRequests.set(correlationId, { resolve, reject, timer });
+      this.pendingRequests.set(correlationId, { resolve, reject, timer, ctx: { requestName, requestData } });
 
       // Send the request to the worker
       const request: RequestMessage = {
@@ -142,9 +143,10 @@ export class WorkerManager {
 
     // clear pending requests for this worker
     for (const [correlationId, pending] of this.pendingRequests) {
+      // if (pending.ctx.requestName === 'stop') continue; // skip rejecting pending stop requests since we're already terminating the worker
       if (correlationId.startsWith(`${workerId}-`)) {
         clearTimeout(pending.timer);
-        pending.reject(new Error(`Worker "${workerId}" terminated`));
+        pending.reject(new Error(`Worker "${workerId}" terminated, id: ${correlationId} (ctx: ${JSON.stringify(pending.ctx)})`));
         this.pendingRequests.delete(correlationId);
       }
     }

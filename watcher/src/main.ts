@@ -94,7 +94,10 @@ async function main(): Promise<void> {
   // }, 10_000);
 
   // ── 10. Signal handling ──
+  let isShuttingDown = false;
   const shutdown = async () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     logger.info('Shutting down...');
     // crossChainDetector.stop();
     await workerManager.terminateAll(); // Gracefully terminate all workers
