@@ -56,7 +56,7 @@ const logsDir = path.join(process.cwd(), 'data/logs');
 // console transport
 const consoleTransport = new winston.transports.Console({
   format: consoleFormat,
-  level: process.env.LOG_LEVEL || 'info', // Control via env var
+  level: process.env.LOG_LEVEL || 'debug', // Control via env var
 });
 
 // File transport with daily rotation

@@ -4,7 +4,7 @@
 import { createLogger, type Logger } from '@/utils';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { WorkerDb } from '../db';
-import type { EventBus, PoolStateEvent } from './event-bus';
+import type { EventBus, PoolStateUpsertEventPayload } from './event-bus';
 import type { ChainConfig } from '@/config/models';
 import type { TokenManager } from './token-manager';
 import type { DexManager } from './dex-manager';
@@ -60,8 +60,8 @@ export class TokenPairManager {
   // ================================================================================================
   // HANDLE POOL STATE EVENTS
   // ================================================================================================
-  async handlePoolStateEvent(event: PoolStateEvent) {
-    const { pool } = event;
+  async handlePoolStateUpsertEvent(payload: PoolStateUpsertEventPayload) {
+    const { pool } = payload;
 
     let tokenPairInfo = this.tokenPairs.get(pool.tokenPair.key);
     if (!tokenPairInfo) {

@@ -6,8 +6,6 @@ import type { TokenOnChain } from '@/shared/data-model/token';
 import type { ChainConfig } from '@/config/models';
 import type { PriceOracle } from './price-oracle';
 
-// const { NATIVE_TOKEN, WRAPPED_NATIVE_TOKEN_ADDRESS } = CONFIG;
-
 export interface TokenBalance {
   token: TokenOnChain;
   balance: bigint;
@@ -53,7 +51,7 @@ export class WalletManager {
   private priceOracle: PriceOracle;
 
   private readonly NATIVE_TOKEN: string;
-  private readonly WRAPPED_NATIVE_TOKEN: TokenOnChain;
+  private readonly WRAPPED_NATIVE_TOKEN_ADDRESS: string;
 
   // 💾 IN-MEMORY STORAGE: Token balances by address
   private tokenBalances: Map<string, TokenBalance> = new Map();
@@ -69,7 +67,7 @@ export class WalletManager {
     this.signer = new ethers.Wallet(input.chainConfig.walletPrivateKey, input.blockchain.getProvider());
 
     this.NATIVE_TOKEN = this.chainConfig.nativeToken;
-    this.WRAPPED_NATIVE_TOKEN = this.tokenManager.getTokenBySymbol(this.chainConfig.wrappedNativeToken)!;
+    this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress.toLowerCase();
 
     // init walletState with default values
     this.walletState = { address: '', nativeTokenBalance: 0n, lastUpdated: Date.now() };
@@ -183,16 +181,16 @@ export class WalletManager {
       oldBalance: oldNativeTokenBalance,
       oldBalanceFormatted: ethers.formatEther(oldNativeTokenBalance),
       oldBalanceValueInUSD: this.priceOracle
-        .calculateUSDValue(this.WRAPPED_NATIVE_TOKEN.address, oldNativeTokenBalance)
+        .calculateUSDValue(this.WRAPPED_NATIVE_TOKEN_ADDRESS, oldNativeTokenBalance)
         .toFixed(4),
       newBalance: this.walletState.nativeTokenBalance,
       newBalanceFormatted: ethers.formatEther(this.walletState.nativeTokenBalance),
       newBalanceValueInUSD: this.priceOracle
-        .calculateUSDValue(this.WRAPPED_NATIVE_TOKEN.address, this.walletState.nativeTokenBalance)
+        .calculateUSDValue(this.WRAPPED_NATIVE_TOKEN_ADDRESS, this.walletState.nativeTokenBalance)
         .toFixed(4),
       diff: nativeTokenDiff,
       diffFormatted: ethers.formatEther(nativeTokenDiff),
-      diffValueInUSD: this.priceOracle.calculateUSDValue(this.WRAPPED_NATIVE_TOKEN.address, nativeTokenDiff).toFixed(4),
+      diffValueInUSD: this.priceOracle.calculateUSDValue(this.WRAPPED_NATIVE_TOKEN_ADDRESS, nativeTokenDiff).toFixed(4),
     };
 
     // Token balance changes

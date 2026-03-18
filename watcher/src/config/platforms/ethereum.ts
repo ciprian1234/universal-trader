@@ -14,8 +14,9 @@ const ethereum: ChainConfig = {
   // Tokens configuration
   nativeToken: 'ETH',
   wrappedNativeToken: 'WETH',
+  wrappedNativeTokenAddress: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
   stablecoinTokens: ['USDT', 'USDC', 'USDS', 'USD1', 'DAI', 'FRAX'], // USD stable coins
-  discoveryTokens: ['WETH', 'USDT', 'USDC', 'DAI'], // used for pair discovery and as preferred borrow tokens
+  discoveryTokens: ['WETH', 'USDT', 'USDC'], // used for pair discovery and as preferred borrow tokens
   priceAnchorTokens: [
     // core tokens
     'WETH',

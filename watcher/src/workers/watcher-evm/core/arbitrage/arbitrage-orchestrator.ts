@@ -1,7 +1,7 @@
 import { createLogger } from '@/utils';
 import type { ArbitrageOpportunity, PoolEvent } from '../interfaces';
 import type { ArbitragePath, IPathFinder } from './interfaces';
-import { EventBus } from '../event-bus';
+import { EventBus, type ApplicationEventPayload, type PoolsBatchEventPayload } from '../event-bus';
 import { LiquidityGraph } from './liquidity-graph';
 import { PathFinder } from './path-finder';
 import { PathEvaluator } from './path-evaluator';
@@ -13,6 +13,7 @@ import { BellmanFordPathFinder } from './bellman-ford-path-finder';
 import type { WorkerDb } from '../../db';
 import type { ChainConfig } from '@/config/models';
 import type { PriceOracle } from '../price-oracle';
+import type { DexPoolState } from '@/shared/data-model/layer1';
 
 // ============================================
 // CONFIGURATION
@@ -82,7 +83,6 @@ export class ArbitrageOrchestrator {
       dexManager: this.dexManager,
       config: {
         minLiquidityUSD: input.chainConfig.arbitrage.minLiquidityUSD,
-        maxEdgesPerToken: 1000,
       },
     });
 
@@ -110,55 +110,36 @@ export class ArbitrageOrchestrator {
         maxTotalSlippage: 100,
       },
     });
-
-    this.setupEventListeners();
   }
 
   // ============================================
   // EVENT HANDLING
   // ============================================
 
-  private setupEventListeners(): void {
-    // Pool events
-    this.eventBus.onPoolEventsBatch(async ({ events }) => {
-      const { blockNumber, blockReceivedTimestamp } = events[0].meta;
-      this.logger.info(`🔍 Block ${blockNumber}: ${events.length} events (+${Date.now() - blockReceivedTimestamp}ms)`);
-      const startTime = Date.now();
-      await this.processPoolEvents(events);
-      const duration = Date.now() - startTime;
-      // this.updateExecutionTimeStats(duration);
-      this.logger.info(`⏱️  Execution time ${duration}ms`);
-    });
+  handleApplicationEvent(event: ApplicationEventPayload) {
+    if (event.name === 'pool-states-updated') {
+      this.logger.info('✅ Pools updated, building graph and enabling service');
+      this.graph.buildGraph();
+      this.enabled = true;
+      this.stats.graphStats = this.graph.getStats();
+    }
 
-    // Application events
-    this.eventBus.onApplicationEvent((event) => {
-      if (event.name === 'pool-states-updated') {
-        this.logger.info('✅ Pools updated, building graph and enabling service');
-        this.graph.buildGraph();
-        this.enabled = true;
-        this.stats.graphStats = this.graph.getStats();
-      }
-
-      if (event.name === 'reorg-detected') {
-        this.logger.warn(`⚠️  Reorg detected at block ${event.data?.blockNumber}, disabling`);
-        this.enabled = false;
-      }
-    });
+    if (event.name === 'reorg-detected') {
+      this.logger.warn(`⚠️  Reorg detected at block ${event.data?.blockNumber}, disabling`);
+      this.enabled = false;
+    }
   }
 
-  // ============================================
-  // MAIN PROCESSING PIPELINE
-  // ============================================
+  async handlePoolsBatchEvent(payload: PoolsBatchEventPayload): Promise<void> {
+    const startTime = Date.now();
+    const deltaMs = startTime - payload.blockData.receivedTimestamp;
+    this.logger.info(`🔍 Block ${payload.blockData.number}: ${payload.poolIds.size} events (+${deltaMs}ms)`);
 
-  private async processPoolEvents(events: PoolEvent[]): Promise<void> {
-    if (!this.enabled) {
-      this.logger.warn('⚠️  Service not enabled yet');
-      return;
-    }
+    if (!this.enabled) return this.logger.warn('⚠️  Service not enabled yet');
 
     try {
       // 1. Extract updated pools
-      const updatedPools = this.getUpdatedPools(events);
+      const updatedPools = this.getUpdatedPools(payload.poolIds);
       if (updatedPools.length === 0) return;
 
       this.logger.info(`   📊 ${updatedPools.length} pools updated`);
@@ -168,7 +149,7 @@ export class ArbitrageOrchestrator {
 
       // 3. Discover candidate paths
       const candidatePaths = this.pathFinder.findCycles(affectedTokens);
-      this.logger.info(`   🔍 Found ${candidatePaths.length} candidate paths (block:${events[0].meta.blockNumber})`);
+      this.logger.info(`   🔍 Found ${candidatePaths.length} candidate paths (block:${payload.blockData.number})`);
 
       if (candidatePaths.length === 0) return;
 
@@ -191,19 +172,21 @@ export class ArbitrageOrchestrator {
       }
     } catch (error) {
       this.logger.error('❌ Error processing pool events:', { error });
+    } finally {
+      const duration = Date.now() - startTime;
+      // this.updateExecutionTimeStats(duration);
+      this.logger.info(`⏱️  Execution time ${duration}ms`);
     }
   }
 
-  private getUpdatedPools(events: PoolEvent[]) {
-    const pools = new Map();
-
-    for (const event of events) {
-      const poolId = event.poolId;
-      const pool = this.dexManager.getPoolState(poolId);
-      if (pool && !pools.has(poolId)) pools.set(poolId, pool);
+  private getUpdatedPools(poolIds: Set<string>) {
+    const pools: DexPoolState[] = [];
+    for (const id of poolIds) {
+      const pool = this.dexManager.getPoolState(id);
+      if (pool) pools.push(pool);
     }
 
-    return Array.from(pools.values());
+    return pools;
   }
 
   private async evaluatePathsConcurrently(paths: ArbitragePath[], batchSize: number): Promise<ArbitrageOpportunity[]> {

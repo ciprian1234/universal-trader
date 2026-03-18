@@ -10,6 +10,10 @@
 - for the other use full liquidity ranges
 - add GasUsage/GasCostUSD per Edge in LiquidityGraph? => if gasCostUSD > grossProfitUSD && TokenOut in preferredBorrowTokens => exit
 
+## Liquidity graph
+
+Expand: add gas cost USD/ gasUsage per edge?
+
 ## Upgrade arbitrage contract
 
 - upgrade arbitrage contract to execute swaps without knowing router address (only dex protocol)

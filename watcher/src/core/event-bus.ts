@@ -27,10 +27,6 @@ export class EventBus extends EventEmitter {
 
   // ── Emission ──
 
-  emitNewBlock(block: BlockEntry): void {
-    this.emit('newBlock', block);
-  }
-
   // emitArbitrageOpportunity(opportunity: ArbitrageOpportunity): void {
   //   this.emit('arbitrage-opportunity', opportunity);
   // }
@@ -40,27 +36,6 @@ export class EventBus extends EventEmitter {
   }
 
   // ── Subscriptions (return unsubscribe fn) ──
-
-  onNewBlock(cb: (block: BlockEntry) => void): () => void {
-    this.on('newBlock', cb);
-    return () => this.off('newBlock', cb);
-  }
-
-  // onPoolUpdate(cb: (info: { current: PoolState; previous?: PoolState }) => void): () => void {
-  //   this.on('pool-update', cb);
-  //   return () => this.off('pool-update', cb);
-  // }
-
-  // onPoolEventsBatch(cb: (data: { chainId: number; events: PoolEvent[] }) => void): () => void {
-  //   this.on('poolEventsBatch', cb);
-  //   return () => this.off('poolEventsBatch', cb);
-  // }
-
-  // onArbitrageOpportunity(cb: (opp: ArbitrageOpportunity) => void): () => void {
-  //   this.on('arbitrage-opportunity', cb);
-  //   return () => this.off('arbitrage-opportunity', cb);
-  // }
-
   onAppEvent(cb: (event: { name: string; data?: unknown }) => void): () => void {
     this.on('app-event', cb);
     return () => this.off('app-event', cb);

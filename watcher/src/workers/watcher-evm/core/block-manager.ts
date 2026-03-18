@@ -34,7 +34,6 @@ export class BlockManager {
   private readonly blockchain: Blockchain;
   private readonly eventBus: EventBus;
   private readonly dexManager: DexManager;
-  private poolAddressesSet: Set<string> = new Set();
 
   // Configuration
   private readonly BLOCK_EVENT_TIMEOUT = 50; // Wait 50ms for all events from a block (with debounce)
@@ -139,7 +138,7 @@ export class BlockManager {
         }
 
         // if we reach here it means that this new block its mined in sequence
-        this.eventBus.emitNewBlock({ number: newBlockNumber, receivedTimestamp: Date.now() });
+        this.eventBus.emitNewBlock(this.currentBlock);
       } catch (error) {
         this.logger.error(`❌ Error processing new block ${newBlockNumber}:`, error);
         // Curenltly only gas manager listens to block events => not a big isssue if block processing fails
@@ -153,15 +152,12 @@ export class BlockManager {
    */
   listenPoolEvents(): void {
     // const poolAddresses = this.dexManager.getPoolAddresses();
-    // if (poolAddresses.length === 0) {
-    //   this.logger.error('❌ No pools to monitor');
-    //   return;
-    // }
-    // this.poolAddressesSet = new Set(poolAddresses.map((a) => a.toLowerCase()));
+    // if (poolAddresses.length === 0) return this.logger.error('❌ No pools to monitor');
+    // this.logger.info(`Setting up event filter for ${poolAddresses.length} pools...`);
 
     // Create single filter for ALL pool addresses and ALL event types
     this.eventFilter = {
-      // address: poolAddresses, // POST_MVP consider dynamic subscription management
+      // address: poolAddresses, // TEMP - restrict discovery
       topics: [
         [
           this.EVENT_TOPICS.V2_SYNC,
@@ -242,12 +238,12 @@ export class BlockManager {
       return; // nothing to process
     }
 
-    // make a copy of the buffer
-    const events = [...this.eventBuffer];
-    this.eventBuffer = []; // clear buffer
+    // Extract unique poolIds from buffered pool events
+    const poolIds = new Set<string>();
+    for (const event of this.eventBuffer) poolIds.add(event.poolId);
+    this.eventBuffer = []; // clear buffered pool events
 
-    // this.eventBus.emitPoolEventsBatch({ events });
-
+    this.eventBus.emitPoolsBatchEvent({ blockData: this.currentBlock, poolIds });
     this.eventsProcessingTimer = null;
   }
 

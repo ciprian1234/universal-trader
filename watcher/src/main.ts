@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   }
 
   // === 5. Wire up EventBus → WebSocket broadcast ===
-  // eventBus.on('pool-update', (pool) => {
+  // eventBus.onPoolStateUpdate('pool-update', (pool) => {
   //   broadcastEvent('pool-update', {
   //     address: pool.address,
   //     chainId: pool.chainId,
@@ -53,11 +53,11 @@ async function main(): Promise<void> {
   //   });
   // });
 
-  // eventBus.on('newBlock', (block) => {
+  // eventBus.onNewBlock('new-block', (block) => {
   //   broadcastEvent('new-block', block);
   // });
 
-  // eventBus.on('arbitrage-opportunity', (opp) => {
+  // eventBus.onArbitrageOpportunity('arbitrage-opportunity', (opp) => {
   //   broadcastEvent('arbitrage-opportunity', opp);
   //   log.info(`💰 Opportunity: ${opp.profitUSD.toFixed(2)} USD on chain ${opp.chainId}`);
   // });

@@ -50,6 +50,7 @@ export const ChainConfigSchema = PlatformConfigSchema.extend({
   // Tokens configuration
   nativeToken: z.string(),
   wrappedNativeToken: z.string(),
+  wrappedNativeTokenAddress: z.string().length(42),
   stablecoinTokens: z.array(z.string()), // List of stablecoin symbols, e.g. ['USDC', 'DAI']
   discoveryTokens: z.array(z.string()), // List of token symbols used for pair discovery, e.g. ['WETH', 'USDC']
   priceAnchorTokens: z.array(z.string()), // List of token symbols as USD price anchors for liquidity/profit calculatons

@@ -2,7 +2,7 @@
  * 📡 EVENT BUS: Central event coordination and arbitrage opportunity detection
  */
 import { EventEmitter } from 'events';
-import type { PoolEvent, ArbitrageOpportunity } from './interfaces';
+import type { ArbitrageOpportunity } from './interfaces';
 import type { BlockEntry } from './block-manager';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
@@ -10,10 +10,21 @@ import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 // ================================================================================================
 // EVENT TYPES
 // ================================================================================================
-export type PoolStateEvent = {
+
+export interface ApplicationEventPayload {
+  name: string;
+  data?: any;
+}
+
+export interface PoolStateUpsertEventPayload {
   pool: DexPoolState;
   previousState?: DexPoolState; // only available for 'update' actions
-};
+}
+
+export interface PoolsBatchEventPayload {
+  blockData: BlockEntry;
+  poolIds: Set<string>; // list of unique pool IDs that had events in this block
+}
 
 // ================================================================================================
 // EVENT BUS CLASS
@@ -37,39 +48,39 @@ export class EventBus extends EventEmitter {
   // EVENT EMISSION
   // ================================================================================================
 
-  emitApplicationEvent(event: { name: string; data?: any }): void {
-    this.emit('application-event', event);
+  emitApplicationEvent(payload: ApplicationEventPayload): void {
+    this.emit('application-event', payload);
   }
 
-  emitNewBlock(blockEntry: BlockEntry): void {
-    this.emit('newBlock', blockEntry);
+  emitNewBlock(payload: BlockEntry): void {
+    this.emit('new-block', payload);
   }
 
-  emitTokenRegistered(data: TokenOnChain): void {
-    this.emit('token-registered', data);
+  emitTokenRegistered(payload: TokenOnChain): void {
+    this.emit('token-registered', payload);
   }
 
-  emitTokenPairRegistered(data: TokenPairOnChain): void {
-    this.emit('token-pair-registered', data);
+  emitTokenPairRegistered(payload: TokenPairOnChain): void {
+    this.emit('token-pair-registered', payload);
   }
 
-  emitPoolEventsBatch(data: { events: PoolEvent[] }): void {
-    this.emit('poolEventsBatch', data);
+  emitPoolStateUpsert(payload: PoolStateUpsertEventPayload): void {
+    this.emit('pool-state-upsert', payload);
   }
 
-  emitPoolStateEvent(data: PoolStateEvent): void {
-    this.emit('pool-state-event', data);
+  emitPoolsBatchEvent(payload: PoolsBatchEventPayload): void {
+    this.emit('pools-batch-event', payload);
   }
 
   /**
    * 🎯 EMIT ARBITRAGE OPPORTUNITY: Opportunity emission with filtering
    */
-  emitArbitrageOpportunity(opportunity: ArbitrageOpportunity): void {
+  emitArbitrageOpportunity(payload: ArbitrageOpportunity): void {
     // Check for duplicates
-    // const opportunityKey = this.generateOpportunityKey(opportunity);
+    // const opportunityKey = this.generateOpportunityKey(payload);
     // const lastEmitted = this.recentOpportunities.get(opportunityKey);
     // if (lastEmitted && Date.now() - lastEmitted < this.config.dedupTimeWindow) {
-    //   this.logger.warn(`⚠️  [EventBus] Skipping duplicate opportunity: ${opportunity.id}`);
+    //   this.logger.warn(`⚠️  [EventBus] Skipping duplicate opportunity: ${payload.id}`);
     //   return; // Skip duplicate
     // }
 
@@ -77,46 +88,46 @@ export class EventBus extends EventEmitter {
     // this.recentOpportunities.set(opportunityKey, Date.now());
 
     // Emit the opportunity
-    this.emit('arbitrage-opportunity', opportunity);
+    this.emit('arbitrage-opportunity', payload);
   }
 
   // ================================================================================================
   // EVENT SUBSCRIPTION HELPERS
   // ================================================================================================
 
-  onApplicationEvent(callback: (event: { name: string; data: any }) => void): () => void {
+  onApplicationEvent(callback: (payload: ApplicationEventPayload) => void): () => void {
     this.on('application-event', callback);
     return () => this.off('application-event', callback); // Return unsubscribe function
   }
 
-  onNewBlock(callback: (data: BlockEntry) => void): () => void {
-    this.on('newBlock', callback);
-    return () => this.off('newBlock', callback); // Return unsubscribe function
+  onNewBlock(callback: (payload: BlockEntry) => void): () => void {
+    this.on('new-block', callback);
+    return () => this.off('new-block', callback); // Return unsubscribe function
   }
 
-  onTokenRegistered(callback: (data: TokenOnChain) => void): () => void {
+  onTokenRegistered(callback: (payload: TokenOnChain) => void): () => void {
     this.on('token-registered', callback);
     return () => this.off('token-registered', callback); // Return unsubscribe function
   }
 
-  onTokenPairRegistered(callback: (data: TokenPairOnChain) => void): () => void {
+  onTokenPairRegistered(callback: (payload: TokenPairOnChain) => void): () => void {
     this.on('token-pair-registered', callback);
     return () => this.off('token-pair-registered', callback); // Return unsubscribe function
   }
 
-  onPoolEventsBatch(callback: (data: { blockData: BlockEntry; events: PoolEvent[] }) => void): () => void {
-    this.on('poolEventsBatch', callback);
-    return () => this.off('poolEventsBatch', callback); // Return unsubscribe function
-  }
-
-  onArbitrageOpportunity(callback: (opportunity: ArbitrageOpportunity) => void): () => void {
+  onArbitrageOpportunity(callback: (payload: ArbitrageOpportunity) => void): () => void {
     this.on('arbitrage-opportunity', callback);
     return () => this.off('arbitrage-opportunity', callback); // Return unsubscribe function
   }
 
-  onPoolStateEvent(callback: (event: PoolStateEvent) => void): () => void {
-    this.on('pool-state-event', callback);
-    return () => this.off('pool-state-event', callback); // Return unsubscribe function
+  onPoolStateUpsert(callback: (payload: PoolStateUpsertEventPayload) => void): () => void {
+    this.on('pool-state-upsert', callback);
+    return () => this.off('pool-state-upsert', callback); // Return unsubscribe function
+  }
+
+  onPoolsBatchEvent(callback: (payload: PoolsBatchEventPayload) => void): () => void {
+    this.on('pools-batch-event', callback);
+    return () => this.off('pools-batch-event', callback); // Return unsubscribe function
   }
 
   // ================================================================================================

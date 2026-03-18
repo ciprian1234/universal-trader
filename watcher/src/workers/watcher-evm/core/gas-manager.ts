@@ -1,6 +1,5 @@
 import { ethers } from 'ethers';
 import type { ArbitrageOpportunity } from './interfaces';
-import { EventBus } from './event-bus';
 import { Blockchain } from './blockchain';
 import { createLogger, type Logger } from '@/utils';
 import { WalletManager } from './wallet-manager';
@@ -9,15 +8,12 @@ import type { PriceOracle } from './price-oracle';
 import type { DexProtocol } from '@/shared/data-model/layer1';
 import type { TokenManager } from './token-manager';
 import type { TokenOnChain } from '@/shared/data-model/token';
-
-// const { WRAPPED_NATIVE_TOKEN_ADDRESS, MIN_PRIORITY_FEE, MAX_PRIORITY_FEE } = CONFIG;
+import type { BlockEntry } from './block-manager';
 
 type GasManagerInput = {
   chainConfig: ChainConfig;
   blockchain: Blockchain;
-  eventBus: EventBus;
   walletManager: WalletManager;
-  tokenManager: TokenManager;
   priceOracle: PriceOracle;
 };
 
@@ -25,12 +21,10 @@ export class GasManager {
   private readonly logger: Logger;
   private readonly chainConfig: ChainConfig;
   private readonly blockchain: Blockchain;
-  private readonly eventBus: EventBus;
   private readonly walletManager: WalletManager;
-  private readonly tokenManager: TokenManager;
   private readonly priceOracle: PriceOracle;
 
-  private readonly WRAPPED_NATIVE_TOKEN: TokenOnChain; // e.g. WETH, WMATIC - used for price reference and gas cost calculations
+  private readonly WRAPPED_NATIVE_TOKEN_ADDRESS: string;
   private readonly MIN_PRIORITY_FEE: bigint;
   private readonly MAX_PRIORITY_FEE: bigint;
 
@@ -63,32 +57,29 @@ export class GasManager {
     this.logger = createLogger(`[${input.chainConfig.name}.GasManager]`); // nice emoji ⛽
     this.chainConfig = input.chainConfig;
     this.blockchain = input.blockchain;
-    this.eventBus = input.eventBus;
     this.walletManager = input.walletManager;
-    this.tokenManager = input.tokenManager;
     this.priceOracle = input.priceOracle;
 
     // get wrapped native token
-    this.WRAPPED_NATIVE_TOKEN = this.tokenManager.getTokenBySymbol(this.chainConfig.wrappedNativeToken)!;
+    this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress.toLowerCase();
     this.MIN_PRIORITY_FEE = this.chainConfig.minPriorityFee;
     this.MAX_PRIORITY_FEE = this.chainConfig.maxPriorityFee;
-
-    this.eventBus.onNewBlock(async ({ number, receivedTimestamp }) => {
-      if (this.blockCounter++ % this.chainConfig.gasDataFetchInterval !== 0) return; // Fetch Block data every X blocks
-      const data = await this.blockchain.getBlock(number); // only fetch once per x events TBD
-      this.baseFeePerGas = data!.baseFeePerGas!;
-      const baseFeePerGasFormatted = this.formatGwei(data!.baseFeePerGas!);
-      const gasUsagePercent = ((Number(data!.gasUsed) / Number(data!.gasLimit)) * 100).toFixed(2);
-      const deltaReceived = receivedTimestamp - data!.timestamp * 1000;
-      const deltaProcessed = Date.now() - receivedTimestamp;
-      this.logger.info(
-        `⛽ Block ${number} (mined ${deltaReceived}ms ago) - gasUsed: ${gasUsagePercent}%  baseFeePerGas: ${baseFeePerGasFormatted} (+${deltaProcessed}ms)`,
-      );
-    });
   }
 
-  getBaseFeePerGas(): bigint {
-    return this.baseFeePerGas;
+  // ================================================================================================
+  // EVENT HANDLER
+  // ================================================================================================
+  async handleNewBlockEvent({ number, receivedTimestamp }: BlockEntry) {
+    if (this.blockCounter++ % this.chainConfig.gasDataFetchInterval !== 0) return; // Fetch Block data every X blocks
+    const data = await this.blockchain.getBlock(number); // only fetch once per x events TBD
+    this.baseFeePerGas = data!.baseFeePerGas!;
+    const baseFeePerGasFormatted = this.formatGwei(data!.baseFeePerGas!);
+    const gasUsagePercent = ((Number(data!.gasUsed) / Number(data!.gasLimit)) * 100).toFixed(2);
+    const deltaReceived = receivedTimestamp - data!.timestamp * 1000;
+    const deltaProcessed = Date.now() - receivedTimestamp;
+    this.logger.info(
+      `⛽ Block ${number} (mined ${deltaReceived}ms ago) - gasUsed: ${gasUsagePercent}%  baseFeePerGas: ${baseFeePerGasFormatted} (+${deltaProcessed}ms)`,
+    );
   }
 
   // ================================================================================================
@@ -107,6 +98,10 @@ export class GasManager {
       gasTxSettings,
     };
     opportunity.netProfitUSD = opportunity.grossProfitUSD - gasData.totalGasCostUSD;
+  }
+
+  getBaseFeePerGas(): bigint {
+    return this.baseFeePerGas;
   }
 
   // ================================================================================================
@@ -147,7 +142,7 @@ export class GasManager {
    */
   private getGasAnalysis(opportunity: ArbitrageOpportunity, gasEstimate: bigint) {
     const baseFeePerGas = this.baseFeePerGas;
-    const nativeTokenPriceUSD = this.priceOracle.getPriceUSD(this.WRAPPED_NATIVE_TOKEN.address)!;
+    const nativeTokenPriceUSD = this.priceOracle.getPriceUSD(this.WRAPPED_NATIVE_TOKEN_ADDRESS)!;
 
     // THE CEILING OF HOW MUCH WE CAN AFFORD PAY FOR TOTAL GAS BASED ON GROSS PROFIT
     const gasBudgetETH = opportunity.grossProfitUSD / nativeTokenPriceUSD; // we can pay x ETH for total gas (resulting => 0 profit)

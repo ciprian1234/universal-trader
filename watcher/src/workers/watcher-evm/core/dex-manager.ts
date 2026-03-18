@@ -94,7 +94,7 @@ export class DexManager {
 
     this.logger.info(printPoolInEvent(pool, event));
     this.pools.set(pool.id, pool);
-    this.eventBus.emitPoolStateEvent({ pool }); // EMIT: pool-state-event
+    this.eventBus.emitPoolStateUpsert({ pool }); // EMIT: pool-state-upsert
   }
 
   //
@@ -111,7 +111,7 @@ export class DexManager {
       }
 
       this.pools.set(pool.id, pool);
-      this.eventBus.emitPoolStateEvent({ pool }); // EMIT: pool-state-event
+      this.eventBus.emitPoolStateUpsert({ pool }); // EMIT: pool-state-upsert
     }
 
     this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${foundPools.length} new pools`);

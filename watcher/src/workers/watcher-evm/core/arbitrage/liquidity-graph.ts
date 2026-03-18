@@ -7,7 +7,6 @@ import type { DexPoolState } from '@/shared/data-model/layer1';
 
 export type LiquidityGraphConfig = {
   minLiquidityUSD: number;
-  maxEdgesPerToken: number;
 };
 
 export interface LiquidityGraphInput {
@@ -160,11 +159,6 @@ export class LiquidityGraph {
       // Keep sorted by liquidity (descending)
       edgeList.push(edge);
       edgeList.sort((a, b) => b.liquidityUSD - a.liquidityUSD);
-
-      // Limit edges per token
-      if (edgeList.length > this.config.maxEdgesPerToken) {
-        edgeList.length = this.config.maxEdgesPerToken;
-      }
     }
   }
 

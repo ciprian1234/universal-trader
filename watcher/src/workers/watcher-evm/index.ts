@@ -44,14 +44,25 @@ class EVMWorker extends BaseWorker {
   }
 
   setupEventPipeline() {
-    // -- 1. "token-registered" ---------------------------------------------
+    // "application-event" routing
+    this.eventBus.onApplicationEvent((payload) => {
+      this.arbitrageOrchestrator.handleApplicationEvent(payload);
+    });
+
+    // "new-block" routing => update GasManager
+    this.eventBus.onNewBlock((payload) => {
+      console.log(`New block event received in worker: ${JSON.stringify(payload)}`);
+      this.gasManager.handleNewBlockEvent(payload);
+    });
+
+    // "token-registered" routing
     // For each new token: create trading pairs with DISCOVERY tokens and emit "token-pair-registered" events for those pairs
     this.eventBus.onTokenRegistered((token) => {
       this.logger.info(`✅ Registered token ${token.symbol} (addr: ${token.address}) (trusted: ${token.trusted})`);
       // this.sendEventMessage('token-registered', { token }); // send event to main thread
     });
 
-    // -- 2. "token-pair-registered" ----------------------------------------
+    // "token-pair-registered" routing
     // Only fired for meaningful pairs (preconfigured + anchor pairs)
     this.eventBus.onTokenPairRegistered((tokenPair) => {
       this.logger.info(`Token pair ${tokenPair.key} registered:`);
@@ -59,38 +70,25 @@ class EVMWorker extends BaseWorker {
       this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
     });
 
-    // -- 3. "pool-state-event" ---------------------------------------------
-    this.eventBus.onPoolStateEvent((event) => {
-      this.tokenPairManager.handlePoolStateEvent(event); // update token pair stats and trigger discovery if criteria met
+    // "pool-state-upsert" routing
+    this.eventBus.onPoolStateUpsert((payload) => {
+      this.tokenPairManager.handlePoolStateUpsertEvent(payload);
       // TODO: notify main thread about pool state update (after processing the event and updating the state)
       // TODO: notify liquidity graph to update
       // this.sendEventMessage('pool-update', { pool });
     });
 
-    // -- 4. "pool-events-batch" ---------------------------------------------
+    // "pool-events-batch" routing
     // send updated pools to main thread
-    this.eventBus.onPoolEventsBatch((data) => {
-      try {
-        // // events are already applied to poolStates by the time they are emitted => so send the updated pool states
-        // const updatedPoolStates = data.events
-        //   .map((event) => this.poolStatesManager.getPoolState(event.poolId))
-        //   .filter((state) => state !== null);
-        // this.sendEventMessage('pool-update-batch', {
-        //   blockData: data.blockData,
-        //   updatedPoolStates,
-        // });
-      } catch (error) {
-        this.logger.error(`Error in poolEventsBatch handler: ${error instanceof Error ? error.stack : String(error)}`);
-      }
-
-      // const updatedStates = data.events
-      //   .map((e) => this.poolStatesManager.getPoolState(e.poolId))
-      //   .filter(Boolean);
-
+    this.eventBus.onPoolsBatchEvent((payload) => {
+      this.arbitrageOrchestrator.handlePoolsBatchEvent(payload);
+      // // events are already applied to poolStates by the time they are emitted => so send the updated pool states
+      // const updatedPoolStates = payload.events
+      //   .map((event) => this.poolStatesManager.getPoolState(event.poolId))
+      //   .filter((state) => state !== null);
       // this.sendEventMessage('pool-update-batch', {
-      //   blockData: data.blockData,
-      //   updatedPoolStates: updatedStates,
-      //   prices: this.priceOracle.getSnapshotForPools(updatedStates),
+      //   blockData: payload.blockData,
+      //   updatedPoolStates,
       // });
     });
   }
@@ -107,12 +105,8 @@ class EVMWorker extends BaseWorker {
     // await this.db.reset(); // for testing only, reset db on startup
     await this.db.createTables();
 
-    // init event bus and setup event pipeline
-    this.eventBus = new EventBus();
-    this.setupEventPipeline();
-
-    // init blockchain
-    this.blockchain = new Blockchain({ chainConfig: this.chainConfig, cache: this.cache });
+    this.eventBus = new EventBus(); // create event bus
+    this.blockchain = new Blockchain({ chainConfig: this.chainConfig, cache: this.cache }); // create blockchain provider
 
     // create token manager
     this.tokenManager = new TokenManager({
@@ -121,14 +115,12 @@ class EVMWorker extends BaseWorker {
       eventBus: this.eventBus,
       db: this.db,
     });
-    await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
 
     // create price oracle
     this.priceOracle = new PriceOracle({
       chainConfig: this.chainConfig,
       tokenManager: this.tokenManager,
     });
-    await this.priceOracle.init(); // fetch initial anchor prices and start periodic updates
 
     // create dex registry and register adapters
     this.dexManager = new DexManager({
@@ -139,7 +131,6 @@ class EVMWorker extends BaseWorker {
       priceOracle: this.priceOracle,
       db: this.db,
     });
-    await this.dexManager.init(); // init contracts for dex venues
 
     // TokenPairManager handles token pair discovery and management based config and pool state updates
     this.tokenPairManager = new TokenPairManager({
@@ -149,8 +140,6 @@ class EVMWorker extends BaseWorker {
       tokenManager: this.tokenManager,
       dexManager: this.dexManager,
     });
-    // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens();
-    // this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
 
     // Initialize BlockManager
     this.blockManager = new BlockManager({
@@ -159,15 +148,12 @@ class EVMWorker extends BaseWorker {
       eventBus: this.eventBus,
       dexManager: this.dexManager,
     });
-    await this.blockManager.init();
 
     // Initialize GasManager
     this.gasManager = new GasManager({
       chainConfig: this.chainConfig,
       blockchain: this.blockchain,
-      eventBus: this.eventBus,
       walletManager: this.walletManager,
-      tokenManager: this.tokenManager,
       priceOracle: this.priceOracle,
     });
 
@@ -178,7 +164,6 @@ class EVMWorker extends BaseWorker {
       tokenManager: this.tokenManager,
       priceOracle: this.priceOracle,
     });
-    await this.walletManager.initAndValidateWallet();
 
     // initialize arbitrage orchestrator
     this.arbitrageOrchestrator = new ArbitrageOrchestrator({
@@ -191,10 +176,6 @@ class EVMWorker extends BaseWorker {
       priceOracle: this.priceOracle,
     });
 
-    // start listening for block and pool events
-    this.blockManager.listenBlockEvents();
-    // this.blockManager.listenPoolEvents();
-
     this.flashArbitrageHandler = new FlashArbitrageHandler({
       chainConfig: this.chainConfig,
       eventBus: this.eventBus,
@@ -205,8 +186,23 @@ class EVMWorker extends BaseWorker {
       dexManager: this.dexManager,
     });
 
-    // log monitoring
-    // this.logPeriodicStats();
+    // init
+    this.setupEventPipeline();
+    await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
+    await this.priceOracle.init(); // fetch initial anchor prices and start periodic updates
+    await this.dexManager.init(); // init contracts for dex venues
+
+    await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
+    this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
+
+    await this.blockManager.init();
+    await this.walletManager.initAndValidateWallet();
+
+    this.eventBus.emitApplicationEvent({ name: 'pool-states-updated' }); // enable arbitrage
+
+    // start listening for block and pool events
+    this.blockManager.listenBlockEvents();
+    this.blockManager.listenPoolEvents();
   }
 
   async stop() {
