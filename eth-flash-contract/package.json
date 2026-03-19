@@ -1,0 +1,33 @@
+{
+  "name": "arbitrage_contract",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "npx hardhat node --show-stack-traces",
+    "clean": "npx hardhat clean",
+    "compile": "npx hardhat compile",
+    "deploy-local": "npx hardhat run --network localhost scripts/deploy-local.ts",
+    "deploy-sepolia": "npx hardhat run --network sepolia scripts/deploy-local.ts",
+    "deploy-eth-mainnet": "npx hardhat run --network eth_mainnet scripts/deploy-local.ts",
+    "deploy-local-with-ignition-not-used": "npx hardhat ignition deploy ignition/modules/FlashArbitrage.js --network localhost",
+    "simulate-trade": "npx hardhat run scripts/simulate-trade.ts --network localhost"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.0.0",
+    "hardhat": "^2.25.0",
+    "ts-node": "^10.9.2"
+  },
+  "dependencies": {
+    "@balancer-labs/v2-interfaces": "^0.4.0",
+    "@nomicfoundation/hardhat-ethers": "^3.0.9",
+    "@openzeppelin/contracts": "^5.4.0",
+    "@uniswap/v2-periphery": "^1.1.0-beta.0",
+    "@uniswap/v3-periphery": "^1.4.4",
+    "dotenv": "^17.1.0",
+    "ethers": "^6.15.0"
+  }
+}
