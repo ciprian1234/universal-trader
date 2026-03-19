@@ -13,20 +13,25 @@ export const appConfig: AppConfig = {
 };
 
 function loadConfigs(enabledPlatforms: string[]): Record<string, PlatformConfig> {
-  const configs: Record<string, PlatformConfig> = {};
-  for (const platformName of enabledPlatforms) {
-    logger.info(`Loading config for platform: ${platformName}`);
-    const platformConfig = (platforms as any)[platformName];
-    if (!platformConfig) throw new Error(`Platform "${platformName}" is enabled but no but no config found!`);
-    // validate config data with zod
-    let parsedConfig: PlatformConfig;
-    if (platformConfig.platformType === 'chain') {
-      parsedConfig = ChainConfigSchema.parse(platformConfig);
-    } else {
-      parsedConfig = ExchangeConfigSchema.parse(platformConfig);
+  try {
+    const configs: Record<string, PlatformConfig> = {};
+    for (const platformName of enabledPlatforms) {
+      logger.info(`Loading config for platform: ${platformName}`);
+      const platformConfig = (platforms as any)[platformName];
+      if (!platformConfig) throw new Error(`Platform "${platformName}" is enabled but no but no config found!`);
+      // validate config data with zod
+      let parsedConfig: PlatformConfig;
+      if (platformConfig.platformType === 'chain') {
+        parsedConfig = ChainConfigSchema.parse(platformConfig);
+      } else {
+        parsedConfig = ExchangeConfigSchema.parse(platformConfig);
+      }
+      configs[platformName] = parsedConfig;
+      logger.info(`✅ Loaded config for platform: ${platformName}`);
     }
-    configs[platformName] = parsedConfig;
-    logger.info(`✅ Loaded config for platform: ${platformName}`);
+    return configs;
+  } catch (err) {
+    logger.error(`Error loading config: ${(err as Error).message}`);
+    process.exit(1);
   }
-  return configs;
 }
