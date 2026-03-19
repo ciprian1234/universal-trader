@@ -80,18 +80,16 @@ async function main() {
   console.log();
 
   // wrap eth first
-  // const tradeAmount = ethers.parseEther('0.1');
-  // const tradeAmount = ethers.parseEther('0.1');
-  // await wrapETH(signer, tradeAmount);
+  const tradeAmount = ethers.parseEther('1');
+  await wrapETH(signer, tradeAmount);
 
   // 4. WETH token → USDC (treating WETH as regular ERC-20)
-  // await executeUniswapV2Trade(signer, {
-  //   tokenIn: TOKENS.WETH, // ✅ WETH as ERC-20 token
-  //   tokenOut: TOKENS.USDC,
-  //   // amountIn: ethers.parseEther('0.0000001'), // 1 WETH
-  //   amountIn: tradeAmount,
-  //   slippage: 1,
-  // });
+  await executeUniswapV2Trade(signer, {
+    tokenIn: TOKENS.WETH, // ✅ WETH as ERC-20 token
+    tokenOut: TOKENS.USDC,
+    amountIn: tradeAmount,
+    slippage: 1,
+  });
 
   // 1. Native ETH → USDC on Uniswap V2
   // await executeUniswapV2Trade(signer, {
@@ -102,12 +100,12 @@ async function main() {
   // });
 
   // 2. USDC → WBTC on Uniswap V3
-  await executeUniswapV2Trade(signer, {
-    tokenIn: TOKENS.USDC,
-    tokenOut: TOKENS.WBTC,
-    amountIn: ethers.parseUnits('0.1', 6), // 0.1 USDC
-    slippage: 1,
-  });
+  // await executeUniswapV2Trade(signer, {
+  //   tokenIn: TOKENS.USDC,
+  //   tokenOut: TOKENS.WBTC,
+  //   amountIn: ethers.parseUnits('0.1', 6), // 0.1 USDC
+  //   slippage: 1,
+  // });
 
   // 3. WBTC → Native ETH on Uniswap V2
   // await executeUniswapV2Trade(signer, {
@@ -146,7 +144,16 @@ async function executeUniswapV2Trade(signer: any, params: V2TradeParams) {
     const tokenInInfo = isNativeETHIn ? { symbol: 'ETH', decimals: 18 } : await getTokenInfo(tokenIn, signer);
     const tokenOutInfo = isNativeETHOut ? { symbol: 'ETH', decimals: 18 } : await getTokenInfo(tokenOut, signer);
 
-    console.log(`📊 Trading: ${ethers.formatUnits(amountIn, tokenInInfo.decimals)} ${tokenInInfo.symbol} → ${tokenOutInfo.symbol}`);
+    // gas tx settings
+    const gasSettings: any = {
+      gasLimit: 300000,
+      maxFeePerGas: ethers.parseUnits('20', 'gwei'), // Set a high max fee to prioritize the transaction
+      maxPriorityFeePerGas: ethers.parseUnits('5', 'gwei'), // Set a high priority fee to incentivize miners
+    };
+
+    console.log(
+      `📊 Trading: ${ethers.formatUnits(amountIn, tokenInInfo.decimals)} ${tokenInInfo.symbol} → ${tokenOutInfo.symbol}`,
+    );
 
     // Get quote
     const amountsOut = await router.getAmountsOut(amountIn, path);
@@ -157,32 +164,14 @@ async function executeUniswapV2Trade(signer: any, params: V2TradeParams) {
     const amountOutMin = (expectedOut * BigInt(100 - slippage)) / BigInt(100);
 
     let tx;
-
     if (isNativeETHIn) {
-      // ✅ Native ETH → Token
-      console.log('🔄 Executing Native ETH → Token swap...');
-      tx = await router.swapExactETHForTokens(amountOutMin, path, signer.address, deadline, {
-        value: amountIn,
-        gasLimit: 300000,
-      });
+      tx = await router.swapExactETHForTokens(amountOutMin, path, signer.address, deadline, { value: amountIn, ...gasSettings });
     } else if (isNativeETHOut) {
-      // ✅ Token → Native ETH
-      console.log('🔓 Approving token spend...');
       await ensureApproval(tokenIn, DEX_ADDRESSES.UNISWAP_V2_ROUTER, amountIn, signer);
-
-      console.log('🔄 Executing Token → Native ETH swap...');
-      tx = await router.swapExactTokensForETH(amountIn, amountOutMin, path, signer.address, deadline, {
-        gasLimit: 300000,
-      });
+      tx = await router.swapExactTokensForETH(amountIn, amountOutMin, path, signer.address, deadline, gasSettings);
     } else {
-      // ✅ Token → Token (including WETH as regular ERC-20)
-      console.log('🔓 Approving token spend...');
       await ensureApproval(tokenIn, DEX_ADDRESSES.UNISWAP_V2_ROUTER, amountIn, signer);
-
-      console.log('🔄 Executing Token → Token swap...');
-      tx = await router.swapExactTokensForTokens(amountIn, amountOutMin, path, signer.address, deadline, {
-        gasLimit: 300000,
-      });
+      tx = await router.swapExactTokensForTokens(amountIn, amountOutMin, path, signer.address, deadline, gasSettings);
     }
 
     const receipt = await tx.wait();
@@ -347,7 +336,13 @@ async function wrapETH(signer: any, amount: bigint) {
 
     console.log(`🔄 Wrapping ${ethers.formatEther(amount)} ETH to WETH...`);
 
-    const tx = await wethContract.deposit({ value: amount, gasLimit: 100000 });
+    const tx = await wethContract.deposit({
+      value: amount,
+      gasLimit: 100000,
+      maxFeePerGas: ethers.parseUnits('2', 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits('1', 'gwei'),
+    });
+
     const receipt = await tx.wait();
 
     console.log(`✅ Wrap confirmed: ${receipt.hash}`);

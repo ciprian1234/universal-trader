@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "npx hardhat node --show-stack-traces",
-    "clean": "npx hardhat clean",
-    "compile": "npx hardhat compile",
-    "deploy-local": "npx hardhat run --network localhost scripts/deploy-local.ts",
-    "deploy-sepolia": "npx hardhat run --network sepolia scripts/deploy-local.ts",
-    "deploy-eth-mainnet": "npx hardhat run --network eth_mainnet scripts/deploy-local.ts",
-    "deploy-local-with-ignition-not-used": "npx hardhat ignition deploy ignition/modules/FlashArbitrage.js --network localhost",
-    "simulate-trade": "npx hardhat run scripts/simulate-trade.ts --network localhost"
+    "start": "bunx hardhat node --show-stack-traces",
+    "clean": "bunx hardhat clean",
+    "compile": "bunx hardhat compile",
+    "deploy-local": "bunx hardhat run --network localhost scripts/deploy-local.ts",
+    "deploy-sepolia": "bunx hardhat run --network sepolia scripts/deploy-local.ts",
+    "deploy-eth-mainnet": "bunx hardhat run --network eth_mainnet scripts/deploy-local.ts",
+    "deploy-local-with-ignition-not-used": "bunx hardhat ignition deploy ignition/modules/FlashArbitrage.js --network localhost",
+    "simulate-trade": "bunx hardhat run scripts/simulate-trade.ts --network localhost"
   },
   "keywords": [],
   "author": "",
