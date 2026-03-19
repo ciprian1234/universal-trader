@@ -100,35 +100,38 @@ export class FlashArbitrageHandler {
       },
     });
 
-    // ================ Setup event handlers ================
-    // 1. on block event - check pending executions
-    this.blockEventUnsubscribe = this.eventBus.onNewBlock(async (block) => {
+    // Log Flashbots status
+    if (this.USE_FLASHBOTS && this.flashbotsService) {
+      this.logger.info('Flashbots integration enabled');
+      this.logger.info('✅ Using PARALLEL EXECUTION STRATEGY: executing opportunities immediately');
+    } else {
+      this.logger.warn('Flashbots integration disabled (using standard transactions)');
+      this.logger.info('✅ Using SAFE STRATEGY: queued opportunity execution (one by one) to avoid nonce conflicts');
+    }
+  }
+
+  // ================================================================================================
+  // EVENT HANDLER
+  // ================================================================================================
+
+  // Subscribe to new blocks to monitor pending executions
+  subscribeToNewBlocksEvents() {
+    if (this.blockEventUnsubscribe) return this.logger.warn('⚠️ Already subscribed to new block events, skipping...');
+
+    this.logger.info(`✅ Subscribed to new blocks events for monitoring pending execution(s)`);
+    this.blockEventUnsubscribe = this.eventBus.onNewBlock((block) => {
       if (this.pendingExecutions.size === 0) return;
       this.logger.info(`🔍 NewBlock ${block.number} - Monitoring ${this.pendingExecutions.size} pending execution(s)`);
-
-      // put 1 second delay to allow tx to be mined (only needed on local development)
-      // await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      await this.checkPendingExecutions(block);
-      // TDO: check also opportunity queue?
+      this.checkPendingExecutions(block).catch((error) => {
+        this.logger.error(`❌ Check pending execution failed:`, error.message);
+      });
+      // TODO: check also opportunity queue?
     });
+  }
 
-    // 2. on arbitrage opportunity event - handle opportunity execution
-    const PARALLEL_EXECUTION = process.env.USE_FLASHBOTS; // if using flashbots, we can do parallel execution
-    if (PARALLEL_EXECUTION) {
-      this.logger.info(
-        '✅ Using PARALLEL EXECUTION STRATEGY: executing opportunities immediately (may cause nonce conflicts on L2s)',
-      );
-      this.eventBus.onArbitrageOpportunity((opportunity) => this.handleParallelExecution(opportunity));
-    } else {
-      this.logger.info('✅ Using SAFE STRATEGY: queued opportunity execution (one by one) to avoid nonce conflicts');
-      this.eventBus.onArbitrageOpportunity((opportunity) => this.handleSequentialExecution(opportunity));
-    }
-    this.logger.info("✅ Opportunity handler set (on 'arbitrage-opportunity' event => trigger executeArbitrage)");
-
-    // Log Flashbots status
-    if (process.env.USE_FLASHBOTS && this.flashbotsService) this.logger.info('✅ Flashbots integration enabled');
-    else this.logger.warn('⚠️  Flashbots integration disabled (using standard transactions)');
+  handleNewArbitrageOpportunityEvent(opportunity: ArbitrageOpportunity) {
+    if (this.USE_FLASHBOTS) this.handleParallelExecution(opportunity);
+    else this.handleSequentialExecution(opportunity);
   }
 
   /**
@@ -273,6 +276,13 @@ export class FlashArbitrageHandler {
         // this.processOpportunityQueue();
       }
     }
+
+    // unsubscribe from block events if no more pending executions to monitor
+    if (this.pendingExecutions.size === 0 && this.blockEventUnsubscribe) {
+      this.logger.info('✅ No more pending executions, unsubscribing from new block events');
+      this.blockEventUnsubscribe();
+      this.blockEventUnsubscribe = undefined;
+    }
   }
 
   /**
@@ -302,6 +312,7 @@ export class FlashArbitrageHandler {
       if (!response.tx) throw new Error('Failed to send transaction');
       const nextBlockNumber = this.blockManager.getCurrentBlockNumber() + 1;
       this.logger.info(`🚀 Transaction sent, tx hash: ${response.tx.hash} (expected inclusion block: ${nextBlockNumber})`);
+
       // store execution in pending executions
       this.pendingExecutions.set(opportunity.id, {
         opportunity,
@@ -311,6 +322,9 @@ export class FlashArbitrageHandler {
         submittedAt: Date.now(),
         submittedAtBlock: nextBlockNumber,
       });
+
+      // subscribe to new blocks to monitor pending execution (if not already subscribed)
+      this.subscribeToNewBlocksEvents();
 
       // store execution in database
       await this.db.saveExecution({

@@ -90,6 +90,12 @@ class EVMWorker extends BaseWorker {
       //   updatedPoolStates,
       // });
     });
+
+    // new "arbitrage-opportunity" routing
+    this.eventBus.onArbitrageOpportunity((payload) => {
+      this.flashArbitrageHandler.handleNewArbitrageOpportunityEvent(payload);
+      // this.sendEventMessage('arbitrage-opportunity', { opportunity: payload }); // send event to main thread
+    });
   }
 
   async init(chainConfig: ChainConfig) {
