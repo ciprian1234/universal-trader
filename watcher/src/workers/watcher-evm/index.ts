@@ -148,20 +148,20 @@ class EVMWorker extends BaseWorker {
       dexManager: this.dexManager,
     });
 
-    // Initialize GasManager
-    this.gasManager = new GasManager({
-      chainConfig: this.chainConfig,
-      blockchain: this.blockchain,
-      walletManager: this.walletManager,
-      priceOracle: this.priceOracle,
-    });
-
     // Initialize wallet manager
     this.walletManager = new WalletManager({
       chainConfig: this.chainConfig,
       blockchain: this.blockchain,
       tokenManager: this.tokenManager,
       priceOracle: this.priceOracle,
+    });
+
+    // Initialize GasManager
+    this.gasManager = new GasManager({
+      chainConfig: this.chainConfig,
+      blockchain: this.blockchain,
+      priceOracle: this.priceOracle,
+      walletManager: this.walletManager,
     });
 
     // initialize arbitrage orchestrator
@@ -181,8 +181,8 @@ class EVMWorker extends BaseWorker {
       db: this.db,
       blockchain: this.blockchain,
       blockManager: this.blockManager,
-      walletManager: this.walletManager,
       dexManager: this.dexManager,
+      walletManager: this.walletManager,
     });
 
     // init

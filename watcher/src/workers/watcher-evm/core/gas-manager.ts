@@ -6,8 +6,6 @@ import { WalletManager } from './wallet-manager';
 import type { ChainConfig } from '@/config/models';
 import type { PriceOracle } from './price-oracle';
 import type { DexProtocol } from '@/shared/data-model/layer1';
-import type { TokenManager } from './token-manager';
-import type { TokenOnChain } from '@/shared/data-model/token';
 import type { BlockEntry } from './block-manager';
 
 type GasManagerInput = {
