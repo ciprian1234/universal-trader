@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import { createLogger, type Logger } from '@/utils';
 import type { ArbitrageOpportunity } from '../interfaces';
-import { FLASH_ARBITRAGE_ABI, DexTypeEnum, type Trade, type SwapStep } from './flash-arbitrage-config';
+import { DexProtocolEnum, type Trade, type SwapStepOnContract } from './flash-arbitrage-config';
 import { EventBus } from '../event-bus';
 import type { ChainConfig } from '@/config/models';
 import type { Blockchain } from '../blockchain';
@@ -12,6 +12,7 @@ import type { FlashbotsTransactionResponse } from '@flashbots/ethers-provider-bu
 import type { WorkerDb } from '../../db';
 import type { DexVenueName } from '@/shared/data-model/layer1';
 import type { DexManager } from '../dex-manager';
+import { FLASH_ARBITRAGE_ABI } from './flash-arbitrage-contract-abi';
 
 export type FlashArbitrageHandlerInput = {
   chainConfig: ChainConfig;
@@ -515,16 +516,17 @@ export class FlashArbitrageHandler {
    */
   private opportunityToTrade(opportunity: ArbitrageOpportunity): Trade {
     // go trough each swap step and build Trade struct
-    const swaps: SwapStep[] = [];
+    const swaps: SwapStepOnContract[] = [];
     for (const step of opportunity.steps) {
       swaps.push({
-        dexType: FlashArbitrageHandler.getDexTypeEnumValueFromPool(step.pool.venue.name),
-        router: this.dexManager.getVenueConfig(step.pool.venue.name).routerAddress,
+        dexProtocol: FlashArbitrageHandler.getDexTypeEnumValueFromPool(step.pool.venue.name),
+        poolAddress: step.pool.address,
         tokenIn: step.tokenIn.address,
         tokenOut: step.tokenOut.address,
         amountIn: step.amountIn,
         amountOutMin: 0n, // don't care about min output on entry swap
-        fee: step.pool.feeBps || 0,
+        feeBps: step.pool.feeBps,
+        zeroForOne: step.pool.tokenPair.token0.address === step.tokenIn.address, // determine swap direction based on tokenIn
 
         // extra params for other DEX protocols (not used for now => set to 0 or empty)
         poolId: '0x0000000000000000000000000000000000000000000000000000000000000000',
@@ -545,18 +547,18 @@ export class FlashArbitrageHandler {
   /**
    * Map interface DexType to contract enum
    */
-  static getDexTypeEnumValueFromPool(venue: DexVenueName): number {
+  static getDexTypeEnumValueFromPool(venue: DexVenueName): DexProtocolEnum {
     switch (venue) {
       case 'uniswap-v2':
-        return DexTypeEnum.UNISWAP_V2;
+        return DexProtocolEnum.UNISWAP_V2;
       case 'uniswap-v3':
-        return DexTypeEnum.UNISWAP_V3;
+        return DexProtocolEnum.UNISWAP_V3;
       case 'uniswap-v4':
-        return DexTypeEnum.UNISWAP_V4;
+        return DexProtocolEnum.UNISWAP_V4;
       // case 'curvestable':
-      //   return DexTypeEnum.CURVE;
+      //   return DexProtocolEnum.CURVE;
       // case 'balancerweighted':
-      //   return DexTypeEnum.BALANCER;
+      //   return DexProtocolEnum.BALANCER;
       default:
         throw new Error(`Unsupported DEX type: ${venue}`);
     }

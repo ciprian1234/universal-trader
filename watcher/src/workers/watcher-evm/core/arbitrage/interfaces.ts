@@ -1,5 +1,5 @@
 import type { DexPoolState } from '@/shared/data-model/layer1';
-import type { ArbitrageOpportunity, SwapStep } from '../interfaces';
+import type { SwapStep } from '../interfaces';
 import type { TokenOnChain } from '@/shared/data-model/token';
 
 /**
