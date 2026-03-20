@@ -80,7 +80,7 @@ async function main() {
   console.log();
 
   // wrap eth first
-  const tradeAmount = ethers.parseEther('1');
+  const tradeAmount = ethers.parseEther('10');
   await wrapETH(signer, tradeAmount);
 
   // 4. WETH token → USDC (treating WETH as regular ERC-20)

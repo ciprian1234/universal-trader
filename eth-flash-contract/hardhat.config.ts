@@ -21,8 +21,8 @@ const config: HardhatUserConfig = {
         blockNumber: 24688920,
       },
       mining: {
-        auto: true,
-        interval: 0,
+        auto: false,
+        interval: 1000, // mine a block every second (note: empty blocks are mined as well)
       },
       loggingEnabled: true,
       allowUnlimitedContractSize: true,

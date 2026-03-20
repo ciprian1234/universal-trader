@@ -108,9 +108,10 @@ export class WorkerDb {
 
         "steps"             JSONB     NOT NULL,
         "gasAnalysis"       JSONB     NOT NULL,
-        "executions"        JSONB     NOT NULL,
+        "logs"              JSONB     NOT NULL DEFAULT '[]',
         
-        "blockNumber"       INTEGER   NOT NULL,
+        "foundAtBlock"      INTEGER   NOT NULL,
+        "confirmedAtBlock"  INTEGER   DEFAULT NULL,
         "createdAt"         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         "updatedAt"         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -228,7 +229,7 @@ export class WorkerDb {
       INSERT INTO arbitrage_opportunities (
         "id", "chainId", "status", 
         "grossProfitToken", "grossProfitUSD", "netProfitUSD", "borrowToken", "borrowAmount", 
-        "steps", "gasAnalysis", "executions", "blockNumber"
+        "steps", "gasAnalysis", "foundAtBlock"
       )
       VALUES (
         ${opportunity.id},
@@ -243,17 +244,31 @@ export class WorkerDb {
 
         ${serializeObject(opportunity.steps)},
         ${serializeObject(opportunity.gasAnalysis)},
-        ${serializeObject(opportunity.executions)},
         ${opportunity.foundAtBlock || 0}
       )
       ON CONFLICT ("id") DO UPDATE SET
         "status" = EXCLUDED."status",
         "netProfitUSD" = EXCLUDED."netProfitUSD",
-        "steps" = EXCLUDED."steps",
         "gasAnalysis" = EXCLUDED."gasAnalysis",
-        "executions" = EXCLUDED."executions",
-        "blockNumber" = EXCLUDED."blockNumber",
+        "foundAtBlock" = EXCLUDED."foundAtBlock",
         "updatedAt" = CURRENT_TIMESTAMP
+    `;
+  }
+
+  async pushArbitrageLog(
+    opportunityId: string,
+    input: { logEntry: any; status: string; confirmedAtBlock?: number },
+  ): Promise<void> {
+    input.logEntry.date = new Date().toISOString(); // add formatted date for easier reading in DB
+
+    await this.sql`
+      UPDATE arbitrage_opportunities
+      SET
+        "logs"      = "logs" || ${[serializeObject(input.logEntry)]}::jsonb,
+        "status"    = ${input.status},
+        "confirmedAtBlock" = ${input.confirmedAtBlock ?? null},
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${opportunityId}
     `;
   }
 

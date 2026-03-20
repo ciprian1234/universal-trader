@@ -193,6 +193,8 @@ export class FlashArbitrageHandler {
    * Check pending executions on new block
    */
   private async checkPendingExecutions(newBlock: BlockEntry) {
+    const confirmedAtBlock = newBlock.number;
+
     for (const [opportunityId, execution] of this.pendingExecutions) {
       try {
         this.logger.info(`🔍 Checking pending execution for opportunity ${opportunityId} (tx: ${execution.response?.tx.hash})`);
@@ -222,16 +224,24 @@ export class FlashArbitrageHandler {
 
         // STEP 2: Check if execution is still valid
         // NOTE: take new baseGasFee into account (TBD)
-        const isStillValid = await this.validatePreExecution(execution.opportunity, execution.trade!); // TBD: recalculate gas
-        if (!isStillValid) {
+        const validateResponse = await this.validatePreExecution(execution.opportunity, execution.trade!); // TBD: recalculate gas
+        if (!validateResponse.success) {
           this.logger.warn(`⚠️ Execution of ${opportunityId} is no longer valid`);
           if (process.env.USE_FLASHBOTS) {
             // Flashbots bundles can't be cancelled, just mark as invalidated
             this.logger.info(`⏳ Flashbots bundle will expire automatically if not included`);
-            await this.db.upsertExecution(opportunityId, { status: 'invalidated', confirmedAtBlock: newBlock.number });
+            await this.db.pushArbitrageLog(opportunityId, {
+              status: 'invalidated',
+              confirmedAtBlock,
+              logEntry: { msg: 'Execution invalidated while pending in Flashbots (will expire automatically)' },
+            });
           } else {
             await this.cancelTransaction(txHash);
-            await this.db.upsertExecution(opportunityId, { status: 'cancelled', confirmedAtBlock: newBlock.number });
+            await this.db.pushArbitrageLog(opportunityId, {
+              status: 'cancelled',
+              confirmedAtBlock,
+              logEntry: { msg: 'Execution cancelled while pending in mempool' },
+            });
           }
 
           // Try next opportunity
@@ -255,8 +265,9 @@ export class FlashArbitrageHandler {
           const currentTx = await this.blockchain.getTransaction(txHash);
           if (!currentTx) {
             // TBD: might never happen => investigate further in future if this occurs
-            this.logger.warn(`⚠️ Transaction ${txHash} was dropped from mempool`);
-            await this.db.upsertExecution(opportunityId, { status: 'dropped', confirmedAtBlock: newBlock.number });
+            const msg = `Transaction ${txHash} not found in mempool`;
+            this.logger.warn(msg);
+            await this.db.pushArbitrageLog(opportunityId, { status: 'dropped', confirmedAtBlock, logEntry: { msg } });
             this.pendingExecutions.delete(opportunityId);
             // this.processOpportunityQueue(); // process next opportunity in queue (if any)
             continue;
@@ -266,11 +277,9 @@ export class FlashArbitrageHandler {
           // TBD: optionally implement speed-up logic here
         }
       } catch (error) {
-        this.logger.error(`❌ Error checking pending execution ${opportunityId}:`, { error });
-        await this.db.upsertExecution(opportunityId, {
-          status: 'error',
-          errorMessage: `Error checking pending execution failures: ${(error as Error).message}`,
-        });
+        const msg = `Error checking pending execution for opportunity ${opportunityId}: ${(error as Error).message}`;
+        this.logger.error(msg);
+        await this.db.pushArbitrageLog(opportunityId, { status: 'error', confirmedAtBlock, logEntry: { msg, error } });
 
         this.pendingExecutions.delete(opportunityId);
         // this.processOpportunityQueue();
@@ -290,21 +299,21 @@ export class FlashArbitrageHandler {
    */
   async executeArbitrage(opportunity: ArbitrageOpportunity) {
     let response: ExecuteTransactionResponse | null = null;
-    const trade = this.opportunityToTrade(opportunity);
+    const trade = this.opportunityToTrade(opportunity); // Convert opportunity to Trade struct
     try {
       this.logger.info(`🎯 Starting FlashArbitrageExecution for opportunity: ${opportunity.id}`);
 
-      // Convert opportunity to Trade struct
-
       // Validate pre-execution conditions
-      const isValid = await this.validatePreExecution(opportunity, trade);
-      if (!isValid) {
-        // this.processOpportunityQueue(); // process next opportunity in queue (if any)
+      const validateResponse = await this.validatePreExecution(opportunity, trade);
+      if (!validateResponse.success) {
+        this.db.pushArbitrageLog(opportunity.id, {
+          status: 'invalid',
+          logEntry: { msg: 'Pre-execution validation failed', error: validateResponse.error, trade },
+        });
         return;
       }
 
-      // Execute transaction
-      // Choose execution method (Flashbots or standard)
+      // Execute transaction: choose execution method (flashbots or standard)
       const useFlashbots = this.flashbotsService && process.env.USE_FLASHBOTS === 'true';
       if (useFlashbots)
         response = await this.executeViaFlashbots(trade, opportunity); // Execute via Flashbots (private mempool)
@@ -313,7 +322,10 @@ export class FlashArbitrageHandler {
       const nextBlockNumber = this.blockManager.getCurrentBlockNumber() + 1;
       this.logger.info(`🚀 Transaction sent, tx hash: ${response.tx.hash} (expected inclusion block: ${nextBlockNumber})`);
 
-      // store execution in pending executions
+      // subscribe to new blocks to monitor pending execution (if not already subscribed)
+      this.subscribeToNewBlocksEvents();
+
+      // store entry in pending executions
       this.pendingExecutions.set(opportunity.id, {
         opportunity,
         response,
@@ -323,31 +335,22 @@ export class FlashArbitrageHandler {
         submittedAtBlock: nextBlockNumber,
       });
 
-      // subscribe to new blocks to monitor pending execution (if not already subscribed)
-      this.subscribeToNewBlocksEvents();
-
-      // store execution in database
-      await this.db.saveExecution({
-        id: opportunity.id,
-        tx: { tx: response.tx, bundleHash: response.bundleResponse?.bundleHash || null },
-        trade,
-        submittedAtBlock: nextBlockNumber,
+      // push pending log with transaction details
+      await this.db.pushArbitrageLog(opportunity.id, {
+        status: 'pending',
+        logEntry: {
+          submittedAtBlock: nextBlockNumber,
+          trade,
+          tx: { tx: response.tx, bundleHash: response.bundleResponse?.bundleHash },
+        },
       });
     } catch (error: any) {
       this.logger.error(`❌ Failed execution of opportunity: ${opportunity.id}`, { error });
+      await this.db.pushArbitrageLog(opportunity.id, { status: 'error', logEntry: { error } });
 
       // delete from pending executions
       this.pendingExecutions.delete(opportunity.id);
       // this.processOpportunityQueue(); // process next opportunity in queue (if any)
-
-      await this.db.upsertExecution(opportunity.id, {
-        status: 'failed',
-        tx: response?.tx || null,
-        trade,
-        errorMessage: error,
-        submittedAtBlock: this.blockManager.getCurrentBlockNumber() + 1,
-      });
-
       // balance check its not required here because transaction didnt went through
     }
   }
@@ -578,7 +581,10 @@ export class FlashArbitrageHandler {
   /**
    * Validate pre-execution conditions
    */
-  private async validatePreExecution(opportunity: ArbitrageOpportunity, trade: Trade): Promise<boolean> {
+  private async validatePreExecution(
+    opportunity: ArbitrageOpportunity,
+    trade: Trade,
+  ): Promise<{ success: boolean; error: null | any }> {
     try {
       // Basic sanity checks on trade structure
       if (trade.swaps.length < 2) throw new Error('Need at least 2 swaps for arbitrage');
@@ -594,15 +600,14 @@ export class FlashArbitrageHandler {
       this.logger.info(`🔍 Simulating trade on-chain via static call...`);
       const simulationResult = await this.contract!.executeTrade.staticCall(trade);
       this.logger.info(`✅ Pre-execution validation passed`, simulationResult);
-      return true;
+      return { success: true, error: null };
     } catch (error: any) {
       // remove opportunity from pending executions
       this.pendingExecutions.delete(opportunity.id);
 
       // log error and update execution record
       this.logger.error(`❌ Pre-execution validation failed for ${opportunity.id}`, { error });
-      await this.db.upsertExecution(opportunity.id, { status: 'invalid', errorMessage: error, trade });
-      return false;
+      return { success: false, error };
     }
   }
 
@@ -642,12 +647,8 @@ export class FlashArbitrageHandler {
 
     // update execution status in db
     this.logger.info(`Transaction: https://etherscan.io/tx/${receipt.hash}`);
-    await this.db.upsertExecution(opportunity.id, {
-      status: receipt!.status === 1 ? 'success' : 'revert',
-      receipt,
-      analysis,
-      confirmedAtBlock: block.number,
-    });
+    const status = receipt.status === 1 ? 'success' : 'revert';
+    await this.db.pushArbitrageLog(opportunity.id, { status, confirmedAtBlock: block.number, logEntry: { receipt, analysis } });
   }
 
   /**

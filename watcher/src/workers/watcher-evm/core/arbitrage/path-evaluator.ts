@@ -91,7 +91,7 @@ export class PathEvaluator {
         return null;
       }
 
-      // 4. Create evaluated path
+      // 4. Create evaluated path (TODO: revisit)
       const evaluatedPath: ArbitrageOpportunity = {
         id: path.id,
         chainId: 1, // TO-BE-ADDED
@@ -106,7 +106,7 @@ export class PathEvaluator {
         steps: simulatedSteps,
         totalSlippage,
         totalPriceImpact: simulatedSteps.reduce((sum, s) => sum + s.priceImpact, 0),
-        executions: [],
+        logs: [],
         timestamp: Date.now(),
       };
 

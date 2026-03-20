@@ -142,7 +142,7 @@ export interface SwapStep {
 export interface ArbitrageOpportunity {
   id: string;
   chainId: number;
-  status: 'new' | 'evaluating' | 'executable' | 'executing' | 'executed' | 'failed';
+  status: 'new' | 'invalid' | 'pending' | 'success' | 'failed' | 'error' | 'dropped' | 'timeout';
 
   // info
   grossProfitToken: bigint; // Profit in borrow token
@@ -154,7 +154,7 @@ export interface ArbitrageOpportunity {
   // details
   steps: SwapStep[];
   gasAnalysis?: GasAnalysis;
-  executions: ArbitrageExecution[];
+  logs: any[];
 
   // Metrics
   totalSlippage: number;
@@ -166,16 +166,16 @@ export interface ArbitrageOpportunity {
   foundAtBlock?: number;
 }
 
-export interface ArbitrageExecution {
-  status: 'pending' | 'success' | 'failed' | 'dropped' | 'timeout';
-  trade: any; // trade parameters sent to contract
-  tx: any; // transaction object from ethers
-  txReceipt?: any; // transaction receipt after confirmation
-  errorMessage?: string; // error message if failed
-  submittedAt: number;
-  submittedAtBlock: number;
-  confirmetAtBlock?: number;
-}
+// export interface ArbitrageExecution {
+//   status: 'pending' | 'success' | 'failed' | 'dropped' | 'timeout';
+//   trade: any; // trade parameters sent to contract
+//   tx: any; // transaction object from ethers
+//   txReceipt?: any; // transaction receipt after confirmation
+//   errorMessage?: string; // error message if failed
+//   submittedAt: number;
+//   submittedAtBlock: number;
+//   confirmetAtBlock?: number;
+// }
 // ================================================================================================
 // TRADE OPTIMIZER INTERFACE
 // ================================================================================================
