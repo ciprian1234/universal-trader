@@ -8,12 +8,33 @@ import {IERC20} from '@balancer-labs/v2-interfaces/contracts/solidity-utils/open
 import {IVault} from '@balancer-labs/v2-interfaces/contracts/vault/IVault.sol';
 import {IAsset} from '@balancer-labs/v2-interfaces/contracts/vault/IAsset.sol';
 import {IFlashLoanRecipient} from '@balancer-labs/v2-interfaces/contracts/vault/IFlashLoanRecipient.sol';
-import {ISwapRouter} from '@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol';
-import {IUniswapV2Router02} from '@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol';
 
-// ============================================
+// ========================================================================================
+// UNISWAP V2 INTERFACES
+// ========================================================================================
+interface IUniswapV2Pair {
+  function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
+  function token0() external view returns (address);
+  function token1() external view returns (address);
+  function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+}
+
+// ========================================================================================
+// UNISWAP V3 INTERFACES
+// ========================================================================================
+interface IUniswapV3Pool {
+  function swap(
+    address recipient,
+    bool zeroForOne,
+    int256 amountSpecified,
+    uint160 sqrtPriceLimitX96,
+    bytes calldata data
+  ) external returns (int256 amount0, int256 amount1);
+}
+
+// ========================================================================================
 // UNISWAP V4 INTERFACES
-// ============================================
+// ========================================================================================
 
 // Currency type for V4 (address(0) = native ETH)
 type Currency is address;
@@ -41,11 +62,7 @@ struct PoolKey {
 
 // Universal Router interface
 interface IUniversalRouter {
-  function execute(
-    bytes calldata commands,
-    bytes[] calldata inputs,
-    uint256 deadline
-  ) external payable;
+  function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
 }
 
 // V4Router params
@@ -71,75 +88,60 @@ library Actions {
   uint8 internal constant TAKE_ALL = 0x0d;
 }
 
-
 // ============================================
 // CURVE INTERFACES
 // ============================================
 
 // Standard Curve pool interface (works for most pools)
 interface ICurvePool {
-  function exchange(
-    int128 i,
-    int128 j,
-    uint256 dx,
-    uint256 min_dy
-  ) external returns (uint256);
+  function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) external returns (uint256);
 }
 
 // Curve pool with uint256 indices (newer pools like tricrypto)
 interface ICurvePoolUint {
-  function exchange(
-    uint256 i,
-    uint256 j,
-    uint256 dx,
-    uint256 min_dy
-  ) external returns (uint256);
+  function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) external returns (uint256);
 }
 
 // Curve pool with underlying tokens (metapools)
 interface ICurvePoolUnderlying {
-  function exchange_underlying(
-    int128 i,
-    int128 j,
-    uint256 dx,
-    uint256 min_dy
-  ) external returns (uint256);
+  function exchange_underlying(int128 i, int128 j, uint256 dx, uint256 min_dy) external returns (uint256);
 }
 
 contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   using SafeERC20 for IERC20Z; // enables safeApprove, safeTransfer, etc.
   using CurrencyLibrary for Currency;
-  
+
   address public owner;
   IVault private constant vault = IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
 
   // Allow receiving ETH for V4 native swaps
   receive() external payable {}
 
-  event TradeExecuted(
-    address indexed token,
-    uint256 borrowAmount,
-    uint256 profit
-  );
+  // price limit for V3 swaps to prevent excessive slippage (set to min/max possible + small buffer)
+  uint160 constant MIN_SQRT_RATIO = 4295128739;
+  uint160 constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+
+  event TradeExecuted(address indexed token, uint256 borrowAmount, uint256 profit);
 
   // DEX Protocol Types
-  enum DexType {
-    UNISWAP_V2, // 0
-    UNISWAP_V3, // 1
-    UNISWAP_V4, // 2
+  enum DexProtocol {
+    V2, // 0
+    V3, // 1
+    V4, // 2
     CURVE, // 3
     BALANCER, // 4
     CUSTOM // 5 - for future protocols
   }
 
   struct SwapStep {
-    DexType dexType;
-    address router;
+    DexProtocol dexProtocol;
+    address poolAddress;
     address tokenIn;
     address tokenOut;
     uint256 amountIn;
     uint256 amountOutMin; // for slippage protection
-    uint24 fee; // needed only for V3
+    uint24 feeBps; // for v2 usually 30 (0.3%), for v3 it represents the fee tier (500, 3000, 10000)
+    bool zeroForOne; // indicates swap direction
     bytes32 poolId; // For V4/Balancer pool identification
     int128 curveIndexIn; // For Curve token index
     int128 curveIndexOut; // For Curve token index
@@ -160,7 +162,9 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     _;
   }
 
-  // main entry trade function
+  // ========================================================================================
+  // ENTRY POINT FOR EXECUTING AN ARBITRAGE TRADE
+  // ========================================================================================
   function executeTrade(Trade memory _trade) external onlyOwner nonReentrant {
     // Encode the trade struct to pass it to the flash loan callback
     bytes memory data = abi.encode(_trade);
@@ -175,9 +179,9 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     vault.flashLoan(this, tokens, amounts, data);
   }
 
-  /**
-   * This function is called by the Balancer Vault after the flash loan is issued
-   */
+  // ========================================================================================
+  // FLASH LOAN CALLBACK - THIS FUNCTION IS CALLED BY THE BALANCER VAULT AFTER LOANING THE FUNDS
+  // ========================================================================================
   function receiveFlashLoan(
     IERC20[] memory tokens,
     uint256[] memory amounts,
@@ -191,7 +195,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     uint256 borrowAmount = amounts[0];
     uint256 borrowFee = feeAmounts[0];
     uint256 requiredRepayment = borrowAmount + borrowFee;
-
 
     // NOTE: amountOutMin its enforced for each swap outside the contract by caller
     // on last swap the profit should be > requiredRepayment, otherwise the tx will revert
@@ -213,258 +216,139 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     // Transfer profits to owner
     uint256 profit = IERC20Z(address(tokens[0])).balanceOf(address(this));
     if (profit > 0) {
-      IERC20Z(address(tokens[0])).safeTransfer(owner, profit); 
+      IERC20Z(address(tokens[0])).safeTransfer(owner, profit);
     }
 
     // Emit event
-    emit TradeExecuted(
-      address(tokens[0]),
-      borrowAmount,
-      profit
-    );
+    emit TradeExecuted(address(tokens[0]), borrowAmount, profit);
   }
 
-  // -- INTERNAL FUNCTIONS -- //
-
-  // Universal swap execution
+  // ========================================================================================
+  // SWAP EXECUTION ROUTING BASED ON DEX PROTOCOL
+  // ========================================================================================
   function _executeSwap(SwapStep memory step) internal {
-    IERC20Z(step.tokenIn).forceApprove(step.router, step.amountIn); // Safe Approve token to swap
+    // IERC20Z(step.tokenIn).forceApprove(step.poolAddress, step.amountIn); // Safe Approve token to swap
 
-    if (step.dexType == DexType.UNISWAP_V2) {
+    if (step.dexProtocol == DexProtocol.V2) {
       _swapOnV2(step);
-    } else if (step.dexType == DexType.UNISWAP_V3) {
+    } else if (step.dexProtocol == DexProtocol.V3) {
       _swapOnV3(step);
-    } else if (step.dexType == DexType.UNISWAP_V4) {
+    } else if (step.dexProtocol == DexProtocol.V4) {
       _swapOnV4(step);
-    } else if (step.dexType == DexType.CURVE) {
+    } else if (step.dexProtocol == DexProtocol.CURVE) {
       _swapOnCurve(step);
-    } else if (step.dexType == DexType.BALANCER) {
+    } else if (step.dexProtocol == DexProtocol.BALANCER) {
       _swapOnBalancer(step);
     } else {
       revert('Unsupported DEX type');
     }
   }
 
-  // Uniswap V2 swap
+  // ========================================================================================
+  // V2 SWAP IMPLEMENTATION
+  // ========================================================================================
   function _swapOnV2(SwapStep memory step) internal {
-    address[] memory path = new address[](2);
-    path[0] = step.tokenIn;
-    path[1] = step.tokenOut;
+    IUniswapV2Pair pair = IUniswapV2Pair(step.poolAddress);
 
-    IUniswapV2Router02(step.router).swapExactTokensForTokens(
-      step.amountIn,
-      step.amountOutMin,
-      path,
-      address(this),
-      block.timestamp + 300
-    );
+    // Transfer tokens directly to pool — V2 pull model
+    IERC20Z(step.tokenIn).safeTransfer(address(pair), step.amountIn);
+
+    // get reserves to calculate amountOut based on constant product formula: x * y = k
+    (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
+    uint256 reserveIn = step.zeroForOne ? uint256(reserve0) : uint256(reserve1);
+    uint256 reserveOut = step.zeroForOne ? uint256(reserve1) : uint256(reserve0);
+
+    // calculate amountOut
+    uint256 amountInWithFee = step.amountIn * (10000 - step.feeBps);
+    uint256 amountOut = (amountInWithFee * reserveOut) / (reserveIn * 10000 + amountInWithFee);
+    require(amountOut >= step.amountOutMin, 'V2: insufficient amountOut');
+
+    (uint256 amount0Out, uint256 amount1Out) = step.zeroForOne ? (uint256(0), amountOut) : (amountOut, uint256(0));
+    pair.swap(amount0Out, amount1Out, address(this), new bytes(0));
   }
 
-  // Uniswap V3 swap
+  // ========================================================================================
+  // V3 SWAP IMPLEMENTATION
+  // ========================================================================================
+  address private _activeV3Pool; // guard uniswapV3SwapCallback against malicious caller
+
   function _swapOnV3(SwapStep memory step) internal {
-    // Setup swap parameters
-    ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-      tokenIn: step.tokenIn,
-      tokenOut: step.tokenOut,
-      fee: step.fee,
-      recipient: address(this),
-      deadline: block.timestamp + 300, // 5 minutes from now
-      amountIn: step.amountIn,
-      amountOutMinimum: step.amountOutMin,
-      sqrtPriceLimitX96: 0
-    });
+    require(step.amountIn <= uint256(type(int256).max), 'V3: amountIn overflow');
 
-    // Perform swap
-    ISwapRouter(step.router).exactInputSingle(params);
-  }
+    _activeV3Pool = step.poolAddress;
+    IUniswapV3Pool pool = IUniswapV3Pool(step.poolAddress);
 
-/**
-   * @notice Execute a swap on Uniswap V4 using Universal Router
-   * @dev V4 uses Universal Router pattern with commands and actions
-   * 
-   * Requirements:
-   *      - step.router: Universal Router address
-   *      - step.fee: Fee tier (500, 3000, 10000, etc.)
-   *      - step.extraData: Encoded (int24 tickSpacing, address hooks, bytes hookData)
-   */
-  function _swapOnV4(SwapStep memory step) internal {
-    // Decode V4 parameters from extraData
-    (int24 tickSpacing, address hooks, bytes memory hookData) = _decodeV4Params(step.extraData);
-    
-    // Determine swap direction (currency0 < currency1 by address)
-    bool zeroForOne = step.tokenIn < step.tokenOut;
-    
-    // Build PoolKey - currencies must be sorted
-    PoolKey memory poolKey = PoolKey({
-      currency0: Currency.wrap(zeroForOne ? step.tokenIn : step.tokenOut),
-      currency1: Currency.wrap(zeroForOne ? step.tokenOut : step.tokenIn),
-      fee: step.fee,
-      tickSpacing: tickSpacing,
-      hooks: IHooks(hooks)
-    });
+    uint160 sqrtPriceLimitX96 = step.zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1; // TBD: send this as parameter
 
-    // Encode the Universal Router command for V4 swap
-    bytes memory commands = abi.encodePacked(uint8(Commands.V4_SWAP));
+    // V3 uses a callback to pull tokens, so we just call swap and handle the token transfer in the callback
 
-    // Encode V4Router actions sequence
-    bytes memory actions = abi.encodePacked(
-      uint8(Actions.SWAP_EXACT_IN_SINGLE),
-      uint8(Actions.SETTLE_ALL),
-      uint8(Actions.TAKE_ALL)
+    (int256 amount0, int256 amount1) = pool.swap(
+      address(this),
+      step.zeroForOne,
+      int256(step.amountIn),
+      sqrtPriceLimitX96, // Price limit for slippage control
+      abi.encode(step.tokenIn) // Pass the encoded callback data
     );
 
-    // Prepare parameters for each action
-    bytes[] memory params = new bytes[](3);
-    
-    // Param 0: Swap configuration
-    params[0] = abi.encode(
-      IV4Router.ExactInputSingleParams({
-        poolKey: poolKey,
-        zeroForOne: zeroForOne,
-        amountIn: uint128(step.amountIn),
-        amountOutMinimum: uint128(step.amountOutMin),
-        hookData: hookData
-      })
-    );
-    
-    // Param 1: SETTLE_ALL - specify input currency and amount
-    params[1] = abi.encode(
-      zeroForOne ? poolKey.currency0 : poolKey.currency1,
-      step.amountIn
-    );
-    
-    // Param 2: TAKE_ALL - specify output currency and minimum amount
-    params[2] = abi.encode(
-      zeroForOne ? poolKey.currency1 : poolKey.currency0,
-      step.amountOutMin
-    );
-
-    // Combine actions and params into inputs array
-    bytes[] memory inputs = new bytes[](1);
-    inputs[0] = abi.encode(actions, params);
-
-    // Execute via Universal Router
-    uint256 deadline = block.timestamp + 300;
-    IUniversalRouter(step.router).execute(commands, inputs, deadline);
+    // validate amountOut based on swap direction (amounts are returned as int256, positive for received, negative for sent)
+    uint256 amountOut = uint256(-(step.zeroForOne ? amount1 : amount0));
+    require(amountOut >= step.amountOutMin, 'V3: insufficient amountOut');
+    _activeV3Pool = address(0); // reset _activeV3Pool
   }
 
-  /**
- * @notice Decode V4-specific parameters from extraData
- * @param extraData Encoded (int24 tickSpacing, address hooks, bytes hookData)
- * @return tickSpacing The tick spacing for the pool
- * @return hooks The hooks contract address (address(0) for no hooks)
- * @return hookData Additional data to pass to hooks
- */
-function _decodeV4Params(bytes memory extraData) internal pure returns (
-  int24 tickSpacing,
-  address hooks,
-  bytes memory hookData
-) {
+  // Generic callback by V3 pool during swap() to pull the owed tokens
+  // NOTE: this callback its called inside the swap execution synchronously
+  function _handleV3Callback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) internal {
+    require(msg.sender == _activeV3Pool, 'V3: invalid callback caller');
+    address tokenIn = abi.decode(data, (address));
 
-  // Default values for standard pools without hooks
-  if (extraData.length == 0) {
-    return (60, address(0), bytes(''));
-  }
-  
-  // ABI encoded int24 takes 32 bytes, address takes 32 bytes = 64 bytes minimum
-  if (extraData.length >= 64) {
-    // Full decode: tickSpacing (int24) + hooks (address)
-    (tickSpacing, hooks) = abi.decode(extraData, (int24, address));
-    hookData = bytes('');
-  } else if (extraData.length >= 32) {
-    // Only tickSpacing provided (32 bytes for int24 in ABI encoding)
-    (tickSpacing) = abi.decode(extraData, (int24));
-    hooks = address(0);
-    hookData = bytes('');
-  } else {
-    // Invalid extraData, use defaults
-    return (60, address(0), bytes(''));
-  }
-}
-
-  // ============================================
-  // CURVE SWAP IMPLEMENTATION
-  // ============================================
-  
-  /**
-   * @notice Execute a swap on Curve
-   * @dev Curve pools have different interfaces depending on the pool type:
-   *      - Standard pools: int128 indices
-   *      - Tricrypto/newer pools: uint256 indices
-   *      - Metapools: exchange_underlying for underlying tokens
-   * 
-   * Use extraData to specify pool type:
-   *      - 0x00 or empty: Standard pool (int128)
-   *      - 0x01: Uint256 indices pool
-   *      - 0x02: Underlying exchange (metapool)
-   */
-  function _swapOnCurve(SwapStep memory step) internal {
-    // Determine pool type from extraData
-    uint8 poolType = 0;
-    if (step.extraData.length > 0) {
-      poolType = uint8(step.extraData[0]);
-    }
-
-    if (poolType == 0) {
-      // Standard Curve pool with int128 indices
-      ICurvePool(step.router).exchange(
-        step.curveIndexIn,
-        step.curveIndexOut,
-        step.amountIn,
-        step.amountOutMin
-      );
-    } else if (poolType == 1) {
-      // Newer pools with uint256 indices (tricrypto, etc.)
-      ICurvePoolUint(step.router).exchange(
-        uint256(int256(step.curveIndexIn)),
-        uint256(int256(step.curveIndexOut)),
-        step.amountIn,
-        step.amountOutMin
-      );
-    } else if (poolType == 2) {
-      // Metapool - exchange underlying tokens
-      ICurvePoolUnderlying(step.router).exchange_underlying(
-        step.curveIndexIn,
-        step.curveIndexOut,
-        step.amountIn,
-        step.amountOutMin
-      );
+    // Determine the amount owed and transfer it to the pool
+    uint256 amountOwed;
+    if (amount0Delta > 0) {
+      amountOwed = uint256(amount0Delta);
     } else {
-      revert('Invalid Curve pool type');
+      require(amount1Delta > 0, 'V3: both deltas non-positive');
+      amountOwed = uint256(amount1Delta);
     }
+
+    IERC20Z(tokenIn).safeTransfer(msg.sender, amountOwed);
   }
 
-  // ✅ NEW: Balancer V2 swap
-  function _swapOnBalancer(SwapStep memory step) internal {
-    IVault.SingleSwap memory singleSwap = IVault.SingleSwap({
-      poolId: step.poolId,
-      kind: IVault.SwapKind.GIVEN_IN,
-      assetIn: IAsset(step.tokenIn),
-      assetOut: IAsset(step.tokenOut),
-      amount: step.amountIn,
-      userData: step.extraData
-    });
+  // different DEXes might have different callback function signatures => so we route them to the same _handleV3Callback handler
 
-    IVault.FundManagement memory funds = IVault.FundManagement({
-      sender: address(this),
-      fromInternalBalance: false,
-      recipient: payable(address(this)),
-      toInternalBalance: false
-    });
-
-    IVault(step.router).swap(
-      singleSwap,
-      funds,
-      step.amountOutMin,
-      block.timestamp + 300
-    );
+  // Uniswap V3 and compatible forks (SushiSwap Trident, etc.)
+  function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
+    _handleV3Callback(amount0Delta, amount1Delta, data);
   }
 
-  /*
-   * Emergency functions
-   *
-   */
+  // Algebra-based pools (QuickSwap, Camelot, etc.)
+  function algebraSwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
+    _handleV3Callback(amount0Delta, amount1Delta, data);
+  }
 
+  // Other V3-compatible pools can also use the same callback handler as long as they call it with the same parameters
+  function pancakeV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
+    _handleV3Callback(amount0Delta, amount1Delta, data);
+  }
+
+  // ========================================================================================
+  // V4 SWAP IMPLEMENTATION
+  // ========================================================================================
+  function _swapOnV4(SwapStep memory step) internal {}
+
+  // ========================================================================================
+  // CURVE SWAP IMPLEMENTATION
+  // ========================================================================================
+  function _swapOnCurve(SwapStep memory step) internal {}
+
+  // ========================================================================================
+  // BALANCER SWAP IMPLEMENTATION
+  // ========================================================================================
+  function _swapOnBalancer(SwapStep memory step) internal {}
+
+  // ========================================================================================
+  // EMERGENCY FUNCTIONS
+  // ========================================================================================
   function emergencyWithdraw(address _token) external onlyOwner {
     uint256 balance = IERC20Z(_token).balanceOf(address(this));
     if (balance > 0) {
@@ -473,12 +357,12 @@ function _decodeV4Params(bytes memory extraData) internal pure returns (
   }
 
   function emergencyWithdrawETH() external onlyOwner {
-  uint256 balance = address(this).balance;
-  if (balance > 0) {
-    (bool success, ) = owner.call{value: balance}('');
-    require(success, 'ETH transfer failed');
+    uint256 balance = address(this).balance;
+    if (balance > 0) {
+      (bool success, ) = owner.call{value: balance}('');
+      require(success, 'ETH transfer failed');
+    }
   }
-}
 
   function updateOwner(address _newOwner) external onlyOwner {
     require(_newOwner != address(0), 'Invalid address');
