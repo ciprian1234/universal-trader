@@ -78,9 +78,6 @@ export class TokenManager {
     await Promise.all(this.chainConfig.stablecoinTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
     await Promise.all(this.chainConfig.discoveryTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
     await Promise.all(this.chainConfig.priceAnchorTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
-
-    // init contracts for registered tokens
-    this.tokens.forEach((token) => this.blockchain.initContract(token.address, this.erc20ABI));
   }
 
   /**
@@ -153,8 +150,8 @@ export class TokenManager {
   async introspectToken(address: string): Promise<TokenOnChain> {
     const normalizedAddress = address.toLowerCase();
 
-    // init erc20 token contract
-    const contract = this.blockchain.initContract(address, this.erc20ABI);
+    // create a temporary contract instance for introspection => contract not needed for future use
+    const contract = new ethers.Contract(address, this.erc20ABI, this.blockchain.provider);
 
     try {
       const [name, symbol, decimals] = await Promise.all([contract.name(), contract.symbol(), contract.decimals()]);
@@ -237,8 +234,7 @@ export class TokenManager {
    * 📊 GET TOKEN BALANCE: Get balance for an address
    */
   async getTokenBalance(tokenAddress: string, walletAddress: string): Promise<bigint> {
-    const contract = this.blockchain.getContract(tokenAddress);
-    if (!contract) throw new Error(`Contract for token ${tokenAddress} not found`);
+    const contract = new ethers.Contract(tokenAddress, this.erc20ABI, this.blockchain.provider);
     return await contract.balanceOf(walletAddress);
   }
 }
