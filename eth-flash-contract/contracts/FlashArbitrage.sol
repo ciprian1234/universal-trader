@@ -180,6 +180,13 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   }
 
   // ========================================================================================
+  // DIRECT SWAP EXECUTION (FOR TESTING — REQUIRES CONTRACT TO HOLD tokenIn BEFOREHAND)
+  // ========================================================================================
+  function executeDirectSwap(SwapStep memory step) external onlyOwner nonReentrant {
+    _executeSwap(step);
+  }
+
+  // ========================================================================================
   // FLASH LOAN CALLBACK - THIS FUNCTION IS CALLED BY THE BALANCER VAULT AFTER LOANING THE FUNDS
   // ========================================================================================
   function receiveFlashLoan(

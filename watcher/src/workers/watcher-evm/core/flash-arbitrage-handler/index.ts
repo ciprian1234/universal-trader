@@ -10,7 +10,7 @@ import type { WalletManager } from '../wallet-manager';
 import { FlashbotsService } from './flashbots-service';
 import type { FlashbotsTransactionResponse } from '@flashbots/ethers-provider-bundle';
 import type { WorkerDb } from '../../db';
-import type { DexVenueName } from '@/shared/data-model/layer1';
+import type { DexProtocol, DexVenueName } from '@/shared/data-model/layer1';
 import type { DexManager } from '../dex-manager';
 import { FLASH_ARBITRAGE_ABI } from './flash-arbitrage-contract-abi';
 
@@ -519,7 +519,7 @@ export class FlashArbitrageHandler {
     const swaps: SwapStepOnContract[] = [];
     for (const step of opportunity.steps) {
       swaps.push({
-        dexProtocol: FlashArbitrageHandler.getDexTypeEnumValueFromPool(step.pool.venue.name),
+        dexProtocol: FlashArbitrageHandler.getDexTypeEnumValueFromPool(step.pool.protocol),
         poolAddress: step.pool.address,
         tokenIn: step.tokenIn.address,
         tokenOut: step.tokenOut.address,
@@ -547,20 +547,20 @@ export class FlashArbitrageHandler {
   /**
    * Map interface DexType to contract enum
    */
-  static getDexTypeEnumValueFromPool(venue: DexVenueName): DexProtocolEnum {
-    switch (venue) {
-      case 'uniswap-v2':
+  static getDexTypeEnumValueFromPool(dexProtocol: DexProtocol): DexProtocolEnum {
+    switch (dexProtocol) {
+      case 'v2':
         return DexProtocolEnum.UNISWAP_V2;
-      case 'uniswap-v3':
+      case 'v3':
         return DexProtocolEnum.UNISWAP_V3;
-      case 'uniswap-v4':
+      case 'v4':
         return DexProtocolEnum.UNISWAP_V4;
       // case 'curvestable':
       //   return DexProtocolEnum.CURVE;
       // case 'balancerweighted':
       //   return DexProtocolEnum.BALANCER;
       default:
-        throw new Error(`Unsupported DEX type: ${venue}`);
+        throw new Error(`Unsupported DEX protocol: ${dexProtocol}`);
     }
   }
 

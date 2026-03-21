@@ -10,22 +10,15 @@ import { CacheService } from '@/utils/cache-service';
 import { TokenManager } from '@/workers/watcher-evm/core/token-manager';
 import { EventBus } from '@/workers/watcher-evm/core/event-bus';
 import { DexManager } from '@/workers/watcher-evm/core/dex-manager';
-import { DEX_ADAPTER } from '@/workers/watcher-evm/core/dex-adapters';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;
 
 const cache = new CacheService(platformConfig.chainId);
 const db = new WorkerDb(platformConfig.databaseUrl, platformConfig.chainId);
-const eventBus = new EventBus({ logger: createLogger(`[event-bus]`) });
+const eventBus = new EventBus();
 
 // Core app services
-const blockchain = new Blockchain({
-  chainId: platformConfig.chainId,
-  chainName: platformConfig.name,
-  providerURL: platformConfig.providerRpcUrl,
-  cache: cache,
-  logger: createLogger(`[blockchain]`),
-});
+const blockchain = new Blockchain({ chainConfig: platformConfig, cache: cache });
 
 // // create token manager
 // const tokenManager = new TokenManager({

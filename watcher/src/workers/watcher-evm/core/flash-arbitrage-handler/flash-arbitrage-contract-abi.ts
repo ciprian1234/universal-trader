@@ -93,6 +93,81 @@ export const FLASH_ARBITRAGE_ABI = [
       {
         components: [
           {
+            internalType: 'enum FlashArbitrage.DexProtocol',
+            name: 'dexProtocol',
+            type: 'uint8',
+          },
+          {
+            internalType: 'address',
+            name: 'poolAddress',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'tokenIn',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'tokenOut',
+            type: 'address',
+          },
+          {
+            internalType: 'uint256',
+            name: 'amountIn',
+            type: 'uint256',
+          },
+          {
+            internalType: 'uint256',
+            name: 'amountOutMin',
+            type: 'uint256',
+          },
+          {
+            internalType: 'uint24',
+            name: 'feeBps',
+            type: 'uint24',
+          },
+          {
+            internalType: 'bool',
+            name: 'zeroForOne',
+            type: 'bool',
+          },
+          {
+            internalType: 'bytes32',
+            name: 'poolId',
+            type: 'bytes32',
+          },
+          {
+            internalType: 'int128',
+            name: 'curveIndexIn',
+            type: 'int128',
+          },
+          {
+            internalType: 'int128',
+            name: 'curveIndexOut',
+            type: 'int128',
+          },
+          {
+            internalType: 'bytes',
+            name: 'extraData',
+            type: 'bytes',
+          },
+        ],
+        internalType: 'struct FlashArbitrage.SwapStep',
+        name: 'step',
+        type: 'tuple',
+      },
+    ],
+    name: 'executeDirectSwap',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      {
+        components: [
+          {
             components: [
               {
                 internalType: 'enum FlashArbitrage.DexProtocol',
