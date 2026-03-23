@@ -18,9 +18,9 @@ import { ethers } from 'ethers';
 // ========================================================================================
 
 // input pool from DB
-const DB_POOL_ID = '1:0x042a5b2c816d473338d6d1fff7d4e2f74a4bf6d9517e74538f3778d0693aef69';
-const ZERO_FOR_ONE = true;
-const amountInFormatted = '0.001'; // human readable amount to swap
+const DB_POOL_ID = '1:0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed181e22d7';
+const ZERO_FOR_ONE = false;
+const amountInFormatted = '1'; // human readable amount to swap
 
 // WRAP ETH if needed
 let WRAP_ETH_AMOUNT: string | null = null;
@@ -78,7 +78,7 @@ function buildSwapStep(params: {
     poolId: pool.protocol === 'v4' ? pool.poolKeyHash : '0x0000000000000000000000000000000000000000000000000000000000000000',
     curveIndexIn: 0,
     curveIndexOut: 0,
-    extraData: pool.protocol === 'v4' ? abiCoder.encode(['int24', 'address'], [pool.tickSpacing, ethers.ZeroAddress]) : '0x',
+    extraData: pool.protocol === 'v4' ? abiCoder.encode(['int24', 'address'], [pool.tickSpacing, pool.hooks]) : '0x',
   };
 }
 

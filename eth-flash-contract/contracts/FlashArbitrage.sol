@@ -133,6 +133,24 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   }
 
   // ========================================================================================
+  // UNISWAP V4 INTERFACES
+  // ========================================================================================
+
+  // storage slot for allowed callback caller (used to guard against malicious calls to callbacks)
+  int256 private constant ALLOWED_CALLER_ADDRESS_SLOT = 0; // first slot in contract storage
+
+  function _setAllowedCallerAddress(address allowedCallerAddress) private {
+    assembly {
+      tstore(ALLOWED_CALLER_ADDRESS_SLOT, allowedCallerAddress)
+    }
+  }
+  function _getAllowedCallerAddress() private view returns (address allowedCallerAddress) {
+    assembly {
+      allowedCallerAddress := tload(ALLOWED_CALLER_ADDRESS_SLOT)
+    }
+  }
+
+  // ========================================================================================
   // ENTRY POINT FOR EXECUTING AN ARBITRAGE TRADE
   // ========================================================================================
   function executeTrade(Trade memory _trade) external onlyOwner nonReentrant {
@@ -204,8 +222,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // SWAP EXECUTION ROUTING BASED ON DEX PROTOCOL
   // ========================================================================================
   function _executeSwap(SwapStep memory step) internal {
-    // IERC20Z(step.tokenIn).forceApprove(step.poolAddress, step.amountIn); // Safe Approve token to swap
-
     if (step.dexProtocol == DexProtocol.V2) {
       _swapOnV2(step);
     } else if (step.dexProtocol == DexProtocol.V3) {
@@ -247,14 +263,12 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
   // V3 SWAP IMPLEMENTATION
   // ========================================================================================
-  address private _activeV3Pool; // guard uniswapV3SwapCallback against malicious caller
 
   function _swapOnV3(SwapStep memory step) internal {
     require(step.amountIn <= uint256(type(int256).max), 'V3: amountIn overflow');
+    _setAllowedCallerAddress(step.poolAddress); // set allowed callback caller to the pool we're interacting with
 
-    _activeV3Pool = step.poolAddress;
     IUniswapV3Pool pool = IUniswapV3Pool(step.poolAddress);
-
     uint160 sqrtPriceLimitX96 = step.zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1; // TBD: send this as parameter
 
     // V3 uses a callback to pull tokens, so we just call swap and handle the token transfer in the callback
@@ -269,13 +283,13 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     // validate amountOut based on swap direction (amounts are returned as int256, positive for received, negative for sent)
     uint256 amountOut = uint256(-(step.zeroForOne ? amount1 : amount0));
     require(amountOut >= step.amountOutMin, 'V3: insufficient amountOut');
-    _activeV3Pool = address(0); // reset _activeV3Pool
+    _setAllowedCallerAddress(address(0)); // ← clear transient slot before returning
   }
 
   // Generic callback by V3 pool during swap() to pull the owed tokens
   // NOTE: this callback its called inside the swap execution synchronously
   function _handleV3Callback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) internal {
-    require(msg.sender == _activeV3Pool, 'V3: invalid callback caller');
+    require(msg.sender == _getAllowedCallerAddress(), 'V3: invalid callback caller');
     address tokenIn = abi.decode(data, (address));
 
     // Determine the amount owed and transfer it to the pool
@@ -310,22 +324,21 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
   // V4 SWAP IMPLEMENTATION
   // ========================================================================================
-  address private _activeV4PoolManager; // guard unlockCallback against malicious caller
 
   function _swapOnV4(SwapStep memory step) internal {
     require(step.amountIn <= uint256(type(int256).max), 'V4: amountIn overflow');
+    _setAllowedCallerAddress(step.poolAddress); // set allowed callback caller to the PoolManager address
 
-    _activeV4PoolManager = step.poolAddress; // poolAddress = PoolManager for V4
     bytes memory result = IPoolManager(step.poolAddress).unlock(abi.encode(step));
-    _activeV4PoolManager = address(0);
 
     uint256 amountOut = abi.decode(result, (uint256));
     require(amountOut >= step.amountOutMin, 'V4: insufficient amountOut');
+    _setAllowedCallerAddress(address(0)); // ← clear transient slot before returning
   }
 
   // called by V4 PoolManager during unlock() to execute the swap logic and handle token transfers
   function unlockCallback(bytes calldata data) external returns (bytes memory) {
-    require(msg.sender == _activeV4PoolManager, 'V4: invalid callback caller');
+    require(msg.sender == _getAllowedCallerAddress(), 'V4: invalid callback caller');
 
     SwapStep memory step = abi.decode(data, (SwapStep));
 
@@ -354,7 +367,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     // Execute swap — returns BalanceDelta packed as int256
     // Upper 128 bits = amount0 delta, Lower 128 bits = amount1 delta
     // Negative delta = we owe, Positive delta = we receive
-    int256 delta = IPoolManager(msg.sender).swap(key, params, '');
+    int256 delta = IPoolManager(msg.sender).swap(key, params, ''); // TBD: provide hook data if needed for custom logic during swap
     int128 delta0 = int128(delta >> 128);
     int128 delta1 = int128(delta);
 
@@ -397,12 +410,16 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
   // CURVE SWAP IMPLEMENTATION
   // ========================================================================================
-  function _swapOnCurve(SwapStep memory step) internal {}
+  function _swapOnCurve(SwapStep memory step) internal {
+    // IERC20Z(step.tokenIn).forceApprove(step.poolAddress, step.amountIn); // Safe Approve token to swap
+  }
 
   // ========================================================================================
   // BALANCER SWAP IMPLEMENTATION
   // ========================================================================================
-  function _swapOnBalancer(SwapStep memory step) internal {}
+  function _swapOnBalancer(SwapStep memory step) internal {
+    // IERC20Z(step.tokenIn).forceApprove(step.poolAddress, step.amountIn); // Safe Approve token to swap
+  }
 
   // ========================================================================================
   // EMERGENCY FUNCTIONS
