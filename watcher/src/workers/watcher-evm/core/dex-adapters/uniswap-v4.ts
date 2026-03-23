@@ -484,14 +484,12 @@ export async function getTradeQuote(
  * However, hooks can alter this behavior. This assumes NO hooks affecting swap logic.
  */
 export function simulateSwap(pool: DexV4PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
-  const sqrtPriceX96 = pool.sqrtPriceX96!;
-  const liquidity = pool.liquidity!;
+  const sqrtPriceX96 = pool.sqrtPriceX96;
+  const liquidity = pool.liquidity;
 
   // TBD: check how hooks affect swap calculations
   const hooks = pool.hooks || ethers.ZeroAddress;
-  if (hooks !== ethers.ZeroAddress) {
-    logger.warn('⚠️ Pool uses hooks - simulation accuracy not guaranteed');
-  }
+  if (hooks !== ethers.ZeroAddress) logger.warn(`⚠️ Pool uses hooks: ${hooks} - simulation accuracy not guaranteed`);
 
   if (amountIn <= 0n) throw new Error(`Invalid trade amount: ${amountIn}`);
   if (liquidity <= 0n) throw new Error(`Insufficient liquidity`);

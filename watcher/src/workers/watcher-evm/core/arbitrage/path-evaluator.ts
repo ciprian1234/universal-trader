@@ -123,7 +123,7 @@ export class PathEvaluator {
 
       return evaluatedPath;
     } catch (error) {
-      this.logger.debug(`Error evaluating path: ${(error as Error).message}`);
+      this.logger.debug(`Error evaluating path ${path.id}: ${(error as Error).message}`);
       return null;
     }
   }
