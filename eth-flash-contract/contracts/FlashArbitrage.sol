@@ -361,15 +361,23 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     // Settle negative deltas (pay what we owe): sync → transfer → settle
     if (delta0 < 0) {
       uint256 payment = uint256(uint128(-delta0));
-      IPoolManager(msg.sender).sync(currency0);
-      IERC20Z(currency0).safeTransfer(msg.sender, payment);
-      IPoolManager(msg.sender).settle();
+      if (currency0 == address(0)) {
+        IPoolManager(msg.sender).settle{value: payment}();
+      } else {
+        IPoolManager(msg.sender).sync(currency0);
+        IERC20Z(currency0).safeTransfer(msg.sender, payment);
+        IPoolManager(msg.sender).settle();
+      }
     }
     if (delta1 < 0) {
       uint256 payment = uint256(uint128(-delta1));
-      IPoolManager(msg.sender).sync(currency1);
-      IERC20Z(currency1).safeTransfer(msg.sender, payment);
-      IPoolManager(msg.sender).settle();
+      if (currency1 == address(0)) {
+        IPoolManager(msg.sender).settle{value: payment}();
+      } else {
+        IPoolManager(msg.sender).sync(currency1);
+        IERC20Z(currency1).safeTransfer(msg.sender, payment);
+        IPoolManager(msg.sender).settle();
+      }
     }
 
     // Take positive deltas (receive what we're owed)
@@ -400,17 +408,19 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // EMERGENCY FUNCTIONS
   // ========================================================================================
   function emergencyWithdraw(address _token) external onlyOwner {
-    uint256 balance = IERC20Z(_token).balanceOf(address(this));
-    if (balance > 0) {
-      IERC20Z(_token).safeTransfer(owner, balance); // Use SafeERC20
-    }
-  }
-
-  function emergencyWithdrawETH() external onlyOwner {
-    uint256 balance = address(this).balance;
-    if (balance > 0) {
-      (bool success, ) = owner.call{value: balance}('');
-      require(success, 'ETH transfer failed');
+    if (_token == address(0)) {
+      // Withdraw ETH
+      uint256 balance = address(this).balance;
+      if (balance > 0) {
+        (bool success, ) = owner.call{value: balance}('');
+        require(success, 'ETH transfer failed');
+      }
+    } else {
+      // Withdraw ERC20 token
+      uint256 balance = IERC20Z(_token).balanceOf(address(this));
+      if (balance > 0) {
+        IERC20Z(_token).safeTransfer(owner, balance);
+      }
     }
   }
 

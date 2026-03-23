@@ -18,9 +18,13 @@ import { ethers } from 'ethers';
 // ========================================================================================
 
 // input pool from DB
-const DB_POOL_ID = '1:0x008d9d457ad0a75c83d9a5e2b8e4ce89232b5083'; // Uniswap-V3 USDC-WETH 0.05% on Ethereum mainnet
-const ZERO_FOR_ONE = true; // swap direction: token0 -> token1 if true, token1 -> token0 if false
-const amountInFormatted = '0.01'; // human readable amount to swap (e.g. 1.5)
+const DB_POOL_ID = '1:0x042a5b2c816d473338d6d1fff7d4e2f74a4bf6d9517e74538f3778d0693aef69';
+const ZERO_FOR_ONE = true;
+const amountInFormatted = '0.001'; // human readable amount to swap
+
+// WRAP ETH if needed
+let WRAP_ETH_AMOUNT: string | null = null;
+// WRAP_ETH_AMOUNT = '10';
 
 // ========================================================================================
 // INIT COMPONENTS
@@ -60,6 +64,8 @@ function buildSwapStep(params: {
   const { pool } = params;
   const { token0, token1 } = pool.tokenPair;
 
+  const abiCoder = new ethers.AbiCoder();
+
   return {
     dexProtocol: FlashArbitrageHandler.getDexTypeEnumValueFromPool(pool.protocol),
     poolAddress: pool.address,
@@ -69,10 +75,10 @@ function buildSwapStep(params: {
     amountIn: params.amountIn,
     amountOutMin: params.amountOutMin,
     zeroForOne: params.zeroForOne,
-    poolId: ethers.ZeroHash,
+    poolId: pool.protocol === 'v4' ? pool.poolKeyHash : '0x0000000000000000000000000000000000000000000000000000000000000000',
     curveIndexIn: 0,
     curveIndexOut: 0,
-    extraData: '0x',
+    extraData: pool.protocol === 'v4' ? abiCoder.encode(['int24', 'address'], [pool.tickSpacing, ethers.ZeroAddress]) : '0x',
   };
 }
 
@@ -86,8 +92,14 @@ function formatBalance(tokenAddress: string, rawBalance: bigint) {
 }
 
 async function fundContract(signer: any, token: TokenOnChain, amount: bigint) {
-  const tokenContract = new ethers.Contract(token.address, WETH_ABI, signer);
-  await (await tokenContract.transfer(CONTRACT_ADDRESS, amount)).wait();
+  let tx: any;
+  if (token.address === ethers.ZeroAddress) {
+    tx = await signer.sendTransaction({ to: CONTRACT_ADDRESS, value: amount });
+  } else {
+    const tokenContract = new ethers.Contract(token.address, WETH_ABI, signer);
+    tx = await tokenContract.transfer(CONTRACT_ADDRESS, amount);
+  }
+  await tx.wait();
   logger.info(`📤 Contract funded with ${ethers.formatEther(amount)} ${token.symbol}`);
 }
 
@@ -138,10 +150,12 @@ async function main() {
   if (walletAddress.toLowerCase() !== contractOwner.toLowerCase()) throw new Error('Signer is not the contract owner');
   logger.info(`🏦 Arbitrage contract at ${CONTRACT_ADDRESS}, owner: ${contractOwner}`);
 
+  // wrap ETH to WETH if needed
+  if (WRAP_ETH_AMOUNT) await wrapETH(wallet, ethers.parseEther(WRAP_ETH_AMOUNT));
+
   // log what we are about to do
   const swapMsg = ZERO_FOR_ONE ? `${token0.symbol} -> ${token1.symbol}` : `${token1.symbol} -> ${token0.symbol}`;
   logger.info(`🚀 Executing direct swap on ${pool.venue.name} ${swapMsg}`);
-  // await wrapETH(wallet, ethers.parseEther('10'));
 
   // Fund the contract with token0 or token1 (WETH in this case)
   const amountIn = ethers.parseUnits(amountInFormatted, ZERO_FOR_ONE ? token0.decimals : token1.decimals); // 1 WETH
@@ -149,8 +163,10 @@ async function main() {
 
   // Balances before
   // logger.info('📊 Balances BEFORE swap:');
-  const token0Before = await tokenManager.getTokenBalance(token0.address, CONTRACT_ADDRESS);
-  const token1Before = await tokenManager.getTokenBalance(token1.address, CONTRACT_ADDRESS);
+  // const token0Before = await tokenManager.getTokenBalance(token0.address, CONTRACT_ADDRESS);
+  // const token1Before = await tokenManager.getTokenBalance(token1.address, CONTRACT_ADDRESS);
+  // logger.info(`Contract token0: ${formatBalance(token0.address, token0Before)}`);
+  // logger.info(`Contract token1: ${formatBalance(token1.address, token1Before)}`);
 
   // Build the swap step
   const step = buildSwapStep({
