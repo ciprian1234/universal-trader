@@ -18,8 +18,9 @@ import { ethers } from 'ethers';
 // ========================================================================================
 
 // input pool from DB
-const DB_POOL_ID = '1:0x0400e42dd46a7f1ee1d665d38a4b33e4cf791f41'; // Uniswap-V3 USDC-WETH 0.05% on Ethereum mainnet
-const ZERO_FOR_ONE = false; // swap direction: token0 -> token1 if true, token1 -> token0 if false
+const DB_POOL_ID = '1:0x008d9d457ad0a75c83d9a5e2b8e4ce89232b5083'; // Uniswap-V3 USDC-WETH 0.05% on Ethereum mainnet
+const ZERO_FOR_ONE = true; // swap direction: token0 -> token1 if true, token1 -> token0 if false
+const amountInFormatted = '0.01'; // human readable amount to swap (e.g. 1.5)
 
 // ========================================================================================
 // INIT COMPONENTS
@@ -143,7 +144,7 @@ async function main() {
   // await wrapETH(wallet, ethers.parseEther('10'));
 
   // Fund the contract with token0 or token1 (WETH in this case)
-  const amountIn = ethers.parseUnits('0.0001', ZERO_FOR_ONE ? token0.decimals : token1.decimals); // 1 WETH
+  const amountIn = ethers.parseUnits(amountInFormatted, ZERO_FOR_ONE ? token0.decimals : token1.decimals); // 1 WETH
   await fundContract(wallet, ZERO_FOR_ONE ? token0 : token1, amountIn);
 
   // Balances before

@@ -7,7 +7,7 @@ import * as V3 from './uniswap-v3';
 import * as V4 from './uniswap-v4';
 import type { PoolEvent, V2SyncEvent, V3SwapEvent, V4SwapEvent } from '../interfaces';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
-import type { ChainConfig, DexConfig, DexV2Config, DexV3Config } from '@/config/models';
+import type { ChainConfig, DexConfig, DexV2Config, DexV3Config, DexV4Config } from '@/config/models';
 import { createLogger, printPool, safeStringify } from '@/utils';
 import type { Blockchain } from '../blockchain';
 import type { WorkerDb } from '../../db';
@@ -64,6 +64,7 @@ export class DexAdapter {
       } else if (config.protocol === 'v4') {
         this.blockchain.initContract(config.poolManagerAddress, V4.POOL_MANAGER_ABI);
         this.blockchain.initContract(config.stateViewAddress, V4.STATE_VIEW_ABI);
+        this.blockchain.initContract(config.positionManagerAddress, V4.POSITION_MANAGER_ABI);
       } else {
         throw new Error(`Unsupported DexConfig: ${safeStringify(config)}`);
       }
@@ -103,13 +104,14 @@ export class DexAdapter {
     let pool = this.storedPools.get(event.poolId) ?? null;
     if (pool) {
       this.logger.debug(`Found pool with id: ${pool.id} in storedPools cache, initializing from storage...`);
-      pool = await this.initPoolFromStorage(pool, event);
+      pool = this.initPoolFromStorage(pool, event);
       this.deriveTokenPricesAndLiquidity(pool);
       this.syncToStorage(pool, false); // update cache only
     } else {
       this.logger.info(`Pool for event ${event.poolId} not found in cache, introspecting from event data...`);
       if (event.protocol === 'v2') pool = await V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
       else if (event.protocol === 'v3') pool = await V3.introspectPoolFromEvent(ctx, event as V3SwapEvent);
+      else if (event.protocol === 'v4') pool = await V4.introspectPoolFromEvent(ctx, event as V4SwapEvent);
       else throw new Error(`Unsupported pool event: ${safeStringify(event)}`);
       pool.venue.name = this.identifyVenueNameForPool(pool);
       this.deriveTokenPricesAndLiquidity(pool);
@@ -118,7 +120,7 @@ export class DexAdapter {
     return pool;
   }
 
-  private async initPoolFromStorage(storedPool: DexPoolState, poolEvent: PoolEvent | undefined): Promise<DexPoolState> {
+  private initPoolFromStorage(storedPool: DexPoolState, poolEvent: PoolEvent | undefined): DexPoolState {
     let initializedPool: DexPoolState;
     if (storedPool.protocol === 'v2') {
       initializedPool = V2.initPool(this.blockchain, {
@@ -128,13 +130,24 @@ export class DexAdapter {
         event: poolEvent as V2SyncEvent,
       });
     } else if (storedPool.protocol === 'v3') {
-      initializedPool = await V3.initPool(this.blockchain, {
+      initializedPool = V3.initPool(this.blockchain, {
         poolAddress: storedPool.address,
         tokenPair: storedPool.tokenPair,
         venue: storedPool.venue,
         feeBps: storedPool.feeBps,
         tickSpacing: storedPool.tickSpacing,
         event: poolEvent as V3SwapEvent,
+      });
+    } else if (storedPool.protocol === 'v4') {
+      initializedPool = V4.initPool(this.blockchain, {
+        poolKeyHash: storedPool.poolKeyHash,
+        poolManagerAddress: storedPool.address, // all V4 pools share the same poolManagerAddress
+        tokenPair: storedPool.tokenPair,
+        venue: storedPool.venue,
+        feeBps: storedPool.feeBps,
+        tickSpacing: storedPool.tickSpacing,
+        hooks: storedPool.hooks,
+        event: poolEvent as V4SwapEvent,
       });
     } else throw new Error(`Unsupported init operation for pool: ${safeStringify(storedPool)}`);
     return initializedPool;
@@ -267,6 +280,7 @@ export class DexAdapter {
     const dexConfigListByProtocol = this.chainConfig.dexConfigs.filter((config) => config.protocol === pool.protocol);
     if (pool.protocol === 'v2') return V2.identifyVenueForPool(pool, dexConfigListByProtocol as DexV2Config[]);
     else if (pool.protocol === 'v3') return V3.identifyVenueForPool(pool, dexConfigListByProtocol as DexV3Config[]);
+    else if (pool.protocol === 'v4') return V4.identifyVenueForPool(pool, dexConfigListByProtocol as DexV4Config[]);
     else return 'unknown';
   }
 

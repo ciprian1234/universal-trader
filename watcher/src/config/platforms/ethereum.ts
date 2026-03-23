@@ -89,6 +89,15 @@ const ethereum: ChainConfig = {
       quoterAddress: '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
       initCodeHash: '0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54',
     },
+    {
+      name: 'uniswap-v4',
+      protocol: 'v4',
+      poolManagerAddress: '0x000000000004444c5dc75cB358380D2e3dE08A90',
+      positionManagerAddress: '0xbd216513d74c8cf14cf4747e6aaa6420ff64ee9e',
+      stateViewAddress: '0x7ffe42c4a5deea5b0fec41c94c136cf115597227',
+      routerAddress: '0x66a9893cc07d91d95644aedd05d03f95e1dba8af',
+      quoterAddress: '0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203',
+    },
   ],
 
   arbitrage: {

@@ -164,7 +164,7 @@ export class BlockManager {
           this.EVENT_TOPICS.V3_SWAP,
           // this.EVENT_TOPICS.V3_MINT, // for now ignore mint/burn events
           // this.EVENT_TOPICS.V3_BURN, // for now ignore mint/burn events
-          // this.EVENT_TOPICS.V4_SWAP,
+          this.EVENT_TOPICS.V4_SWAP,
           // this.EVENT_TOPICS.V4_MODIFY_LIQUIDITY,
         ],
       ],
@@ -389,24 +389,21 @@ export class BlockManager {
     const parsed = this.EVENT_INTERFACES.V4_SWAP.parseLog({ topics: log.topics, data: log.data });
     if (!parsed) throw new Error('Failed to parse V4 Swap');
 
+    const poolKeyHash = parsed.args.poolId.toLowerCase();
+
     return {
       // event identification
       protocol: 'v4',
       name: 'swap',
       sourceAddress,
-      poolId: dexPoolId(this.chainId, parsed.args.poolId.toLowerCase()), // for v4 poolId is emitted in the event
+      poolId: dexPoolId(this.chainId, poolKeyHash), // for v4 poolId is emitted in the event
+      poolKeyHash,
 
       // event data
       sqrtPriceX96: parsed.args.sqrtPriceX96,
       liquidity: parsed.args.liquidity,
       tick: parsed.args.tick,
-      meta: {
-        blockNumber: log.blockNumber,
-        blockReceivedTimestamp: this.currentBlock.receivedTimestamp,
-        transactionHash: log.transactionHash,
-        transactionIndex: log.transactionIndex,
-        logIndex: log.index,
-      },
+      meta,
     };
   }
 
@@ -415,12 +412,15 @@ export class BlockManager {
     const parsed = this.EVENT_INTERFACES.V4_MODIFY_LIQUIDITY.parseLog({ topics: log.topics, data: log.data });
     if (!parsed) throw new Error('Failed to parse V4 ModifyLiquidity');
 
+    const poolKeyHash = parsed.args.poolId.toLowerCase();
+
     return {
       // event identification
       protocol: 'v4',
       name: 'modify-liquidity',
       sourceAddress,
-      poolId: dexPoolId(this.chainId, parsed.args.poolId.toLowerCase()), // for v4 poolId is emitted in the event
+      poolId: dexPoolId(this.chainId, poolKeyHash), // for v4 poolId is emitted in the event
+      poolKeyHash,
 
       // event data
       tickLower: parsed.args.tickLower,

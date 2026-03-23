@@ -2,6 +2,8 @@
 
 - integrate burn/mint events for V3
 - fetch and keep in sync ticks liquidity for V3 conditionally
+- wallet manager => periodically convert profit into ETH to pay for GAS
+- deploy new contract
 
 ## Arbitrage Features
 
@@ -16,8 +18,7 @@ Expand: add gas cost USD/ gasUsage per edge?
 
 ## Upgrade arbitrage contract
 
-- upgrade arbitrage contract to execute swaps without knowing router address (only dex protocol)
-- upgrade contract to wrap/unwrap ETH to pay gas fee
+- upgrade contract to support V4 swap (update gas manager estimations)
 
 ## NOTES
 

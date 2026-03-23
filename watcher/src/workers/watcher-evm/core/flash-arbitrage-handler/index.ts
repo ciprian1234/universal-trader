@@ -468,7 +468,7 @@ export class FlashArbitrageHandler {
 
     // Create coinbase bribe transaction
     const unsignedBribeTx = {
-      to: '0x0000000000000000000000000000000000000000', // Placeholder (builder sets block.coinbase)
+      to: ethers.ZeroAddress, // Placeholder (builder sets block.coinbase)
       value: bribeWEI,
       data: '0x',
       nonce: nonce + 1,

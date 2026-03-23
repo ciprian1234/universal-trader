@@ -4,15 +4,17 @@
 import { ethers, AbiCoder } from 'ethers';
 import type { TradeQuote, V4SwapEvent } from '../interfaces';
 import * as SqrtMath from './lib/sqrtPriceMath';
-import { dexPoolId, type DexV4PoolState } from '@/shared/data-model/layer1';
+import { dexPoolId, type DexV4PoolState, type DexVenue, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
 import { createLogger } from '@/utils';
-import type { DexAdapterContext } from './interfaces';
+import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
+import type { Blockchain } from '../blockchain';
+import type { DexV4Config } from '@/config/models';
 
 // ================================================================================================
 // Types specific to Uniswap V4
 // ================================================================================================
-export type PoolKey = {
+export type PoolKeyData = {
   currency0: string;
   currency1: string;
   fee: number;
@@ -53,8 +55,12 @@ export const QUOTER_ABI = [
 
 // ✅ ABI for the StateView / Lens contract
 export const STATE_VIEW_ABI = [
-  'function getSlot0(address manager, bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
-  'function getLiquidity(address manager, bytes32 poolId) external view returns (uint128 liquidity)',
+  'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
+  'function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity)',
+];
+
+export const POSITION_MANAGER_ABI = [
+  'function poolKeys(bytes25 poolId) external view returns (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)',
 ];
 
 export const STATE_VIEW_ABI_2 = [
@@ -237,30 +243,38 @@ export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPair
   for (const combo of POOL_COMBINATIONS) {
     try {
       // 1. Generate Pool Key
-      const poolKey = {
+      const poolKeyData = {
         currency0: tokenPair.token0.address,
         currency1: tokenPair.token1.address,
         fee: combo.fee,
         tickSpacing: combo.tickSpacing,
-        hooks: ethers.ZeroAddress, // Assuming standard pools without hooks (TBD: review)
+        hooks: ethers.ZeroAddress, // standard pools without hooks
       };
 
       // 2. Calculate Pool ID (Hash of Key)
-      const poolIdHash = getPoolId(poolKey); // previous version for testing
+      const poolKeyHash = getPoolId(poolKeyData); // previous version for testing
 
       // 3. Check if initialized via Slot0 => If sqrtPriceX96 is 0, pool is not initialized
       // console.log(
-      //   `Checking V4 pool for ${symbol0}/${symbol1} (Fee: ${combo.fee}, TickSpacing: ${combo.tickSpacing}) at ID: ${poolIdHash}`,
+      //   `Checking V4 pool for ${symbol0}/${symbol1} (Fee: ${combo.fee}, TickSpacing: ${combo.tickSpacing}) at ID: ${poolKeyHash}`,
       // );
       // Use raw storage reader
-      const slot0 = await stateViewContract.getSlot0(poolIdHash);
+      const slot0 = await stateViewContract.getSlot0(poolKeyHash);
       if (!slot0.sqrtPriceX96 || slot0.sqrtPriceX96 === 0n) {
         logger.warn(`No V4 pool found for ${symbol0}/${symbol1} (Fee: ${combo.fee})`);
         continue; // Pool not initialized
       }
 
       // Found a pool!
-      const poolState = await initPool(ctx, poolIdHash, poolKey, tokenPair);
+      const poolState = initPool(ctx.blockchain, {
+        poolKeyHash,
+        poolManagerAddress: ctx.config.poolManagerAddress,
+        tokenPair,
+        venue: { name: 'uniswap-v4', type: 'dex', chainId: ctx.blockchain.chainId },
+        feeBps: combo.fee,
+        tickSpacing: combo.tickSpacing,
+        hooks: ethers.ZeroAddress, // standard pools without hooks
+      });
       pools.push(poolState);
     } catch (error) {
       // Pool check failed
@@ -271,32 +285,75 @@ export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPair
   return pools;
 }
 
+// =====================================================================================================================
+// Introspect pool from event - also apply event data to pool state (for faster updates)
+// =====================================================================================================================
+export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event: V4SwapEvent): Promise<DexV4PoolState> {
+  const cfg = ctx.configs.find((config) => config.name === 'uniswap-v4') as DexV4Config;
+  if (!cfg) throw new Error('Uniswap V4 config not found for introspection');
+  let positionManagerContract = ctx.blockchain.getContract(cfg.positionManagerAddress)!;
+
+  const bytes25PoolId = event.poolKeyHash.slice(0, 52) as `0x${string}`;
+  const poolKeyData = await positionManagerContract.poolKeys(bytes25PoolId);
+
+  const token0 = await ctx.tokenManager.ensureTokenRegistered(poolKeyData.currency0, 'address');
+  const token1 = await ctx.tokenManager.ensureTokenRegistered(poolKeyData.currency1, 'address');
+  const tokenPair = { token0, token1, key: `${token0.symbol}-${token1.symbol}` };
+
+  const poolState = initPool(ctx.blockchain, {
+    poolKeyHash: event.poolKeyHash,
+    poolManagerAddress: event.sourceAddress, // In V4, the event is emitted by the PoolManager for the specific pool ID
+    tokenPair,
+    venue: { name: 'uniswap-v4' as const, type: 'dex' as const, chainId: ctx.blockchain.chainId },
+    feeBps: Number(poolKeyData.fee),
+    tickSpacing: Number(poolKeyData.tickSpacing),
+    hooks: poolKeyData.hooks,
+    event,
+  });
+  return poolState;
+}
+
+// identify venue for pool given a list of V4 configs (used for introspection)
+export function identifyVenueForPool(pool: DexV4PoolState, dexV4Configs: DexV4Config[]): DexVenueName {
+  for (const config of dexV4Configs) {
+    if (config.poolManagerAddress.toLowerCase() === pool.address.toLowerCase()) return config.name;
+  }
+  throw new Error(`Venue not found for V4 pool with manager address: ${pool.address}`);
+  // return 'unknown';
+}
+
 /**
  * 🏗 INIT POOL: Initialize V4 pool state
- * Note: In V4, we don't have a specific pool contract, we interact with PoolManager
  */
-// @ts-ignore - Signature mismatch with base due to extra poolKey params needed for initialization logic
-async function initPool(ctx: DexAdapterContext, id, poolKeyData: any, tokenPair: TokenPairOnChain): Promise<DexV4PoolState> {
-  if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 pool initialization');
+export function initPool(
+  blockchain: Blockchain,
+  input: {
+    poolKeyHash: string;
+    poolManagerAddress: string;
+    tokenPair: TokenPairOnChain;
+    venue: DexVenue;
+    feeBps: number;
+    tickSpacing: number;
+    hooks: string;
+    event?: V4SwapEvent;
+  },
+): DexV4PoolState {
+  // if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 pool initialization');
   // Use provided key or basic recovery (Tokens must be known contextually or passed in)
-  if (!poolKeyData) {
-    throw new Error('PoolKey data required to initialize V4 Pool State structure');
-  }
 
-  const poolState: DexV4PoolState = {
-    id: dexPoolId(ctx.blockchain.chainId, id), // TODO: ensure its correct
+  const newPool: DexV4PoolState = {
+    id: dexPoolId(blockchain.chainId, input.poolKeyHash), // TODO: ensure its correct
     error: null,
-    poolKey: id, // TODO: ensure its correct
-    address: ctx.config.poolManagerAddress, // V4 uses PoolManager for all pools
-    venue: { name: ctx.config.name, type: 'dex', chainId: ctx.blockchain.chainId },
+    poolKeyHash: input.poolKeyHash, // TODO: ensure its correct
+    address: input.poolManagerAddress, // all V4 pools share the same poolManagerAddress
+    venue: { name: input.venue.name, type: input.venue.type, chainId: blockchain.chainId },
     protocol: 'v4',
-    pairId: getCanonicalPairId(tokenPair.token0, tokenPair.token1),
-    tokenPair,
+    pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),
+    tokenPair: input.tokenPair,
 
-    tickSpacing: poolKeyData.tickSpacing,
-    // hooks: poolKeyData.hooks,
-
-    feeBps: poolKeyData.fee,
+    tickSpacing: input.tickSpacing,
+    hooks: input.hooks,
+    feeBps: input.feeBps,
 
     sqrtPriceX96: 0n,
     tick: 0,
@@ -308,7 +365,8 @@ async function initPool(ctx: DexAdapterContext, id, poolKeyData: any, tokenPair:
     totalLiquidityUSD: 0, // added later after we have dynamic data
   };
 
-  return poolState;
+  if (input.event) updatePoolFromEvent(newPool, input.event);
+  return newPool;
 }
 
 /**
@@ -466,19 +524,15 @@ export function getFeePercent(pool: DexV4PoolState): number {
  * 🔄 UPDATE POOL STATE FROM V4 EVENTS
  */
 export function updatePoolFromEvent(pool: DexV4PoolState, event: V4SwapEvent): DexV4PoolState {
-  if (!event.sqrtPriceX96 || !event.liquidity) throw new Error(`❌ Invalid PoolEvent for: ${pool.id}`);
-  pool.latestEventMeta = { ...event.meta };
-
-  // virtual reserves are directly from event
-  // V4 specific data from Swap event
   const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
 
   // Update V4 specific state if available
   pool.reserve0 = reserve0;
   pool.reserve1 = reserve1;
-  pool.sqrtPriceX96 = event.sqrtPriceX96!;
-  pool.tick = event.tick!;
-  pool.liquidity = event.liquidity!;
+  pool.sqrtPriceX96 = event.sqrtPriceX96;
+  pool.tick = event.tick;
+  pool.liquidity = event.liquidity;
+  pool.latestEventMeta = event.meta;
 
   // Update derived fields
   const { token0, token1 } = pool.tokenPair;
@@ -508,7 +562,7 @@ export async function getTickBitmap(ctx: DexAdapterContext, poolId: string, word
  * Calculate V4 Pool ID from Key
  * Note: V4 Pool ID is keccak256 hash of the ABI-encoded PoolKey struct
  */
-function getPoolId(key: PoolKey): string {
+function getPoolId(key: PoolKeyData): string {
   const abiCoder = AbiCoder.defaultAbiCoder();
   return ethers.keccak256(
     abiCoder.encode(

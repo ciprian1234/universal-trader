@@ -91,8 +91,8 @@ export interface DexV3PoolState extends DexPoolStateBase, ConcentratedLiquidityF
 
 export interface DexV4PoolState extends DexPoolStateBase, ConcentratedLiquidityFields {
   protocol: 'v4';
-  poolKey: string; // bytes32 — V4 identifies pools by poolKey, not address
-  hooks?: string; // V4 hooks address
+  poolKeyHash: string; // bytes32 — V4 identifies pools by poolKeyHash, not address
+  hooks: string; // V4 hooks address
 }
 
 export interface EventMetadata {
@@ -152,9 +152,9 @@ export interface IVenueStateStore {
   onChange(listener: VenueChangeListener): () => void;
 }
 
-/** DEX pool ID: "chainId:poolAddress" e.g. "1:0xb4e16d0168..." */
-export function dexPoolId(chainId: number, address: string): string {
-  return `${chainId}:${address.toLowerCase()}`;
+/** DEX pool ID: "chainId:poolId" e.g. "1:0xb4e16d0168..." */
+export function dexPoolId(chainId: number, poolId: string): string {
+  return `${chainId}:${poolId.toLowerCase()}`;
 }
 
 /** CEX market ID: "exchangeName:rawSymbol" e.g. "binance:ETHUSDC" */

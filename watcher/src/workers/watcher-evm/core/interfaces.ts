@@ -63,6 +63,7 @@ export interface V3BurnEvent extends PoolEventBase {
 export interface V4SwapEvent extends PoolEventBase {
   protocol: 'v4';
   name: 'swap';
+  poolKeyHash: string; // keccak256(token0, token1, fee) used as pool identifier in v4 events
   sqrtPriceX96: bigint;
   tick: number;
   liquidity: bigint;
@@ -71,6 +72,7 @@ export interface V4SwapEvent extends PoolEventBase {
 export interface V4ModifyLiquidityEvent extends PoolEventBase {
   protocol: 'v4';
   name: 'modify-liquidity';
+  poolKeyHash: string; // keccak256(token0, token1, fee) used as pool identifier in v4 events
   tickLower: number;
   tickUpper: number;
   liquidityDelta: bigint; // positive = add, negative = remove

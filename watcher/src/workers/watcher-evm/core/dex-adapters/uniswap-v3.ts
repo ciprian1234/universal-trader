@@ -75,8 +75,20 @@ export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPair
       const poolAddress = await factoryContract.getPool(tokenPair.token0.address, tokenPair.token1.address, fee);
       if (poolAddress === ethers.ZeroAddress) continue;
 
+      // init pool contract
+      const contract = ctx.blockchain.initContract(poolAddress, POOL_ABI);
+
+      const tickSpacing = await contract.tickSpacing();
+      if (!tickSpacing) throw new Error(`Failed to fetch tick spacing for pool ${poolAddress}`);
+
       const venue = { name: ctx.config.name, type: 'dex' as const, chainId: ctx.blockchain.chainId };
-      const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, feeBps: fee });
+      const poolState = initPool(ctx.blockchain, {
+        poolAddress,
+        tokenPair,
+        venue,
+        feeBps: fee,
+        tickSpacing: Number(tickSpacing),
+      });
       pools.push(poolState);
     } catch (error) {
       // Pool doesn't exist for this fee tier, continue
@@ -95,22 +107,27 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
   let poolContract = ctx.blockchain.getContract(poolAddress);
   if (!poolContract) poolContract = ctx.blockchain.initContract(poolAddress, POOL_ABI);
 
-  const [token0Address, token1Address, fee] = await Promise.all([
+  const [token0Address, token1Address, fee, tickSpacing] = await Promise.all([
     poolContract.token0(),
     poolContract.token1(),
     poolContract.fee(),
+    poolContract.tickSpacing(),
   ]);
   const token0 = await ctx.tokenManager.ensureTokenRegistered(token0Address, 'address');
   const token1 = await ctx.tokenManager.ensureTokenRegistered(token1Address, 'address');
-
-  // if (!token0.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token0 ${token0.symbol} (${token0.address}) is not trusted!`);
-  // if (!token1.trusted) logger.warn(`⚠️ Pool:${poolAddress} Token1 ${token1.symbol} (${token1.address}) is not trusted!`);
   const tokenPair = { token0, token1, key: `${token0.symbol}-${token1.symbol}` };
 
   // note: venueName its from outer function (DEX_ADAPTER.handleEventForUnknownPool)
   const venue = { name: 'unknown' as const, type: 'dex' as const, chainId: ctx.blockchain.chainId };
 
-  const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, feeBps: Number(fee), event });
+  const poolState = initPool(ctx.blockchain, {
+    poolAddress,
+    tokenPair,
+    venue,
+    feeBps: Number(fee),
+    tickSpacing: Number(tickSpacing),
+    event,
+  });
   return poolState;
 }
 
@@ -146,22 +163,19 @@ export function computePoolAddress(
  * 🏗 INIT POOL: Initialize V3 pool state with static data
  *
  */
-export async function initPool(
+export function initPool(
   blockchain: Blockchain,
   input: {
     poolAddress: string;
     tokenPair: TokenPairOnChain;
     venue: DexVenue;
     feeBps: number;
-    tickSpacing?: number; // optional, can be fetched from chain or from storage (if we have it)
+    tickSpacing: number;
     event?: V3SwapEvent; // optional event for initializing dynamic fields if available (used when introspecting from event)
   },
-): Promise<DexV3PoolState> {
-  // init pool contract
-  const contract = blockchain.initContract(input.poolAddress, POOL_ABI);
-
-  const tickSpacing = input.tickSpacing ?? (await contract.tickSpacing());
-  if (!tickSpacing) throw new Error(`Failed to fetch tick spacing for pool ${input.poolAddress}`);
+): DexV3PoolState {
+  // ensure pool contract its initialized
+  blockchain.initContract(input.poolAddress, POOL_ABI);
 
   // Fetch pool static data
   // const [feeGrowthGlobal0X128, feeGrowthGlobal1X128] = await Promise.all([
@@ -178,7 +192,7 @@ export async function initPool(
     pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),
     tokenPair: input.tokenPair,
     feeBps: input.feeBps, // Fee in basis points (500, 3000, 10000)
-    tickSpacing: Number(tickSpacing), // Tick spacing for the pool
+    tickSpacing: input.tickSpacing, // Tick spacing for the pool
 
     // init dynamic fields to zero (updated later)
     sqrtPriceX96: 0n,

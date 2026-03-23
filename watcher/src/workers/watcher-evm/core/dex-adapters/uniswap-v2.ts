@@ -55,7 +55,7 @@ export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPair
   if (poolAddress === ethers.ZeroAddress) return []; // no pool exists for this pair
 
   const venue = { name: ctx.config.name, type: 'dex' as const, chainId: ctx.blockchain.chainId };
-  const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue });
+  const poolState = initPool(ctx.blockchain, { poolAddress, tokenPair, venue });
   return [poolState];
 }
 
@@ -78,7 +78,7 @@ export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event:
   // note: venueName its from outer function (DEX_ADAPTER.handleEventForUnknownPool)
   const venue = { name: 'unknown' as const, type: 'dex' as const, chainId: ctx.blockchain.chainId };
 
-  const poolState = await initPool(ctx.blockchain, { poolAddress, tokenPair, venue, event });
+  const poolState = initPool(ctx.blockchain, { poolAddress, tokenPair, venue, event });
   return poolState;
 }
 

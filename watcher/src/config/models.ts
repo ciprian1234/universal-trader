@@ -28,6 +28,7 @@ const DexV3ConfigSchema = DexConfigBase.extend({
 const DexV4ConfigSchema = DexConfigBase.extend({
   protocol: z.literal('v4'),
   poolManagerAddress: z.string().length(42),
+  positionManagerAddress: z.string().length(42),
   stateViewAddress: z.string().length(42),
   quoterAddress: z.string().length(42),
 });

@@ -99,6 +99,18 @@ export class PriceOracle {
       });
     }
 
+    // set native ETH price as well => derive from WETH
+    const weth = this.tokenManager.findTokenBySymbol('WETH');
+    const eth = this.tokenManager.getToken(ethers.ZeroAddress);
+    if (!weth || !eth) throw new Error('WETH or ETH token not found for price anchoring');
+    const resolvedWETHPrice = this.resolvedPrices.get(weth.address)!;
+    this.resolvedPrices.set(eth.address, {
+      token: eth,
+      priceUSD: resolvedWETHPrice.priceUSD, // 1 ETH = 1 WETH
+      source: 'anchor',
+      updatedAt: Date.now(),
+    });
+
     // log prices after fetching
     this.logPrices();
   }

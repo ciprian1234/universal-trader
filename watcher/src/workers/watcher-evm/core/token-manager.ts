@@ -74,6 +74,16 @@ export class TokenManager {
     // load trusted tokens in cache (coingecko or uniswap token lists)
     await this.loadTrustedTokens('coingecko');
 
+    // ensure ETH is registered as a token
+    this.tokens.set(ethers.ZeroAddress, {
+      chainId: this.chainConfig.chainId,
+      address: ethers.ZeroAddress,
+      symbol: 'ETH',
+      name: 'Ether',
+      decimals: 18,
+      trusted: true,
+    });
+
     // ensure stablecoins, discovery tokens, and price anchor tokens are registered
     await Promise.all(this.chainConfig.stablecoinTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
     await Promise.all(this.chainConfig.discoveryTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
