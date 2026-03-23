@@ -112,9 +112,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     uint256 amountOutMin; // for slippage protection
     uint24 feeBps; // for v2 usually 30 (0.3%), for v3 it represents the fee tier (500, 3000, 10000)
     bool zeroForOne; // indicates swap direction
-    bytes32 poolId; // For V4/Balancer pool identification
-    int128 curveIndexIn; // For Curve token index
-    int128 curveIndexOut; // For Curve token index
     bytes extraData; // For custom/future protocols (For V4: encoded (int24 tickSpacing, address hooks))
   }
 

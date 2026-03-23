@@ -82,13 +82,6 @@ export const FLASH_ARBITRAGE_ABI = [
     type: 'function',
   },
   {
-    inputs: [],
-    name: 'emergencyWithdrawETH',
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-  {
     inputs: [
       {
         components: [
@@ -131,21 +124,6 @@ export const FLASH_ARBITRAGE_ABI = [
             internalType: 'bool',
             name: 'zeroForOne',
             type: 'bool',
-          },
-          {
-            internalType: 'bytes32',
-            name: 'poolId',
-            type: 'bytes32',
-          },
-          {
-            internalType: 'int128',
-            name: 'curveIndexIn',
-            type: 'int128',
-          },
-          {
-            internalType: 'int128',
-            name: 'curveIndexOut',
-            type: 'int128',
           },
           {
             internalType: 'bytes',
@@ -208,21 +186,6 @@ export const FLASH_ARBITRAGE_ABI = [
                 internalType: 'bool',
                 name: 'zeroForOne',
                 type: 'bool',
-              },
-              {
-                internalType: 'bytes32',
-                name: 'poolId',
-                type: 'bytes32',
-              },
-              {
-                internalType: 'int128',
-                name: 'curveIndexIn',
-                type: 'int128',
-              },
-              {
-                internalType: 'int128',
-                name: 'curveIndexOut',
-                type: 'int128',
               },
               {
                 internalType: 'bytes',
@@ -329,6 +292,25 @@ export const FLASH_ARBITRAGE_ABI = [
     ],
     name: 'uniswapV3SwapCallback',
     outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      {
+        internalType: 'bytes',
+        name: 'data',
+        type: 'bytes',
+      },
+    ],
+    name: 'unlockCallback',
+    outputs: [
+      {
+        internalType: 'bytes',
+        name: '',
+        type: 'bytes',
+      },
+    ],
     stateMutability: 'nonpayable',
     type: 'function',
   },

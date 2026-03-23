@@ -19,8 +19,8 @@ import { ethers } from 'ethers';
 
 // input pool from DB
 const DB_POOL_ID = '1:0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed181e22d7';
-const ZERO_FOR_ONE = false;
-const amountInFormatted = '1'; // human readable amount to swap
+const ZERO_FOR_ONE = true;
+const amountInFormatted = '0.01'; // human readable amount to swap
 
 // WRAP ETH if needed
 let WRAP_ETH_AMOUNT: string | null = null;
@@ -75,9 +75,6 @@ function buildSwapStep(params: {
     amountIn: params.amountIn,
     amountOutMin: params.amountOutMin,
     zeroForOne: params.zeroForOne,
-    poolId: pool.protocol === 'v4' ? pool.poolKeyHash : '0x0000000000000000000000000000000000000000000000000000000000000000',
-    curveIndexIn: 0,
-    curveIndexOut: 0,
     extraData: pool.protocol === 'v4' ? abiCoder.encode(['int24', 'address'], [pool.tickSpacing, pool.hooks]) : '0x',
   };
 }

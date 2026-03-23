@@ -56,6 +56,8 @@ export class FlashArbitrageHandler {
   private readonly walletManager: WalletManager;
   private readonly flashbotsService?: FlashbotsService; // OPTIONAL Flashbots service
 
+  private readonly abiCoder = new ethers.AbiCoder();
+
   // config
   private readonly ENABLE_FLASH_ARBITRAGE: boolean;
   private readonly USE_FLASHBOTS: boolean;
@@ -529,10 +531,10 @@ export class FlashArbitrageHandler {
         zeroForOne: step.pool.tokenPair.token0.address === step.tokenIn.address, // determine swap direction based on tokenIn
 
         // extra params for other DEX protocols (not used for now => set to 0 or empty)
-        poolId: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        curveIndexIn: 0,
-        curveIndexOut: 0,
-        extraData: '0x',
+        extraData:
+          step.pool.protocol === 'v4'
+            ? this.abiCoder.encode(['int24', 'address'], [step.pool.tickSpacing, step.pool.hooks])
+            : '0x',
       });
     }
 

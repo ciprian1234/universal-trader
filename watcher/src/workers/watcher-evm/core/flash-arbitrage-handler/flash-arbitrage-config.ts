@@ -19,9 +19,6 @@ export interface SwapStepOnContract {
   zeroForOne: boolean;
 
   // EXTRA PROPERTIES FOR NEW DEX TYPES
-  poolId: string; // For V4/Balancer pool identification
-  curveIndexIn: number; // For Curve token index (review data type)
-  curveIndexOut: number; // For Curve token index (review data type)
   extraData: string; // For custom/future protocols
 }
 
