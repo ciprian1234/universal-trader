@@ -8,6 +8,7 @@ import {IERC20} from '@balancer-labs/v2-interfaces/contracts/solidity-utils/open
 import {IVault} from '@balancer-labs/v2-interfaces/contracts/vault/IVault.sol';
 import {IAsset} from '@balancer-labs/v2-interfaces/contracts/vault/IAsset.sol';
 import {IFlashLoanRecipient} from '@balancer-labs/v2-interfaces/contracts/vault/IFlashLoanRecipient.sol';
+// import 'hardhat/console.sol';
 
 // ========================================================================================
 // UNISWAP V2 INTERFACES
@@ -35,57 +36,26 @@ interface IUniswapV3Pool {
 // ========================================================================================
 // UNISWAP V4 INTERFACES
 // ========================================================================================
-
-// Currency type for V4 (address(0) = native ETH)
-type Currency is address;
-
-library CurrencyLibrary {
-  function balanceOf(Currency currency, address account) internal view returns (uint256) {
-    if (Currency.unwrap(currency) == address(0)) {
-      return account.balance;
-    }
-    return IERC20Z(Currency.unwrap(currency)).balanceOf(account);
+interface IPoolManager {
+  struct PoolKey {
+    address currency0;
+    address currency1;
+    uint24 fee;
+    int24 tickSpacing;
+    address hooks;
   }
-}
 
-// Hook interface placeholder
-interface IHooks {}
-
-// PoolKey identifies a pool in V4
-struct PoolKey {
-  Currency currency0;
-  Currency currency1;
-  uint24 fee;
-  int24 tickSpacing;
-  IHooks hooks;
-}
-
-// Universal Router interface
-interface IUniversalRouter {
-  function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
-}
-
-// V4Router params
-interface IV4Router {
-  struct ExactInputSingleParams {
-    PoolKey poolKey;
+  struct SwapParams {
     bool zeroForOne;
-    uint128 amountIn;
-    uint128 amountOutMinimum;
-    bytes hookData;
+    int256 amountSpecified;
+    uint160 sqrtPriceLimitX96;
   }
-}
 
-// Commands library constants
-library Commands {
-  uint8 internal constant V4_SWAP = 0x10;
-}
-
-// Actions library constants
-library Actions {
-  uint8 internal constant SWAP_EXACT_IN_SINGLE = 0x06;
-  uint8 internal constant SETTLE_ALL = 0x0c;
-  uint8 internal constant TAKE_ALL = 0x0d;
+  function unlock(bytes calldata data) external returns (bytes memory);
+  function swap(PoolKey memory key, SwapParams memory params, bytes calldata hookData) external returns (int256 delta);
+  function sync(address currency) external;
+  function settle() external payable returns (uint256);
+  function take(address currency, address to, uint256 amount) external;
 }
 
 // ============================================
@@ -109,7 +79,7 @@ interface ICurvePoolUnderlying {
 
 contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   using SafeERC20 for IERC20Z; // enables safeApprove, safeTransfer, etc.
-  using CurrencyLibrary for Currency;
+  // using CurrencyLibrary for Currency;
 
   address public owner;
   IVault private constant vault = IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
@@ -288,7 +258,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     uint160 sqrtPriceLimitX96 = step.zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1; // TBD: send this as parameter
 
     // V3 uses a callback to pull tokens, so we just call swap and handle the token transfer in the callback
-
     (int256 amount0, int256 amount1) = pool.swap(
       address(this),
       step.zeroForOne,
@@ -341,7 +310,81 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
   // V4 SWAP IMPLEMENTATION
   // ========================================================================================
-  function _swapOnV4(SwapStep memory step) internal {}
+  address private _activeV4PoolManager; // guard unlockCallback against malicious caller
+
+  function _swapOnV4(SwapStep memory step) internal {
+    require(step.amountIn <= uint256(type(int256).max), 'V4: amountIn overflow');
+
+    _activeV4PoolManager = step.poolAddress; // poolAddress = PoolManager for V4
+    bytes memory result = IPoolManager(step.poolAddress).unlock(abi.encode(step));
+    _activeV4PoolManager = address(0);
+
+    uint256 amountOut = abi.decode(result, (uint256));
+    require(amountOut >= step.amountOutMin, 'V4: insufficient amountOut');
+  }
+
+  // called by V4 PoolManager during unlock() to execute the swap logic and handle token transfers
+  function unlockCallback(bytes calldata data) external returns (bytes memory) {
+    require(msg.sender == _activeV4PoolManager, 'V4: invalid callback caller');
+
+    SwapStep memory step = abi.decode(data, (SwapStep));
+
+    // Decode tickSpacing and hooks from extraData
+    (int24 tickSpacing, address hooks) = abi.decode(step.extraData, (int24, address));
+
+    // Sort currencies for PoolKey (V4 requires currency0 < currency1)
+    (address currency0, address currency1) = step.tokenIn < step.tokenOut
+      ? (step.tokenIn, step.tokenOut)
+      : (step.tokenOut, step.tokenIn);
+
+    IPoolManager.PoolKey memory key = IPoolManager.PoolKey({
+      currency0: currency0,
+      currency1: currency1,
+      fee: step.feeBps,
+      tickSpacing: tickSpacing,
+      hooks: hooks
+    });
+
+    IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+      zeroForOne: step.zeroForOne,
+      amountSpecified: -int256(step.amountIn), // negative = exact input
+      sqrtPriceLimitX96: step.zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1
+    });
+
+    // Execute swap — returns BalanceDelta packed as int256
+    // Upper 128 bits = amount0 delta, Lower 128 bits = amount1 delta
+    // Negative delta = we owe, Positive delta = we receive
+    int256 delta = IPoolManager(msg.sender).swap(key, params, '');
+    int128 delta0 = int128(delta >> 128);
+    int128 delta1 = int128(delta);
+
+    // Settle negative deltas (pay what we owe): sync → transfer → settle
+    if (delta0 < 0) {
+      uint256 payment = uint256(uint128(-delta0));
+      IPoolManager(msg.sender).sync(currency0);
+      IERC20Z(currency0).safeTransfer(msg.sender, payment);
+      IPoolManager(msg.sender).settle();
+    }
+    if (delta1 < 0) {
+      uint256 payment = uint256(uint128(-delta1));
+      IPoolManager(msg.sender).sync(currency1);
+      IERC20Z(currency1).safeTransfer(msg.sender, payment);
+      IPoolManager(msg.sender).settle();
+    }
+
+    // Take positive deltas (receive what we're owed)
+    uint256 amountOut;
+    if (delta0 > 0) {
+      amountOut = uint256(uint128(delta0));
+      IPoolManager(msg.sender).take(currency0, address(this), amountOut);
+    }
+    if (delta1 > 0) {
+      amountOut = uint256(uint128(delta1));
+      IPoolManager(msg.sender).take(currency1, address(this), amountOut);
+    }
+
+    return abi.encode(amountOut);
+  }
 
   // ========================================================================================
   // CURVE SWAP IMPLEMENTATION
