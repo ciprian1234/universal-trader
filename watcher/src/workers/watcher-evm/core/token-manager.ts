@@ -244,7 +244,11 @@ export class TokenManager {
    * 📊 GET TOKEN BALANCE: Get balance for an address
    */
   async getTokenBalance(tokenAddress: string, walletAddress: string): Promise<bigint> {
-    const contract = new ethers.Contract(tokenAddress, this.erc20ABI, this.blockchain.provider);
-    return await contract.balanceOf(walletAddress);
+    if (tokenAddress === ethers.ZeroAddress) {
+      return await this.blockchain.getBalance(walletAddress); // ETH balance
+    } else {
+      const contract = new ethers.Contract(tokenAddress, this.erc20ABI, this.blockchain.provider);
+      return await contract.balanceOf(walletAddress);
+    }
   }
 }
