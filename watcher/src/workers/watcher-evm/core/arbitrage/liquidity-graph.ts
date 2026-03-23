@@ -4,6 +4,7 @@ import type { Logger } from '@/utils';
 import type { DexManager } from '../dex-manager';
 import type { TokenOnChain } from '@/shared/data-model/token';
 import type { DexPoolState } from '@/shared/data-model/layer1';
+import { ethers } from 'ethers';
 
 export type LiquidityGraphConfig = {
   minLiquidityUSD: number;
@@ -104,6 +105,10 @@ export class LiquidityGraph {
     // TODO: rename to updateGraphFromPool
     // Check liquidity threshold
     if (pool.totalLiquidityUSD < this.config.minLiquidityUSD) return false;
+    if (pool.protocol === 'v4' && pool.hooks !== ethers.ZeroAddress) {
+      this.logger.debug(`Skipping pool with hooks: ${pool.hooks} (ID: ${pool.id}) - simulation accuracy not guaranteed`);
+      return false; // skip pools with hooks for now due to simulation complexity
+    }
 
     const { token0, token1 } = pool.tokenPair;
 
