@@ -100,7 +100,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   uint160 constant MIN_SQRT_RATIO = 4295128739;
   uint160 constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
 
-  event TradeExecuted(address indexed token, uint256 borrowAmount, uint256 profit);
+  event TradeExecuted(address indexed token, uint256 profit);
 
   // DEX Protocol Types
   enum DexProtocol {
@@ -126,6 +126,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
 
   struct Trade {
     SwapStep[] swaps; // Array of swaps for multi-hop trading
+    uint256 coinbaseBribe; // Optional bribe amount to pay miner for prioritization (can be 0 for no bribe)
   }
 
   constructor() {
@@ -187,19 +188,17 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     IERC20[] memory tokens,
     uint256[] memory amounts,
     uint256[] memory feeAmounts,
-    bytes memory userData
+    bytes memory callbackData
   ) external override {
     require(msg.sender == address(vault), 'Invalid caller'); // ensure caller its balancer vault
 
-    Trade memory trade = abi.decode(userData, (Trade)); // Decode our swap data so we can use it
-    uint256 swapsLength = trade.swaps.length;
-    uint256 borrowAmount = amounts[0];
-    uint256 borrowFee = feeAmounts[0];
-    uint256 requiredRepayment = borrowAmount + borrowFee;
+    Trade memory trade = abi.decode(callbackData, (Trade)); // Decode our swap data so we can use it
+    address borrowToken = address(tokens[0]);
+    uint256 requiredRepayment = amounts[0] + feeAmounts[0];
 
     // NOTE: amountOutMin its enforced for each swap outside the contract by caller
     // on last swap the profit should be > requiredRepayment, otherwise the tx will revert
-    for (uint256 i = 0; i < swapsLength; i++) {
+    for (uint256 i = 0; i < trade.swaps.length; i++) {
       SwapStep memory step = trade.swaps[i];
 
       // For intermediate swaps, use full balance
@@ -212,22 +211,34 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     }
 
     // Repay flash loan
-    IERC20Z(address(tokens[0])).safeTransfer(address(vault), requiredRepayment);
+    IERC20Z(borrowToken).safeTransfer(address(vault), requiredRepayment);
 
-    // Transfer profits to owner
-    uint256 profit = IERC20Z(address(tokens[0])).balanceOf(address(this));
-    if (profit > 0) {
-      IERC20Z(address(tokens[0])).safeTransfer(owner, profit);
+    // Pay coinbase bribe (unwrap WETH → ETH, send to block.coinbase)
+    uint256 coinbaseBribe = trade.coinbaseBribe;
+    uint256 remaining = IERC20Z(borrowToken).balanceOf(address(this));
+    if (coinbaseBribe > 0) {
+      require(borrowToken == WETH, 'Bribe requires WETH borrow');
+      require(remaining >= coinbaseBribe, 'Insufficient profit for bribe');
+      IWETH(WETH).withdraw(coinbaseBribe);
+      (bool success, ) = block.coinbase.call{value: coinbaseBribe}('');
+      require(success, 'Coinbase bribe failed');
+      remaining -= coinbaseBribe;
     }
 
-    // Emit event
-    emit TradeExecuted(address(tokens[0]), borrowAmount, profit);
+    // Transfer remaining profit to owner
+    if (remaining > 0) {
+      IERC20Z(borrowToken).safeTransfer(owner, remaining);
+    }
+
+    emit TradeExecuted(borrowToken, remaining);
   }
 
   // ========================================================================================
   // SWAP EXECUTION ROUTING BASED ON DEX PROTOCOL
   // ========================================================================================
   function _executeSwap(SwapStep memory step) internal {
+    require(step.amountIn <= uint256(type(int256).max), '_executeSwap: amountIn overflow');
+
     if (step.dexProtocol == DexProtocol.V2) {
       _swapOnV2(step);
     } else if (step.dexProtocol == DexProtocol.V3) {
@@ -263,7 +274,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     require(amountOut >= step.amountOutMin, 'V2: insufficient amountOut');
 
     (uint256 amount0Out, uint256 amount1Out) = step.zeroForOne ? (uint256(0), amountOut) : (amountOut, uint256(0));
-    pair.swap(amount0Out, amount1Out, address(this), new bytes(0));
+    pair.swap(amount0Out, amount1Out, address(this), '');
   }
 
   // ========================================================================================
@@ -271,8 +282,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
 
   function _swapOnV3(SwapStep memory step) internal {
-    require(step.amountIn <= uint256(type(int256).max), 'V3: amountIn overflow');
-
     IUniswapV3Pool pool = IUniswapV3Pool(step.poolAddress);
     uint160 sqrtPriceLimitX96 = step.zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1; // TBD: send this as parameter
 
@@ -332,8 +341,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
 
   function _swapOnV4(SwapStep memory step) internal {
-    require(step.amountIn <= uint256(type(int256).max), 'V4: amountIn overflow');
-
     // Decode pool currencies from extraData
     (address currency0, address currency1, , ) = abi.decode(step.extraData, (address, address, address, int24));
 

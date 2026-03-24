@@ -25,8 +25,6 @@
     "@balancer-labs/v2-interfaces": "^0.4.0",
     "@nomicfoundation/hardhat-ethers": "^3.0.9",
     "@openzeppelin/contracts": "^5.4.0",
-    "@uniswap/v2-periphery": "^1.1.0-beta.0",
-    "@uniswap/v3-periphery": "^1.4.4",
     "dotenv": "^17.1.0",
     "ethers": "^6.15.0"
   }

@@ -32,12 +32,6 @@ export const FLASH_ARBITRAGE_ABI = [
       {
         indexed: false,
         internalType: 'uint256',
-        name: 'borrowAmount',
-        type: 'uint256',
-      },
-      {
-        indexed: false,
-        internalType: 'uint256',
         name: 'profit',
         type: 'uint256',
       },
@@ -197,6 +191,11 @@ export const FLASH_ARBITRAGE_ABI = [
             name: 'swaps',
             type: 'tuple[]',
           },
+          {
+            internalType: 'uint256',
+            name: 'coinbaseBribe',
+            type: 'uint256',
+          },
         ],
         internalType: 'struct FlashArbitrage.Trade',
         name: '_trade',
@@ -263,7 +262,7 @@ export const FLASH_ARBITRAGE_ABI = [
       },
       {
         internalType: 'bytes',
-        name: 'userData',
+        name: 'callbackData',
         type: 'bytes',
       },
     ],

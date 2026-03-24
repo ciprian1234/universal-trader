@@ -375,115 +375,30 @@ export class FlashArbitrageHandler {
     if (!this.flashbotsService) throw new Error('Flashbots service not initialized');
     this.logger.info('🔐 Executing via Flashbots (private mempool)...');
 
-    const gasAnalysis = opportunity.gasAnalysis!;
-
-    // =================== BRIBE CALCULATION ======================
-    // Step 1: Define gas parameters
-    const baseFeePerGas = gasAnalysis.baseFeePerGas;
-    const BASE_FEE_BUFFER_PERCENT = 125; // 125% = 25% buffer (protects against 3-4 block spikes)
-    const bufferedBaseFee = (baseFeePerGas * BigInt(BASE_FEE_BUFFER_PERCENT)) / 100n;
-    const arbitrageGasEstimate = gasAnalysis.gasEstimate; // TBD: consider using limit for safety
-    const bribeGasLimit = 21000n; // Standard ETH transfer
-    const gasPricePerUnit = bufferedBaseFee + this.MIN_PRIORITY_FEE;
-
-    // Step 2: Calculate total gas costs (base fee + minimal priority)
-    const arbitrageGasCostWEI = arbitrageGasEstimate * gasPricePerUnit;
-    const bribeGasCostWEI = bribeGasLimit * gasPricePerUnit;
-    const totalGasCostWEI = arbitrageGasCostWEI + bribeGasCostWEI;
-
-    // ignore original calculation of maxFeePerGas and PriorityFee
-    const gasBudgetWEI = gasAnalysis.gasData.gasBudgetWEI as bigint; // budget based on gross profit
-    const budgetAfterGasCostWEI = gasBudgetWEI - totalGasCostWEI;
-
-    // ✅ Step 4: Validate budget is positive
-    if (budgetAfterGasCostWEI <= 0n) {
-      throw new Error(
-        `Insufficient budget for bribe: ` +
-          `budget=${ethers.formatEther(gasBudgetWEI)} ETH, ` +
-          `gas=${ethers.formatEther(totalGasCostWEI)} ETH`,
-      );
-    }
-
-    // allocate 80% of remaining budget to bribe
-    let bribeWEI = (budgetAfterGasCostWEI * 8n) / 10n;
-    if (bribeWEI > ethers.parseEther('0.025')) bribeWEI = ethers.parseEther('0.025'); // cap bribe to 0.025 ETH for now
-
-    this.logger.info('💰 Bribe Calculation Breakdown:');
-    this.logger.info(`   Gas Budget: ${ethers.formatEther(gasBudgetWEI)} ETH`);
-    this.logger.info(`   Arbitrage Gas Cost: ${ethers.formatEther(arbitrageGasCostWEI)} ETH`);
-    this.logger.info(`   Bribe Tx Gas Cost: ${ethers.formatEther(bribeGasCostWEI)} ETH`);
-    this.logger.info(`   Total Gas Cost: ${ethers.formatEther(totalGasCostWEI)} ETH`);
-    this.logger.info(`   Budget After Gas: ${ethers.formatEther(budgetAfterGasCostWEI)} ETH`);
-
-    // Step 8: Calculate net profit
-    const profitETH = opportunity.grossProfitUSD / gasAnalysis.gasData.nativeTokenPriceUSD;
-
-    const totalCostWEI = totalGasCostWEI + bribeWEI;
-    const totalCostETH = Number(totalCostWEI) / 1e18;
-    const netProfitETH = profitETH - totalCostETH;
-    const netProfitUSD = netProfitETH * gasAnalysis.gasData.nativeTokenPriceUSD;
-
-    // Log final pricing
-    this.logger.info('📊 Final Bundle Pricing:');
-    this.logger.info(`   Gross Profit: ${profitETH.toFixed(6)} ETH ($${opportunity.grossProfitUSD.toFixed(2)})`);
-    this.logger.info(`   Base Fee: ${ethers.formatUnits(baseFeePerGas, 'gwei')} gwei`);
-    this.logger.info(`   Buffered Base Fee: ${ethers.formatUnits(bufferedBaseFee, 'gwei')} gwei`);
-    this.logger.info(`   Gas Price Per Unit (maxFeePerGas): ${ethers.formatUnits(gasPricePerUnit, 'gwei')} gwei`);
-    this.logger.info(`   Priority Fee: ${ethers.formatUnits(this.MIN_PRIORITY_FEE, 'gwei')} gwei (minimal)`);
-    this.logger.info(`   Arbitrage Gas Cost: ${ethers.formatEther(arbitrageGasCostWEI)} ETH`);
-    this.logger.info(`   Bribe Tx Gas Cost: ${ethers.formatEther(bribeGasCostWEI)} ETH`);
-    this.logger.info(
-      `   Coinbase Bribe: ${ethers.formatEther(bribeWEI)} ETH ($${(
-        (Number(bribeWEI) / 1e18) *
-        gasAnalysis.gasData.nativeTokenPriceUSD
-      ).toFixed(2)})`,
-    );
-    this.logger.info(`   Total Cost: ${totalCostETH.toFixed(6)} ETH`);
-    this.logger.info(`   Net Profit: ${netProfitETH.toFixed(6)} ETH ($${netProfitUSD.toFixed(2)})`);
-    this.logger.info(`   ROI: ${((netProfitETH / totalCostETH) * 100).toFixed(1)}%`);
-
-    // ✅ Step 9: Validate still profitable
-    if (netProfitETH <= 0) {
-      throw new Error(
-        `Not profitable after bribe: ` +
-          `profit=${profitETH.toFixed(6)} ETH, ` +
-          `cost=${totalCostETH.toFixed(6)} ETH, ` +
-          `net=${netProfitETH.toFixed(6)} ETH`,
-      );
-    }
-
-    // ============================================================
-
     // Build transaction
     const signer = this.walletManager.getSigner();
     const nonce = await signer.getNonce();
     const tx = await this.contract!.executeTrade.populateTransaction(trade);
 
+    // Step 1: Define gas parameters
+    const gasAnalysis = opportunity.gasAnalysis!;
+    const BASE_FEE_BUFFER_PERCENT = 125; // 125% = 25% buffer (protects against 3-4 block spikes)
+    const bufferedBaseFee = (gasAnalysis.baseFeePerGas * BigInt(BASE_FEE_BUFFER_PERCENT)) / 100n;
+    const gasPricePerUnit = bufferedBaseFee + this.MIN_PRIORITY_FEE;
+
     const unsignedArbitrageTx = {
       ...tx,
       nonce,
       chainId: this.blockchain.chainId,
-      gasLimit: gasAnalysis!.gasTxSettings.gasLimit,
+      gasLimit: gasAnalysis.gasTxSettings.gasLimit,
       maxFeePerGas: gasPricePerUnit,
       maxPriorityFeePerGas: this.MIN_PRIORITY_FEE,
       type: 2, // EIP-1559
     };
 
-    // Create coinbase bribe transaction
-    const unsignedBribeTx = {
-      to: ethers.ZeroAddress, // Placeholder (builder sets block.coinbase)
-      value: bribeWEI,
-      data: '0x',
-      nonce: nonce + 1,
-      chainId: this.blockchain.chainId,
-      gasLimit: 21000n,
-      maxFeePerGas: gasPricePerUnit,
-      maxPriorityFeePerGas: this.MIN_PRIORITY_FEE, // Same as arbitrage tx
-      type: 2, // EIP-1559
-    };
-
     // Create bundle with signed transactions
-    const bundle = await Promise.all([signer.signTransaction(unsignedArbitrageTx), signer.signTransaction(unsignedBribeTx)]);
+    const signedTx = await signer.signTransaction(unsignedArbitrageTx);
+    const bundle = [signedTx];
     const targetBlock = this.blockManager.getCurrentBlockNumber() + 1;
 
     // Simulate bundle and send if successful
@@ -491,7 +406,7 @@ export class FlashArbitrageHandler {
     const bundleResponse = await this.flashbotsService.submitBundle(bundle, { targetBlock }); // non-blocking
 
     // !!! Parse transaction to get hash
-    const parsedArbitrageTx = ethers.Transaction.from(bundle[0]);
+    const parsedArbitrageTx = ethers.Transaction.from(signedTx);
     const txHash = parsedArbitrageTx.hash!;
 
     return {
@@ -512,6 +427,87 @@ export class FlashArbitrageHandler {
       bundle,
       bundleResponse,
     };
+  }
+
+  /**
+   * Calculate bribe in wei if using Flashbots, otherwise return 0
+   * NOTE: bribe can exceed wallet balance only if borrowToken is WETH!!!
+   * otherwise cap bribe to wallet balance (or set to 0 if balance is too low) to avoid failed transactions due to insufficient funds
+   */
+  private calculateBribeWEI(opportunity: ArbitrageOpportunity): bigint {
+    if (!this.USE_FLASHBOTS) return 0n;
+
+    const gasAnalysis = opportunity.gasAnalysis!;
+
+    // =================== BRIBE CALCULATION ======================
+    // Step 1: Define gas parameters
+    const BASE_FEE_BUFFER_PERCENT = 125; // 125% = 25% buffer (protects against 3-4 block spikes)
+    const bufferedBaseFee = (gasAnalysis.baseFeePerGas * BigInt(BASE_FEE_BUFFER_PERCENT)) / 100n;
+    const gasPricePerUnit = bufferedBaseFee + this.MIN_PRIORITY_FEE;
+
+    // Step 2: Calculate total gas costs (base fee + minimal priority)
+    const totalGasCostWEI = gasAnalysis.gasEstimate * gasPricePerUnit;
+
+    // Step 4: Calculate bribe budget after gas costs
+    const gasBudgetWEI = gasAnalysis.gasData.gasBudgetWEI as bigint; // gas budget based on gross profit
+    const budgetAfterGasCostWEI = gasBudgetWEI - totalGasCostWEI;
+
+    // Validate budget is positive
+    if (budgetAfterGasCostWEI <= 0n) {
+      throw new Error(
+        `Insufficient budget for bribe: budget=${ethers.formatEther(gasBudgetWEI)} ETH,  gas=${ethers.formatEther(totalGasCostWEI)} ETH`,
+      );
+    }
+
+    // allocate 80% of remaining budget to bribe
+    let bribeWEI = (budgetAfterGasCostWEI * 8n) / 10n;
+    if (bribeWEI > ethers.parseEther('0.025')) bribeWEI = ethers.parseEther('0.025'); // cap bribe to 0.025 ETH for now
+
+    this.logger.info('💰 Bribe Calculation Breakdown:');
+    this.logger.info(`   Gas Budget: ${ethers.formatEther(gasBudgetWEI)} ETH`);
+    this.logger.info(`   Total Gas Cost: ${ethers.formatEther(totalGasCostWEI)} ETH`);
+    this.logger.info(`   Budget After Gas: ${ethers.formatEther(budgetAfterGasCostWEI)} ETH`);
+
+    // Step 5: Calculate net profit
+    const profitETH = opportunity.grossProfitUSD / gasAnalysis.gasData.nativeTokenPriceUSD;
+
+    const totalCostWEI = totalGasCostWEI + bribeWEI; // gas cost + bribe
+    const totalCostETH = Number(totalCostWEI) / 1e18;
+    const netProfitETH = profitETH - totalCostETH;
+    const netProfitUSD = netProfitETH * gasAnalysis.gasData.nativeTokenPriceUSD;
+
+    // Log final pricing
+    this.logger.info('📊 Final Bundle Pricing:');
+    this.logger.info(`   Gross Profit: ${profitETH.toFixed(6)} ETH ($${opportunity.grossProfitUSD.toFixed(2)})`);
+    this.logger.info(
+      `   Coinbase Bribe: ${ethers.formatEther(bribeWEI)} ETH ($${((Number(bribeWEI) / 1e18) * gasAnalysis.gasData.nativeTokenPriceUSD).toFixed(2)})`,
+    );
+    this.logger.info(`   Total Cost: ${totalCostETH.toFixed(6)} ETH`);
+    this.logger.info(`   Net Profit: ${netProfitETH.toFixed(6)} ETH ($${netProfitUSD.toFixed(2)})`);
+    this.logger.info(`   ROI: ${((netProfitETH / totalCostETH) * 100).toFixed(1)}%`);
+
+    // Validate still profitable
+    if (netProfitETH <= 0) {
+      throw new Error(
+        `Not profitable after bribe: profit=${profitETH.toFixed(6)} ETH, cost=${totalCostETH.toFixed(6)} ETH, net=${netProfitETH.toFixed(6)} ETH`,
+      );
+    }
+
+    // if borrow token is WETH we can affort to pay higher bribe then wallet balance
+    if (opportunity.borrowToken.symbol === 'WETH') return bribeWEI;
+    else {
+      // pay attention to balance to avoid failed transactions due to insufficient funds
+      const ETH_WALLET_BALANCE_CAP = this.walletManager.getNativeTokenBalance() / 3n; // use at most 33% of native token balance for bribe
+      if (bribeWEI > ETH_WALLET_BALANCE_CAP) {
+        this.logger.warn(
+          `⚠️ Calculated bribe (${ethers.formatEther(bribeWEI)} ETH) exceeds wallet balance cap (${ethers.formatEther(
+            ETH_WALLET_BALANCE_CAP,
+          )} ETH). Capping bribe to balance limit to avoid failed transaction due to insufficient funds.`,
+        );
+        return ETH_WALLET_BALANCE_CAP;
+      }
+      return bribeWEI;
+    }
   }
 
   /**
@@ -547,7 +543,7 @@ export class FlashArbitrageHandler {
     const amountOutMin = opportunity.borrowAmount + (opportunity.grossProfitToken * 5n) / 10n; // set min output based on min 50% of gross profit
     swaps[swaps.length - 1].amountOutMin = amountOutMin;
 
-    return { swaps };
+    return { swaps, coinbaseBribe: this.calculateBribeWEI(opportunity) };
   }
 
   /**

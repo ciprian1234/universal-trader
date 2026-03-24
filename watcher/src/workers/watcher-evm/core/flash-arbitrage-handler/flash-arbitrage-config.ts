@@ -24,4 +24,5 @@ export interface SwapStepOnContract {
 
 export interface Trade {
   swaps: SwapStepOnContract[];
+  coinbaseBribe: bigint; // set to 0 if no bribe
 }
