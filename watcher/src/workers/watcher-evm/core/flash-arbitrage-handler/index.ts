@@ -10,7 +10,7 @@ import type { WalletManager } from '../wallet-manager';
 import { FlashbotsService } from './flashbots-service';
 import type { FlashbotsTransactionResponse } from '@flashbots/ethers-provider-bundle';
 import type { WorkerDb } from '../../db';
-import type { DexProtocol, DexVenueName } from '@/shared/data-model/layer1';
+import type { DexProtocol } from '@/shared/data-model/layer1';
 import type { DexManager } from '../dex-manager';
 import { FLASH_ARBITRAGE_ABI } from './flash-arbitrage-contract-abi';
 import { isZeroForOne } from '../helpers';

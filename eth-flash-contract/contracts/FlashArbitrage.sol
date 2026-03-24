@@ -90,7 +90,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // using CurrencyLibrary for Currency;
 
   address public owner;
-  address immutable WETH;
+  address private constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
   IVault private constant vault = IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
 
   // Allow receiving ETH for V4 native swaps
@@ -121,16 +121,15 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     uint256 amountOutMin; // for slippage protection
     uint24 feeBps; // for v2 usually 30 (0.3%), for v3 it represents the fee tier (500, 3000, 10000)
     bool zeroForOne; // indicates swap direction
-    bytes extraData; // For custom/future protocols (For V4: encoded (int24 tickSpacing, address hooks))
+    bytes extraData; // used by V4 and other protocols to pass additional parameters like pool keys, hook data, etc.
   }
 
   struct Trade {
     SwapStep[] swaps; // Array of swaps for multi-hop trading
   }
 
-  constructor(address _weth) {
+  constructor() {
     owner = msg.sender;
-    WETH = _weth;
   }
 
   // access control modifier
@@ -140,11 +139,11 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   }
 
   // ========================================================================================
-  // UNISWAP V4 INTERFACES
+  // TRANSIENT STORAGE MANAGEMENT
   // ========================================================================================
 
   // storage slot for allowed callback caller (used to guard against malicious calls to callbacks)
-  int256 private constant ALLOWED_CALLER_ADDRESS_SLOT = 0; // first slot in contract storage
+  int256 private constant ALLOWED_CALLER_ADDRESS_SLOT = 0; // first slot in transient storage
 
   function _setAllowedCallerAddress(address allowedCallerAddress) private {
     assembly {
