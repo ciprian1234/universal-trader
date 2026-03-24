@@ -83,6 +83,7 @@ export class ArbitrageOrchestrator {
       dexManager: this.dexManager,
       config: {
         minLiquidityUSD: input.chainConfig.arbitrage.minLiquidityUSD,
+        wrappedNativeTokenAddress: input.chainConfig.wrappedNativeTokenAddress,
       },
     });
 

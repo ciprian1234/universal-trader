@@ -59,7 +59,7 @@ export class GasManager {
     this.priceOracle = input.priceOracle;
 
     // get wrapped native token
-    this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress.toLowerCase();
+    this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress;
     this.MIN_PRIORITY_FEE = this.chainConfig.minPriorityFee;
     this.MAX_PRIORITY_FEE = this.chainConfig.maxPriorityFee;
   }

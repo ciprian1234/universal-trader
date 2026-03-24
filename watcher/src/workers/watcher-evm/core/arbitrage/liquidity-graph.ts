@@ -1,4 +1,4 @@
-import type { GraphStats, WeightedEdge } from './interfaces';
+import type { WeightedEdge } from './interfaces';
 import { getFeeMultiplier } from '@/utils';
 import type { Logger } from '@/utils';
 import type { DexManager } from '../dex-manager';
@@ -7,6 +7,7 @@ import type { DexPoolState } from '@/shared/data-model/layer1';
 import { ethers } from 'ethers';
 
 export type LiquidityGraphConfig = {
+  wrappedNativeTokenAddress: string;
   minLiquidityUSD: number;
 };
 
@@ -30,10 +31,7 @@ export class LiquidityGraph {
 
   // Adjacency list: tokenAddress -> outgoing edges
   private readonly edges = new Map<string, WeightedEdge[]>();
-
-  // Quick lookups
-  private readonly tokens = new Map<string, TokenOnChain>();
-  private readonly poolToEdges = new Map<string, [string, string]>(); // poolKey -> [tokenIn, tokenOut]
+  // NOTE: list of tokens can be derived from edges keys
 
   constructor(input: LiquidityGraphInput) {
     this.logger = input.logger;
@@ -63,10 +61,10 @@ export class LiquidityGraph {
     this.logger.info('🔍 Verifying bidirectional edges...\n');
 
     // Original debug logging (keep for reference)
-    for (const [tokenAddr, token] of this.tokens) {
+    for (const tokenAddr of this.edges.keys()) {
       const edges = this.edges.get(tokenAddr) || [];
       if (edges.length > 0) {
-        this.logger.debug(`Token ${token.symbol}: ${edges.length} edges`);
+        this.logger.debug(`Token ${tokenAddr}: ${edges.length} edges`);
         for (const edge of edges) {
           this.logger.debug(
             `  → ${edge.tokenOut.symbol} via ${edge.pool.venue.name} (fee: ${edge.feeBps}, liquidity: $${edge.liquidityUSD.toFixed(2)})`,
@@ -76,7 +74,8 @@ export class LiquidityGraph {
     }
 
     const duration = Date.now() - startTime;
-    this.logger.info(`🌐 Built graph: ${this.tokens.size} tokens, ${this.edges.size} edges (${duration}ms)`);
+    const stats = this.getStats();
+    this.logger.info(`🌐 Built graph: ${stats.tokenCount} tokens, ${stats.edgeCount} edges (${duration}ms)`);
   }
 
   /**
@@ -90,8 +89,8 @@ export class LiquidityGraph {
 
       if (this.addPoolToGraph(pool)) {
         // Track which tokens were affected (for path discovery optimization)
-        affectedTokens.add(pool.tokenPair.token0.address);
-        affectedTokens.add(pool.tokenPair.token1.address);
+        affectedTokens.add(this.normalizeToken(pool.tokenPair.token0).address);
+        affectedTokens.add(this.normalizeToken(pool.tokenPair.token1).address);
       }
     }
 
@@ -102,25 +101,28 @@ export class LiquidityGraph {
    * ➕ Add single pool as bidirectional edges
    */
   private addPoolToGraph(pool: DexPoolState): boolean {
-    // TODO: rename to updateGraphFromPool
-    // Check liquidity threshold
+    // 1. check for invalid prices
+    if (pool.spotPrice0to1 <= 0 || isNaN(pool.spotPrice0to1) || pool.spotPrice1to0 <= 0 || isNaN(pool.spotPrice1to0)) {
+      return false;
+    }
+    // 2. Check liquidity threshold
     if (pool.totalLiquidityUSD < this.config.minLiquidityUSD) return false;
+
+    // 3. Skip pools with hooks for now due to simulation complexity (review if we want to support them in the future)
     if (pool.protocol === 'v4' && pool.hooks !== ethers.ZeroAddress) {
       this.logger.debug(`Skipping pool with hooks: ${pool.hooks} (ID: ${pool.id}) - simulation accuracy not guaranteed`);
-      return false; // skip pools with hooks for now due to simulation complexity
+      return false;
     }
 
-    const { token0, token1 } = pool.tokenPair;
-
-    // Add tokens
-    this.tokens.set(token0.address, token0);
-    this.tokens.set(token1.address, token1);
+    // Normalize native ETH (address(0)) to WETH for graph node identity
+    const graphToken0 = this.normalizeToken(pool.tokenPair.token0);
+    const graphToken1 = this.normalizeToken(pool.tokenPair.token1);
 
     // Add forward edge: token0 -> token1
     this.addWeightedEdge({
       pool,
-      tokenIn: token0,
-      tokenOut: token1,
+      tokenIn: graphToken0,
+      tokenOut: graphToken1,
       spotPrice: pool.spotPrice0to1,
       weight: this.calculateEdgeWeight(pool.spotPrice0to1, pool),
       liquidityUSD: pool.totalLiquidityUSD,
@@ -131,8 +133,8 @@ export class LiquidityGraph {
     // Add reverse edge: token1 -> token0
     this.addWeightedEdge({
       pool,
-      tokenIn: token1,
-      tokenOut: token0,
+      tokenIn: graphToken1,
+      tokenOut: graphToken0,
       spotPrice: pool.spotPrice1to0,
       weight: this.calculateEdgeWeight(pool.spotPrice1to0, pool),
       liquidityUSD: pool.totalLiquidityUSD,
@@ -140,19 +142,12 @@ export class LiquidityGraph {
       updated: Date.now(),
     });
 
-    // Track pool location in graph
-    this.poolToEdges.set(pool.id, [token0.address, token1.address]);
-
     return true;
   }
 
   private addWeightedEdge(edge: WeightedEdge): void {
     const key = edge.tokenIn.address;
-
-    if (!this.edges.has(key)) {
-      this.edges.set(key, []);
-    }
-
+    if (!this.edges.has(key)) this.edges.set(key, []);
     const edgeList = this.edges.get(key)!;
 
     // Replace existing edge for same pool, or add new
@@ -161,23 +156,18 @@ export class LiquidityGraph {
     if (existingIndex >= 0) {
       edgeList[existingIndex] = edge;
     } else {
-      // Keep sorted by liquidity (descending)
       edgeList.push(edge);
-      edgeList.sort((a, b) => b.liquidityUSD - a.liquidityUSD);
+      // edgeList.sort((a, b) => b.liquidityUSD - a.liquidityUSD);
     }
   }
 
   private removePoolFromGraph(pool: DexPoolState): void {
-    const tokenPair = this.poolToEdges.get(pool.id);
-    if (!tokenPair) return;
-
-    const [token0Key, token1Key] = tokenPair;
+    const token0Key = this.normalizeToken(pool.tokenPair.token0).address;
+    const token1Key = this.normalizeToken(pool.tokenPair.token1).address;
 
     // Remove edges in both directions
     this.removeEdgeForPool(token0Key, pool.id);
     this.removeEdgeForPool(token1Key, pool.id);
-
-    this.poolToEdges.delete(pool.id);
   }
 
   private removeEdgeForPool(tokenKey: string, poolId: string): void {
@@ -193,10 +183,17 @@ export class LiquidityGraph {
     }
   }
 
+  // if token is ETH => normalize to WETH for graph consistency
+  private normalizeToken(token: TokenOnChain): TokenOnChain {
+    // NOTE: marked symbol as nETH for easier debugging, but address is the important part for graph identity
+    if (token.address === ethers.ZeroAddress) {
+      return { ...token, address: this.config.wrappedNativeTokenAddress, symbol: 'nETH' };
+    }
+    return token;
+  }
+
   private clear(): void {
     this.edges.clear();
-    this.tokens.clear();
-    this.poolToEdges.clear();
   }
 
   // ============================================
@@ -211,33 +208,17 @@ export class LiquidityGraph {
   }
 
   /**
-   * 🔍 Get all tokens in graph
-   */
-  getTokens(): TokenOnChain[] {
-    return Array.from(this.tokens.values());
-  }
-
-  /**
-   * 🔍 Check if token exists in graph
-   */
-  hasToken(tokenAddress: string): boolean {
-    return this.tokens.has(tokenAddress);
-  }
-
-  /**
    * 📊 Get graph statistics
    */
-  getStats(): GraphStats {
+  getStats() {
     let totalEdges = 0;
     for (const edges of this.edges.values()) {
       totalEdges += edges.length;
     }
 
     return {
-      tokenCount: this.tokens.size,
+      tokenCount: this.edges.size,
       edgeCount: totalEdges,
-      avgDegree: this.tokens.size > 0 ? totalEdges / this.tokens.size : 0,
-      lastUpdate: Date.now(),
     };
   }
 
@@ -257,7 +238,7 @@ export class LiquidityGraph {
    * 🔄 Get tokens as array (for Bellman-Ford iteration)
    */
   getTokenAddresses(): string[] {
-    return Array.from(this.tokens.keys());
+    return Array.from(this.edges.keys());
   }
 
   /**

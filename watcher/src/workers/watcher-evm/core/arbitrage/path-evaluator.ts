@@ -5,6 +5,7 @@ import type { DexManager } from '../dex-manager';
 import type { GasManager } from '../gas-manager';
 import type { PriceOracle } from '../price-oracle';
 import type { ArbitragePath } from './interfaces';
+import { isZeroForOne } from '../helpers';
 
 export interface EvaluatorConfig {
   minGrossProfitUSD: number;
@@ -156,7 +157,7 @@ export class PathEvaluator {
   private findOptimalAmountTernarySearch(path: ArbitragePath): bigint {
     const firstStep = path.steps[0];
     const borrowToken = path.borrowToken;
-    const zeroForOne = borrowToken.address === firstStep.pool.tokenPair.token0.address;
+    const zeroForOne = isZeroForOne(borrowToken.address, firstStep.pool);
     const reserve = zeroForOne ? firstStep.pool.reserve0! : firstStep.pool.reserve1!;
 
     // Find bottleneck pool (smallest liquidity)
@@ -209,7 +210,7 @@ export class PathEvaluator {
   private findOptimalAmountGoldenSectionSearch(path: ArbitragePath): bigint {
     const firstStep = path.steps[0];
     const borrowToken = path.borrowToken;
-    const zeroForOne = borrowToken.address === firstStep.pool.tokenPair.token0.address;
+    const zeroForOne = isZeroForOne(borrowToken.address, firstStep.pool);
     const reserve = zeroForOne ? firstStep.pool.reserve0! : firstStep.pool.reserve1!;
 
     // Find bottleneck pool (smallest liquidity)
@@ -294,7 +295,7 @@ export class PathEvaluator {
     if (inputAmount <= 0n) return -1_000_000_000_000_000n;
     let currentAmount = inputAmount;
     for (const step of steps) {
-      const zeroForOne = step.tokenIn.address === step.pool.tokenPair.token0.address;
+      const zeroForOne = isZeroForOne(step.tokenIn.address, step.pool);
       const amountOut = this.dexManager.simulateSwap(step.pool, currentAmount, zeroForOne);
       currentAmount = amountOut;
     }
@@ -318,7 +319,7 @@ export class PathEvaluator {
     let currentAmount = initialAmount;
 
     for (const step of steps) {
-      const zeroForOne = step.tokenIn.address === step.pool.tokenPair.token0.address;
+      const zeroForOne = isZeroForOne(step.tokenIn.address, step.pool);
 
       try {
         const amountOut = this.dexManager.simulateSwap(step.pool, currentAmount, zeroForOne);

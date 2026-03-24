@@ -13,6 +13,7 @@ import type { WorkerDb } from '../../db';
 import type { DexProtocol, DexVenueName } from '@/shared/data-model/layer1';
 import type { DexManager } from '../dex-manager';
 import { FLASH_ARBITRAGE_ABI } from './flash-arbitrage-contract-abi';
+import { isZeroForOne } from '../helpers';
 
 export type FlashArbitrageHandlerInput = {
   chainConfig: ChainConfig;
@@ -302,7 +303,7 @@ export class FlashArbitrageHandler {
    */
   async executeArbitrage(opportunity: ArbitrageOpportunity) {
     let response: ExecuteTransactionResponse | null = null;
-    const trade = this.opportunityToTrade(opportunity); // Convert opportunity to Trade struct
+    const trade = this.opportunityToTradeStruct(opportunity); // Convert opportunity to Trade struct
     try {
       this.logger.info(`🎯 Starting FlashArbitrageExecution for opportunity: ${opportunity.id}`);
 
@@ -516,24 +517,27 @@ export class FlashArbitrageHandler {
   /**
    * Convert ArbitrageOpportunity to Trade struct
    */
-  private opportunityToTrade(opportunity: ArbitrageOpportunity): Trade {
+  private opportunityToTradeStruct(opportunity: ArbitrageOpportunity): Trade {
     // go trough each swap step and build Trade struct
     const swaps: SwapStepOnContract[] = [];
     for (const step of opportunity.steps) {
       swaps.push({
         dexProtocol: FlashArbitrageHandler.getDexTypeEnumValueFromPool(step.pool.protocol),
         poolAddress: step.pool.address,
-        tokenIn: step.tokenIn.address,
-        tokenOut: step.tokenOut.address,
+        zeroForOne: isZeroForOne(step.tokenIn.address, step.pool),
+        tokenIn: step.tokenIn.address, // normalized tokenIn from graph (if ETH => WETH)
+        tokenOut: step.tokenOut.address, // normalized tokenOut from graph (if ETH => WETH)
         amountIn: step.amountIn,
         amountOutMin: 0n, // don't care about min output on entry swap
         feeBps: step.pool.feeBps,
-        zeroForOne: step.pool.tokenPair.token0.address === step.tokenIn.address, // determine swap direction based on tokenIn
 
         // extra params for other DEX protocols (not used for now => set to 0 or empty)
         extraData:
           step.pool.protocol === 'v4'
-            ? this.abiCoder.encode(['int24', 'address'], [step.pool.tickSpacing, step.pool.hooks])
+            ? this.abiCoder.encode(
+                ['address', 'address', 'address', 'int24'],
+                [step.pool.tokenPair.token0.address, step.pool.tokenPair.token1.address, step.pool.hooks, step.pool.tickSpacing],
+              )
             : '0x',
       });
     }

@@ -187,7 +187,7 @@ export class PathFinder implements IPathFinder {
     }
 
     // if we have remaining hops, asume best case scenario (cycle will be completed next hop with minimal fee)
-    const bestCaseFeeMultiplier = 0.9995; // best case scenario 0.05% fee next hop
+    const bestCaseFeeMultiplier = 0.9999; // best case scenario 0.01% fee next hop // TODO: review this
     const bestCaseProfit = estimatedProfit * bestCaseFeeMultiplier; // (asuming next hop will complete cycle)
     if (bestCaseProfit < this.config.profitThreshold) return true;
     return false;
@@ -252,28 +252,5 @@ export class PathFinder implements IPathFinder {
     }
 
     return result;
-  }
-
-  private getBorrowTokens(affectedTokens: Set<string>): TokenOnChain[] {
-    const borrowTokens: TokenOnChain[] = [];
-
-    for (const tokenAddr of affectedTokens) {
-      const token = this.graph.getTokens().find((t) => t.address.toLowerCase() === tokenAddr);
-
-      if (token && this.config.preferredBorrowTokens.includes(token.symbol)) {
-        borrowTokens.push(token);
-      }
-    }
-
-    // If no affected tokens are borrowable, use all preferred tokens in graph
-    if (borrowTokens.length === 0) {
-      for (const token of this.graph.getTokens()) {
-        if (this.config.preferredBorrowTokens.includes(token.symbol)) {
-          borrowTokens.push(token);
-        }
-      }
-    }
-
-    return borrowTokens;
   }
 }

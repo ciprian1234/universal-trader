@@ -67,7 +67,7 @@ export class WalletManager {
     this.signer = new ethers.Wallet(input.chainConfig.walletPrivateKey, input.blockchain.getProvider());
 
     this.NATIVE_TOKEN = this.chainConfig.nativeToken;
-    this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress.toLowerCase();
+    this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress;
 
     // init walletState with default values
     this.walletState = { address: '', nativeTokenBalance: 0n, lastUpdated: Date.now() };

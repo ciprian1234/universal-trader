@@ -11,6 +11,14 @@ import {IFlashLoanRecipient} from '@balancer-labs/v2-interfaces/contracts/vault/
 // import 'hardhat/console.sol';
 
 // ========================================================================================
+// WETH INTERFACES
+// ========================================================================================
+interface IWETH {
+  function deposit() external payable;
+  function withdraw(uint256) external;
+}
+
+// ========================================================================================
 // UNISWAP V2 INTERFACES
 // ========================================================================================
 interface IUniswapV2Pair {
@@ -58,9 +66,9 @@ interface IPoolManager {
   function take(address currency, address to, uint256 amount) external;
 }
 
-// ============================================
+// ========================================================================================
 // CURVE INTERFACES
-// ============================================
+// ========================================================================================
 
 // Standard Curve pool interface (works for most pools)
 interface ICurvePool {
@@ -82,6 +90,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // using CurrencyLibrary for Currency;
 
   address public owner;
+  address immutable WETH;
   IVault private constant vault = IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
 
   // Allow receiving ETH for V4 native swaps
@@ -119,8 +128,9 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     SwapStep[] swaps; // Array of swaps for multi-hop trading
   }
 
-  constructor() {
+  constructor(address _weth) {
     owner = msg.sender;
+    WETH = _weth;
   }
 
   // access control modifier
@@ -263,12 +273,12 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
 
   function _swapOnV3(SwapStep memory step) internal {
     require(step.amountIn <= uint256(type(int256).max), 'V3: amountIn overflow');
-    _setAllowedCallerAddress(step.poolAddress); // set allowed callback caller to the pool we're interacting with
 
     IUniswapV3Pool pool = IUniswapV3Pool(step.poolAddress);
     uint160 sqrtPriceLimitX96 = step.zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1; // TBD: send this as parameter
 
-    // V3 uses a callback to pull tokens, so we just call swap and handle the token transfer in the callback
+    // trigger v3 swap via pool's swap() function, passing the tokenIn in the callback data so we know which token to transfer in the callback
+    _setAllowedCallerAddress(step.poolAddress); // ← set allowed caller transient slot
     (int256 amount0, int256 amount1) = pool.swap(
       address(this),
       step.zeroForOne,
@@ -276,11 +286,11 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
       sqrtPriceLimitX96, // Price limit for slippage control
       abi.encode(step.tokenIn) // Pass the encoded callback data
     );
+    _setAllowedCallerAddress(address(0)); // ← clear transient slot after swap
 
     // validate amountOut based on swap direction (amounts are returned as int256, positive for received, negative for sent)
     uint256 amountOut = uint256(-(step.zeroForOne ? amount1 : amount0));
     require(amountOut >= step.amountOutMin, 'V3: insufficient amountOut');
-    _setAllowedCallerAddress(address(0)); // ← clear transient slot before returning
   }
 
   // Generic callback by V3 pool during swap() to pull the owed tokens
@@ -324,13 +334,31 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
 
   function _swapOnV4(SwapStep memory step) internal {
     require(step.amountIn <= uint256(type(int256).max), 'V4: amountIn overflow');
-    _setAllowedCallerAddress(step.poolAddress); // set allowed callback caller to the PoolManager address
 
+    // Decode pool currencies from extraData
+    (address currency0, address currency1, , ) = abi.decode(step.extraData, (address, address, address, int24));
+
+    // Determine if native ETH is on input/output side
+    address inputCurrency = step.zeroForOne ? currency0 : currency1;
+    address outputCurrency = step.zeroForOne ? currency1 : currency0;
+
+    // Unwrap WETH → ETH if pool expects native ETH as input
+    if (inputCurrency == address(0)) {
+      IWETH(WETH).withdraw(step.amountIn);
+    }
+
+    // trigger v4 swap via PoolManager's unlock() function, passing the SwapStep as callback data
+    _setAllowedCallerAddress(step.poolAddress); // set allowed callback caller to the PoolManager address
     bytes memory result = IPoolManager(step.poolAddress).unlock(abi.encode(step));
+    _setAllowedCallerAddress(address(0)); // ← clear transient slot before returning
 
     uint256 amountOut = abi.decode(result, (uint256));
     require(amountOut >= step.amountOutMin, 'V4: insufficient amountOut');
-    _setAllowedCallerAddress(address(0)); // ← clear transient slot before returning
+
+    // Wrap ETH → WETH if pool outputs native ETH
+    if (outputCurrency == address(0)) {
+      IWETH(WETH).deposit{value: amountOut}();
+    }
   }
 
   // called by V4 PoolManager during unlock() to execute the swap logic and handle token transfers
@@ -339,13 +367,11 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
 
     SwapStep memory step = abi.decode(data, (SwapStep));
 
-    // Decode tickSpacing and hooks from extraData
-    (int24 tickSpacing, address hooks) = abi.decode(step.extraData, (int24, address));
-
-    // Sort currencies for PoolKey (V4 requires currency0 < currency1)
-    (address currency0, address currency1) = step.tokenIn < step.tokenOut
-      ? (step.tokenIn, step.tokenOut)
-      : (step.tokenOut, step.tokenIn);
+    // Decode and use original pool currencies for PoolKey (not step.tokenIn/tokenOut which are normalized WETH)
+    (address currency0, address currency1, address hooks, int24 tickSpacing) = abi.decode(
+      step.extraData,
+      (address, address, address, int24)
+    );
 
     IPoolManager.PoolKey memory key = IPoolManager.PoolKey({
       currency0: currency0,

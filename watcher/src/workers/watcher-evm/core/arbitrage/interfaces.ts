@@ -22,16 +22,6 @@ export interface WeightedEdge {
   updated: number;
 }
 
-/**
- * 📊 Graph statistics
- */
-export interface GraphStats {
-  tokenCount: number;
-  edgeCount: number;
-  avgDegree: number;
-  lastUpdate: number;
-}
-
 export interface ArbitragePath {
   id: string;
   borrowToken: TokenOnChain; // First token in = last token out

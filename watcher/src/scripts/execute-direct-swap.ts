@@ -75,7 +75,13 @@ function buildSwapStep(params: {
     amountIn: params.amountIn,
     amountOutMin: params.amountOutMin,
     zeroForOne: params.zeroForOne,
-    extraData: pool.protocol === 'v4' ? abiCoder.encode(['int24', 'address'], [pool.tickSpacing, pool.hooks]) : '0x',
+    extraData:
+      pool.protocol === 'v4'
+        ? abiCoder.encode(
+            ['address', 'address', 'address', 'int24'],
+            [token0.address, token1.address, pool.address, pool.tickSpacing],
+          )
+        : '0x',
   };
 }
 
