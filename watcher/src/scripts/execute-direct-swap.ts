@@ -16,6 +16,15 @@ import { ethers } from 'ethers';
 // CONFIG — edit these for the swap you want to test
 // ========================================================================================
 
+const chainConfig = appConfig.platforms['ethereum'] as ChainConfig;
+
+// NOTE: when executing swaps in parallet with watcher => deploy the contract from a different wallet so we have acurate balance tracking for the swap results
+const CONTRACT_ADDRESS = ''; // chainConfig.arbitrageContractAddress;
+const WALLET_PRIVATE_KEY = ''; // chainConfig.walletPrivateKey;
+
+if (!CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS not set in config');
+if (!WALLET_PRIVATE_KEY) throw new Error('WALLET_PRIVATE_KEY not set in config');
+
 // input pool from DB
 const DB_POOL_ID = '1:0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed181e22d7';
 const ZERO_FOR_ONE = true;
@@ -28,10 +37,6 @@ let WRAP_ETH_AMOUNT: string | null = null;
 // ========================================================================================
 // INIT COMPONENTS
 // ========================================================================================
-
-const chainConfig = appConfig.platforms['ethereum'] as ChainConfig;
-const CONTRACT_ADDRESS = chainConfig.arbitrageContractAddress; // set in deploy-local.ts
-if (!CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS not set in config');
 
 const cache = new CacheService(chainConfig.chainId);
 const db = new WorkerDb(chainConfig.databaseUrl, chainConfig.chainId);
@@ -157,7 +162,7 @@ async function main() {
   const t0 = await tokenManager.ensureTokenRegistered(t0Addr, 'address');
   const t1 = await tokenManager.ensureTokenRegistered(t1Addr, 'address');
 
-  const wallet = new ethers.Wallet(chainConfig.walletPrivateKey, blockchain.getProvider());
+  const wallet = new ethers.Wallet(WALLET_PRIVATE_KEY, blockchain.getProvider());
   const walletAddress = await wallet.getAddress();
   const walletEthBalance = await tokenManager.getTokenBalance(ethers.ZeroAddress, walletAddress);
   const walletWethBalance = await tokenManager.getTokenBalance(WETH_ADDRESS, walletAddress);
@@ -230,29 +235,16 @@ async function main() {
   logger.info(`Owner balance change token1: ${formatBalance(t1Addr, walletToken1Delta)}`);
   logger.info(`New Owner token0: ${formatBalance(t0Addr, newWalletToken0Balance)}`);
   logger.info(`New Owner token1: ${formatBalance(t1Addr, newWalletToken1Balance)}`);
-  logger.info('✅ Operation successful');
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => console.log('✅ Operation successful'))
   .catch((err) => {
     console.error(`❌ Error: ${err.message}`, { err });
     process.exit(1);
   })
   .finally(async () => {
-    logger.info('Cleaning up resources...');
+    console.log('Cleaning up resources...');
     await db.destroy();
     await blockchain.cleanup();
   });
-
-// handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
-});
-
-// handle uncaught exceptions
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
-  process.exit(1);
-});

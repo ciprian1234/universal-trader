@@ -375,7 +375,7 @@ export function initPool(
 export async function updatePool(ctx: DexAdapterContext, pool: DexV4PoolState): Promise<DexV4PoolState> {
   if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 pool update');
   const { token0, token1 } = pool.tokenPair;
-  const poolKey = pool.id;
+  const poolKey = pool.poolKeyHash;
 
   // Call PoolManager for this specific ID
   const stateViewContract = ctx.blockchain.getContract(ctx.config.stateViewAddress);
@@ -395,15 +395,6 @@ export async function updatePool(ctx: DexAdapterContext, pool: DexV4PoolState): 
   pool.spotPrice1to0 = calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, false);
 
   return pool;
-}
-
-/**
- * ✅ FIXED: Sort tokens correctly
- */
-function sortTokens(tokenA: string, tokenB: string): [string, string] {
-  const addrA = tokenA.toLowerCase();
-  const addrB = tokenB.toLowerCase();
-  return addrA < addrB ? [addrA, addrB] : [addrB, addrA];
 }
 
 // ================================================================================================

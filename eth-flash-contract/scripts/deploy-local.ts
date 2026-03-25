@@ -1,7 +1,9 @@
 const { ethers } = require('hardhat');
 
 async function main() {
-  const [deployer] = await ethers.getSigners();
+  // NOTE: use account[0] for contract deployment
+  // NOTE: use account[1] for swaps
+  const [_, deployer] = await ethers.getSigners();
   const network = await ethers.provider.getNetwork();
   const balance = await deployer.provider.getBalance(deployer.address);
   const balanceETH = ethers.formatEther(balance);
