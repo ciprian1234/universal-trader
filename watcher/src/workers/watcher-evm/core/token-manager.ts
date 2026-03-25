@@ -136,7 +136,7 @@ export class TokenManager {
     let tokenSource: 'coingecko' | 'introspected' = 'coingecko';
     foundToken = this.trustedTokens.find((token) => token[by] === key && token.chainId === this.blockchain.chainId);
     if (!foundToken && by === 'address') {
-      this.logger.warn(`⚠️ Token with ${by} ${key} not found in trusted tokens list, introspecting on-chain...`);
+      this.logger.debug(`⚠️ Token with ${by} ${key} not found in trusted tokens list, introspecting on-chain...`);
       foundToken = await this.introspectToken(key); // introspect token on chain
       tokenSource = 'introspected';
     }
@@ -174,8 +174,6 @@ export class TokenManager {
         decimals: Number(decimals),
         trusted: false,
       };
-
-      this.logger.info(`Introspected token (${symbol.padEnd(1)}) ${name.padEnd(20)} (TokenAddress: ${normalizedAddress})`);
 
       return token;
     } catch (error) {
@@ -250,5 +248,12 @@ export class TokenManager {
       const contract = new ethers.Contract(tokenAddress, this.erc20ABI, this.blockchain.provider);
       return await contract.balanceOf(walletAddress);
     }
+  }
+
+  getStats() {
+    return {
+      registredTokens: this.tokens.size,
+      storedTokens: this.storedTokens.length,
+    };
   }
 }

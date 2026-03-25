@@ -92,7 +92,7 @@ export class DexManager {
       pool = this.dexAdapter.updatePoolFromEvent(pool, event);
     }
 
-    this.logger.info(printPoolInEvent(pool, event));
+    this.logger.debug(printPoolInEvent(pool, event)); // pool-event-log
     this.pools.set(pool.id, pool);
     this.eventBus.emitPoolStateUpsert({ pool }); // EMIT: pool-state-upsert
   }
@@ -161,6 +161,13 @@ export class DexManager {
    */
   getPoolState(id: string): DexPoolState | undefined {
     return this.pools.get(id);
+  }
+
+  getStats() {
+    return {
+      registredPools: this.pools.size,
+      storedPools: this.dexAdapter.getStats().storedPools,
+    };
   }
 
   // ================================================================================================

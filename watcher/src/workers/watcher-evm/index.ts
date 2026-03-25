@@ -14,6 +14,7 @@ import { GasManager } from './core/gas-manager';
 import { WalletManager } from './core/wallet-manager';
 import { ArbitrageOrchestrator } from './core/arbitrage/arbitrage-orchestrator';
 import { FlashArbitrageHandler } from './core/flash-arbitrage-handler';
+import { formatGwei } from './core/helpers';
 
 class EVMWorker extends BaseWorker {
   private chainConfig!: ChainConfig;
@@ -31,6 +32,8 @@ class EVMWorker extends BaseWorker {
   private walletManager!: WalletManager;
   private arbitrageOrchestrator!: ArbitrageOrchestrator;
   private flashArbitrageHandler!: FlashArbitrageHandler;
+
+  private displayStatsIntervalId?: NodeJS.Timeout;
 
   async handleRequest(message: RequestMessage) {
     this.sendResponseMessage({
@@ -208,14 +211,41 @@ class EVMWorker extends BaseWorker {
     this.blockManager.listenPoolEvents();
 
     // optionally create trading pairs between discovery tokens at startup
-    await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
+    // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
     this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
     this.eventBus.emitApplicationEvent({ name: 'pool-states-updated' }); // enable arbitrage
+
+    // set interval to display stats
+    // set interval to display token pairs stats every 30 seconds for monitoring purposes
+    this.displayStats(); // display initial stats immediately after startup
+    this.displayStatsIntervalId = setInterval(() => this.displayStats(), 30_000);
+  }
+
+  displayStats() {
+    this.logger.info('================ STATS ================');
+    const currentBlock = this.blockManager.getCurrentBlockNumber();
+    const baseFeePerGas = this.gasManager.getBaseFeePerGas();
+    const tokenStats = this.tokenManager.getStats();
+    const priceOracleStats = this.priceOracle.getStats();
+    const tokenPairStats = this.tokenPairManager.getStats();
+    const dexManagerStats = this.dexManager.getStats();
+    const arbitrageStats = this.arbitrageOrchestrator.getStats();
+
+    this.logger.info(`🔗 Current block: ${currentBlock} (⛽ GasCost: ${formatGwei(baseFeePerGas)})`);
+    this.logger.info(`📦 Registered tokens: ${tokenStats.registredTokens} (stored: ${tokenStats.storedTokens})`);
+    this.logger.info(`📊 Price oracle resolved USD prices: ${priceOracleStats.resolvedPrices}`);
+    this.logger.info(`🔀 Registered token pairs: ${tokenPairStats.registredTokenPairs}`);
+    this.logger.info(`🏦 Registered DEX pools: ${dexManagerStats.registredPools} (stored: ${dexManagerStats.storedPools})`);
+    this.logger.info(`🌐 Graph tokens: ${arbitrageStats.graph.tokenCount} graph edges: ${arbitrageStats.graph.edgeCount}`);
+    this.logger.info(`💰 Arbitrage opportunities found: ${arbitrageStats.opportunitiesFound}`);
   }
 
   async stop() {
     this.logger.info('💾 Saving cache to disk...');
     await this.cache.save(); // do not force save if cache is not dirty
+
+    // clear stats display interval
+    if (this.displayStatsIntervalId) clearInterval(this.displayStatsIntervalId);
 
     // Cleanup Prisma
     // await this.storage.cleanup();

@@ -14,3 +14,7 @@ export function isZeroForOne(normalizedTokenInAddress: string, pool: DexPoolStat
   if (token1.address === ethers.ZeroAddress) return false;
   throw new Error(`Token ${normalizedTokenInAddress} not found in pool ${pool.id}`);
 }
+
+export function formatGwei(wei: bigint): string {
+  return (Number(wei) / 1e9).toFixed(8) + ' gwei';
+}

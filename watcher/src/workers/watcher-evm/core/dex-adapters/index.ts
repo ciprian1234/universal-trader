@@ -105,6 +105,8 @@ export class DexAdapter {
     if (pool) {
       this.logger.debug(`Found pool with id: ${pool.id} in storedPools cache, initializing from storage...`);
       pool = this.initPoolFromStorage(pool, event);
+      await this.tokenManager.ensureTokenRegistered(pool.tokenPair.token0.address, 'address');
+      await this.tokenManager.ensureTokenRegistered(pool.tokenPair.token1.address, 'address');
       this.deriveTokenPricesAndLiquidity(pool);
       this.syncToStorage(pool, false); // update cache only
     } else {
@@ -342,5 +344,12 @@ export class DexAdapter {
     this.logger.info(`   📈 Price: 1${s0} costs ${newSpotPriceToken0InToken1}${s1} -> ${priceChangePercent.toFixed(6)}%`);
     this.logger.info(`   📉 Price: 1${s1} costs ${newSpotPriceToken1InToken0}${s0} -> ${priceChangePercent.toFixed(6)}%`);
     this.logger.info(`   ✅ Pool state synchronized successfully\n`);
+  }
+
+  // ================================================================================================
+  getStats() {
+    return {
+      storedPools: this.storedPools.size,
+    };
   }
 }

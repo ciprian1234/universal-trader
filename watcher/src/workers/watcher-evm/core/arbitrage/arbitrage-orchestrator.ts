@@ -31,10 +31,6 @@ export interface ArbitrageOrchestratorInput {
 
 export interface ArbitrageStatistics {
   opportunitiesFound: number;
-  totalProfitUSD: number;
-  averageExecutionTime: number;
-  pathsByHopCount: Map<number, number>;
-  graphStats: any;
 }
 
 // ============================================
@@ -62,10 +58,6 @@ export class ArbitrageOrchestrator {
   // Statistics
   private stats: ArbitrageStatistics = {
     opportunitiesFound: 0,
-    totalProfitUSD: 0,
-    averageExecutionTime: 0,
-    pathsByHopCount: new Map(),
-    graphStats: {},
   };
 
   constructor(input: ArbitrageOrchestratorInput) {
@@ -122,7 +114,6 @@ export class ArbitrageOrchestrator {
       this.logger.info('✅ Pools updated, building graph and enabling service');
       this.graph.buildGraph();
       this.enabled = true;
-      this.stats.graphStats = this.graph.getStats();
     }
 
     if (event.name === 'reorg-detected') {
@@ -143,20 +134,20 @@ export class ArbitrageOrchestrator {
       const updatedPools = this.getUpdatedPools(payload.poolIds);
       if (updatedPools.length === 0) return;
 
-      this.logger.info(`   📊 ${updatedPools.length} pools updated`);
+      this.logger.debug(`📊 ${updatedPools.length} pools updated`);
 
       // 2. Update graph incrementally
       const affectedTokens = this.graph.updatePools(updatedPools);
 
       // 3. Discover candidate paths
       const candidatePaths = this.pathFinder.findCycles(affectedTokens);
-      this.logger.info(`   🔍 Found ${candidatePaths.length} candidate paths (block:${payload.blockData.number})`);
+      this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths (block:${payload.blockData.number})`);
 
       if (candidatePaths.length === 0) return;
 
       // 4. Evaluate paths concurrently (batched)
       const evaluatedPaths = await this.evaluatePathsConcurrently(candidatePaths, 30);
-      this.logger.info(`   ✅ ${evaluatedPaths.length} profitable paths`);
+      this.logger.info(`✅ Found ${evaluatedPaths.length} profitable paths`);
 
       if (evaluatedPaths.length === 0) return;
 
@@ -203,8 +194,11 @@ export class ArbitrageOrchestrator {
   }
 
   private selectBestPaths(paths: ArbitrageOpportunity[]): ArbitrageOpportunity[] {
-    // Sort by net profit descending
-    const sorted = [...paths].sort((a, b) => b.netProfitUSD - a.netProfitUSD);
+    // Sort by gross profit descending
+    const sorted = [...paths].sort((a, b) => b.grossProfitUSD - a.grossProfitUSD);
+
+    // log path id => gros profit
+    sorted.forEach((p) => this.logger.info(`PATH "${p.id}" => GrossProfitUSD $${p.grossProfitUSD.toFixed(2)}`));
 
     const usedPools = new Set<string>();
     const selected: ArbitrageOpportunity[] = [];
@@ -248,5 +242,12 @@ export class ArbitrageOrchestrator {
     this.logger.info(`   ⛽ Gas: $${path.gasAnalysis!.totalGasCostUSD.toFixed(4)}`);
     this.logger.info(`   💰 Net: $${path.netProfitUSD.toFixed(4)}`);
     this.logger.info(`   📊 Total Slippage: ${path.totalSlippage.toFixed(4)}%\n`);
+  }
+
+  getStats() {
+    return {
+      opportunitiesFound: this.stats.opportunitiesFound,
+      graph: this.graph.getStats(),
+    };
   }
 }

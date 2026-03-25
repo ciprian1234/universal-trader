@@ -7,6 +7,7 @@ import type { ChainConfig } from '@/config/models';
 import type { PriceOracle } from './price-oracle';
 import type { DexProtocol } from '@/shared/data-model/layer1';
 import type { BlockEntry } from './block-manager';
+import { formatGwei } from './helpers';
 
 type GasManagerInput = {
   chainConfig: ChainConfig;
@@ -71,11 +72,11 @@ export class GasManager {
     if (this.blockCounter++ % this.chainConfig.gasDataFetchInterval !== 0) return; // Fetch Block data every X blocks
     const data = await this.blockchain.getBlock(number); // only fetch once per x events TBD
     this.baseFeePerGas = data!.baseFeePerGas!;
-    const baseFeePerGasFormatted = this.formatGwei(data!.baseFeePerGas!);
+    const baseFeePerGasFormatted = formatGwei(data!.baseFeePerGas!);
     const gasUsagePercent = ((Number(data!.gasUsed) / Number(data!.gasLimit)) * 100).toFixed(2);
     const deltaReceived = receivedTimestamp - data!.timestamp * 1000;
     const deltaProcessed = Date.now() - receivedTimestamp;
-    this.logger.info(
+    this.logger.debug(
       `⛽ Block ${number} (mined ${deltaReceived}ms ago) - gasUsed: ${gasUsagePercent}%  baseFeePerGas: ${baseFeePerGasFormatted} (+${deltaProcessed}ms)`,
     );
   }
@@ -155,7 +156,7 @@ export class GasManager {
     let cappedGasBudgetWEI = gasBudgetWEI;
     if (cappedGasBudgetWEI > this.walletManager.getNativeTokenBalance()) {
       this.logger.debug(
-        `⚠️  Capped gas budget ${this.formatGwei(gasBudgetWEI)} exceeds wallet balance funds ${this.formatGwei(
+        `⚠️  Capped gas budget ${formatGwei(gasBudgetWEI)} exceeds wallet balance funds ${formatGwei(
           this.walletManager.getNativeTokenBalance(),
         )}, capping gas budget to wallet balance`,
       );
@@ -208,9 +209,7 @@ export class GasManager {
     gasEstimate: bigint,
   ): bigint {
     if (priorityFeeCap < this.MIN_PRIORITY_FEE)
-      throw new Error(
-        `PriorityFeeCap (${this.formatGwei(priorityFeeCap)}) < ${this.formatGwei(this.MIN_PRIORITY_FEE)} MIN_PRIORITY`,
-      );
+      throw new Error(`PriorityFeeCap (${formatGwei(priorityFeeCap)}) < ${formatGwei(this.MIN_PRIORITY_FEE)} MIN_PRIORITY`);
 
     // STEP 1: Calculate base priority fee as % of gross profit: how much of gross profit are we willing to spend on priority?
     const profitBidPercentage = this.calculateProfitBidPercentage(grossProfitUSD);
@@ -233,14 +232,12 @@ export class GasManager {
 
     if (priorityFeePerGas > this.MAX_PRIORITY_FEE) {
       this.logger.debug(
-        `⚠️  Capping PriorityFee at ${this.formatGwei(this.MAX_PRIORITY_FEE)} (was: ${this.formatGwei(priorityFeePerGas)})`,
+        `⚠️  Capping PriorityFee at ${formatGwei(this.MAX_PRIORITY_FEE)} (was: ${formatGwei(priorityFeePerGas)})`,
       );
       priorityFeePerGas = this.MAX_PRIORITY_FEE;
     }
     if (priorityFeePerGas > priorityFeeCap) {
-      this.logger.debug(
-        `⚠️  PriorityFee ${this.formatGwei(priorityFeePerGas)} > ${this.formatGwei(priorityFeeCap)} priorityFeeCap`,
-      );
+      this.logger.debug(`⚠️  PriorityFee ${formatGwei(priorityFeePerGas)} > ${formatGwei(priorityFeeCap)} priorityFeeCap`);
       priorityFeePerGas = priorityFeeCap; // TODO: we should allow a risky trade like this?
     }
     return priorityFeePerGas;
@@ -285,14 +282,6 @@ export class GasManager {
     if (baseFeeGwei >= 15) return 1.15; // Light competition
     if (baseFeeGwei >= 5) return 1.112; // Normal competition
     return 1.061; // Very quiet (slightly above minimum)
-  }
-
-  // ================================================================================================
-  // UTILS
-  // ================================================================================================
-
-  private formatGwei(wei: bigint): string {
-    return (Number(wei) / 1e9).toFixed(8) + ' gwei';
   }
 
   // ================================================================================================

@@ -5,6 +5,15 @@
 - integrate burn/mint events for V3
 - fetch and keep in sync ticks liquidity for V3 conditionally
 
+## Issues
+
+why resolved prices are more then actual registered tokens???
+
+## Contract
+
+allow to specify option: if last swap has WETH, convert only the amount we want to borrow and keep eth
+this allows to pay the bribe in contract
+
 ## Arbitrage Features
 
 - MVP: check for arbitrage only for V2 protocols

@@ -218,7 +218,7 @@ export class FlashArbitrageHandler {
         }
 
         // STEP 1b: If using Flashbots, check bundle stats from previous block
-        if (process.env.USE_FLASHBOTS) {
+        if (this.USE_FLASHBOTS) {
           const bundleStats = await this.flashbotsService!.getBundleStats(
             execution.response!.bundleResponse!.bundleHash,
             newBlock.number - 1,
@@ -231,7 +231,7 @@ export class FlashArbitrageHandler {
         const validateResponse = await this.validatePreExecution(execution.opportunity, execution.trade!); // TBD: recalculate gas
         if (!validateResponse.success) {
           this.logger.warn(`⚠️ Execution of ${opportunityId} is no longer valid`);
-          if (process.env.USE_FLASHBOTS) {
+          if (this.USE_FLASHBOTS) {
             // Flashbots bundles can't be cancelled, just mark as invalidated
             this.logger.info(`⏳ Flashbots bundle will expire automatically if not included`);
             await this.db.pushArbitrageLog(opportunityId, {
@@ -255,7 +255,7 @@ export class FlashArbitrageHandler {
         }
 
         // if we reach here => execution is still valid
-        if (process.env.USE_FLASHBOTS) {
+        if (this.USE_FLASHBOTS) {
           this.logger.info(`⏳ Execution of ${opportunityId} is still valid... Resubmit bundle`);
           // Simulate bundle and send if successful
           await this.flashbotsService!.simulateBundle(execution.bundle!, newBlock.number + 1);
@@ -318,10 +318,8 @@ export class FlashArbitrageHandler {
       }
 
       // Execute transaction: choose execution method (flashbots or standard)
-      const useFlashbots = this.flashbotsService && process.env.USE_FLASHBOTS === 'true';
-      if (useFlashbots)
-        response = await this.executeViaFlashbots(trade, opportunity); // Execute via Flashbots (private mempool)
-      else response = await this.executeViaStandardTx(trade, opportunity); // Standard execution (public mempool)
+      if (this.USE_FLASHBOTS) response = await this.executeViaFlashbots(trade, opportunity);
+      else response = await this.executeViaStandardTx(trade, opportunity);
       if (!response.tx) throw new Error('Failed to send transaction');
       const nextBlockNumber = this.blockManager.getCurrentBlockNumber() + 1;
       this.logger.info(`🚀 Transaction sent, tx hash: ${response.tx.hash} (expected inclusion block: ${nextBlockNumber})`);
@@ -396,9 +394,21 @@ export class FlashArbitrageHandler {
       type: 2, // EIP-1559
     };
 
+    // Create coinbase bribe transaction
+    const unsignedBribeTx = {
+      to: ethers.ZeroAddress, // Placeholder (builder sets block.coinbase)
+      value: this.calculateBribeWEI(opportunity),
+      data: '0x',
+      nonce: nonce + 1,
+      chainId: this.blockchain.chainId,
+      gasLimit: 21000n,
+      maxFeePerGas: gasPricePerUnit,
+      maxPriorityFeePerGas: this.MIN_PRIORITY_FEE, // Same as arbitrage tx
+      type: 2, // EIP-1559
+    };
+
     // Create bundle with signed transactions
-    const signedTx = await signer.signTransaction(unsignedArbitrageTx);
-    const bundle = [signedTx];
+    const bundle = await Promise.all([signer.signTransaction(unsignedArbitrageTx), signer.signTransaction(unsignedBribeTx)]);
     const targetBlock = this.blockManager.getCurrentBlockNumber() + 1;
 
     // Simulate bundle and send if successful
@@ -406,7 +416,7 @@ export class FlashArbitrageHandler {
     const bundleResponse = await this.flashbotsService.submitBundle(bundle, { targetBlock }); // non-blocking
 
     // !!! Parse transaction to get hash
-    const parsedArbitrageTx = ethers.Transaction.from(signedTx);
+    const parsedArbitrageTx = ethers.Transaction.from(bundle[0]);
     const txHash = parsedArbitrageTx.hash!;
 
     return {
@@ -435,8 +445,6 @@ export class FlashArbitrageHandler {
    * otherwise cap bribe to wallet balance (or set to 0 if balance is too low) to avoid failed transactions due to insufficient funds
    */
   private calculateBribeWEI(opportunity: ArbitrageOpportunity): bigint {
-    if (!this.USE_FLASHBOTS) return 0n;
-
     const gasAnalysis = opportunity.gasAnalysis!;
 
     // =================== BRIBE CALCULATION ======================
@@ -543,7 +551,10 @@ export class FlashArbitrageHandler {
     const amountOutMin = opportunity.borrowAmount + (opportunity.grossProfitToken * 5n) / 10n; // set min output based on min 50% of gross profit
     swaps[swaps.length - 1].amountOutMin = amountOutMin;
 
-    return { swaps, coinbaseBribe: this.calculateBribeWEI(opportunity) };
+    let coinbaseBribe = 0n;
+    if (this.USE_FLASHBOTS && opportunity.borrowToken.symbol === 'WETH') coinbaseBribe = this.calculateBribeWEI(opportunity);
+
+    return { swaps, coinbaseBribe };
   }
 
   /**

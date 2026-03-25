@@ -50,11 +50,6 @@ export class TokenPairManager {
     this.eventBus = input.eventBus;
     this.tokenManager = input.tokenManager;
     this.dexManager = input.dexManager;
-
-    // set interval to display token pairs stats every 30 seconds for monitoring purposes
-    setInterval(() => {
-      this.displayTokenPairs();
-    }, 30_000);
   }
 
   // ================================================================================================
@@ -164,6 +159,12 @@ export class TokenPairManager {
   // ================================================================================================
   // HELPERS
   // ================================================================================================
+
+  getStats() {
+    return {
+      registredTokenPairs: this.tokenPairs.size,
+    };
+  }
 
   displayTokenPairs() {
     this.logger.info(`Current token pairs:`);

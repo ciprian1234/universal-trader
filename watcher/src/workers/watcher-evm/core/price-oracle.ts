@@ -78,7 +78,7 @@ export class PriceOracle {
 
   // ── External anchor fetch (called on init and periodically to update prices)
   async fetchAnchors(): Promise<void> {
-    this.logger.info(`🌐 Fetching priceUSD of ${this.anchorTokens.length} anchor tokens from DeFiLlama...`);
+    this.logger.debug(`🌐 Fetching priceUSD of ${this.anchorTokens.length} anchor tokens from DeFiLlama...`);
 
     const res = await fetch(`https://coins.llama.fi/prices/current/${this.anchorAddressesQueryParam}`, {
       signal: AbortSignal.timeout(5_000),
@@ -110,9 +110,6 @@ export class PriceOracle {
       source: 'anchor',
       updatedAt: Date.now(),
     });
-
-    // log prices after fetching
-    this.logPrices();
   }
 
   // PriceUSD derived from pool
@@ -204,13 +201,19 @@ export class PriceOracle {
     return 0; // no prices known — can't estimate
   }
 
-  // log all prices
-  logPrices(): void {
+  // log anchor token prices
+  logAnchorPrices(): void {
     for (const t of this.anchorTokens) {
       const p = this.resolvedPrices.get(t.address)!; // prices for anchor tokens should always be available
       this.logger.info(` • ${t.symbol}: $${p.priceUSD} (source: ${this.anchorTokensSource})`);
     }
-    this.logger.info(`Resolved priceUSD count: ${this.resolvedPrices.size}/${this.tokenManager.getAllTokens().size} tokens`);
+  }
+
+  getStats() {
+    return {
+      anchorTokens: this.anchorTokens.length,
+      resolvedPrices: this.resolvedPrices.size,
+    };
   }
 
   /**
