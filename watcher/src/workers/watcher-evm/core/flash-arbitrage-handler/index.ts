@@ -570,16 +570,15 @@ export class FlashArbitrageHandler {
    * Check if contract is properly configured
    */
   async validateContract() {
-    if (!process.env.ENABLE_FLASH_ARBITRAGE) return;
+    if (!this.ENABLE_FLASH_ARBITRAGE) return;
     this.logger.info(`🔍 Validating FlashArbitrageContract`);
     const owner = await this.contract!.owner();
     const signerAddress = await this.walletManager.getSigner().getAddress();
 
+    this.logger.info(`📋 Contract address: ${this.chainConfig.arbitrageContractAddress}`);
     this.logger.info(`📋 Contract owner: ${owner}`);
-    this.logger.info(`📋 Signer address: ${signerAddress}`);
 
     if (owner.toLowerCase() !== signerAddress.toLowerCase()) throw new Error('Signer is not the contract owner');
-    this.logger.info(`✅ Validated FlashArbitrageContract: ${this.chainConfig.arbitrageContractAddress}`);
   }
 
   /**

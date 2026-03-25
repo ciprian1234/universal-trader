@@ -92,8 +92,7 @@ export class WalletManager {
 
     // Load balances for discovery tokens at startup
     await Promise.all(this.chainConfig.discoveryTokens.map((symbol) => this.loadTokenBalance(symbol)));
-    this.logger.info(this.getWalletSummary());
-    this.logger.info(`✅ Wallet validated: ${address} (${ethers.formatEther(nativeTokenBalance)} ${this.NATIVE_TOKEN})`);
+    this.logger.info(`👤 Wallet ${this.getWalletSummary()}`);
   }
 
   /**

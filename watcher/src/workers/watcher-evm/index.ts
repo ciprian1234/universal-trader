@@ -194,20 +194,21 @@ class EVMWorker extends BaseWorker {
     // init
     this.setupEventPipeline();
     await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
+    await this.walletManager.initAndValidateWallet();
+    await this.flashArbitrageHandler.validateContract();
+
     await this.priceOracle.init(); // fetch initial anchor prices and start periodic updates
     await this.dexManager.init(); // init contracts for dex venues
 
-    await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
-    this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
-
-    await this.blockManager.init();
-    await this.walletManager.initAndValidateWallet();
-
-    this.eventBus.emitApplicationEvent({ name: 'pool-states-updated' }); // enable arbitrage
-
     // start listening for block and pool events
+    await this.blockManager.init();
     this.blockManager.listenBlockEvents();
     this.blockManager.listenPoolEvents();
+
+    // optionally create trading pairs between discovery tokens at startup
+    await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
+    this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
+    this.eventBus.emitApplicationEvent({ name: 'pool-states-updated' }); // enable arbitrage
   }
 
   async stop() {

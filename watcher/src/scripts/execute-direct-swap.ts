@@ -30,10 +30,6 @@ const DB_POOL_ID = '1:0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed
 const ZERO_FOR_ONE = true;
 const amountInFormatted = '0.01'; // human readable amount to swap
 
-// WRAP ETH if needed
-let WRAP_ETH_AMOUNT: string | null = null;
-// WRAP_ETH_AMOUNT = '10';
-
 // ========================================================================================
 // INIT COMPONENTS
 // ========================================================================================
@@ -115,6 +111,9 @@ async function fundContract(signer: any, tokenAddr: string, amountInString: stri
     tokenAddr = WETH_ADDRESS;
   }
 
+  // WRAP ETH first
+  if (tokenAddr === WETH_ADDRESS) await wrapETH(signer, ethers.parseEther(amountInString));
+
   const token = await tokenManager.ensureTokenRegistered(tokenAddr, 'address');
   const amount = ethers.parseUnits(amountInString, token.decimals);
   const tokenContract = new ethers.Contract(tokenAddr, WETH_ABI, signer);
@@ -180,9 +179,6 @@ async function main() {
   if (walletAddress.toLowerCase() !== contractOwner.toLowerCase()) throw new Error('Signer is not the contract owner');
   logger.info(`🏦 Arbitrage contract at ${CONTRACT_ADDRESS}, owner: ${contractOwner}`);
 
-  // wrap ETH to WETH if needed
-  if (WRAP_ETH_AMOUNT) await wrapETH(wallet, ethers.parseEther(WRAP_ETH_AMOUNT));
-
   // log what we are about to do
   const swapMsg = ZERO_FOR_ONE ? `${t0.symbol} -> ${t1.symbol}` : `${t1.symbol} -> ${t0.symbol}`;
   logger.info(`🚀 Executing direct swap on ${pool.venue.name} ${swapMsg}`);
@@ -238,13 +234,14 @@ async function main() {
 }
 
 main()
-  .then(() => console.log('✅ Operation successful'))
+  .then(() => logger.info('✅ Operation successful'))
   .catch((err) => {
-    console.error(`❌ Error: ${err.message}`, { err });
+    logger.error(`❌ Error: ${err.message}`, { err });
     process.exit(1);
   })
   .finally(async () => {
-    console.log('Cleaning up resources...');
+    logger.info('Cleaning up resources...');
     await db.destroy();
     await blockchain.cleanup();
+    process.exit(0);
   });
