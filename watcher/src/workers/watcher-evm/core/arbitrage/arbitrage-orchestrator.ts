@@ -163,10 +163,7 @@ export class ArbitrageOrchestrator {
       // 5. Select non-overlapping paths
       const selectedPaths = this.selectBestPaths(evaluatedPaths);
 
-      // 6. Save and emit
-      const savePromises = selectedPaths.map((path) => this.db.upsertArbitrageOpportunity(path));
-      await Promise.all(savePromises);
-
+      // 6. Emit opportunities
       for (const path of selectedPaths) {
         this.displayPath(path);
         this.eventBus.emitArbitrageOpportunity(path);

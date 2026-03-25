@@ -623,7 +623,7 @@ export class FlashArbitrageHandler {
     block: BlockEntry,
   ) {
     // update wallet
-    const involvedTokens = [opportunity.steps[0].tokenIn, opportunity.steps[0].tokenOut];
+    const involvedTokens = [opportunity.steps[0].tokenIn.address, opportunity.steps[0].tokenOut.address];
     const actualWalletChanges = await this.walletManager.updateBalancesAfterTransaction(involvedTokens);
 
     const analysis = {

@@ -92,8 +92,10 @@ class EVMWorker extends BaseWorker {
     });
 
     // new "arbitrage-opportunity" routing
-    this.eventBus.onArbitrageOpportunity((payload) => {
-      this.flashArbitrageHandler.handleNewArbitrageOpportunityEvent(payload);
+    this.eventBus.onArbitrageOpportunity(async (opportunity) => {
+      opportunity.foundAtBlock = this.blockManager.getCurrentBlockNumber();
+      await this.db.upsertArbitrageOpportunity(opportunity);
+      this.flashArbitrageHandler.handleNewArbitrageOpportunityEvent(opportunity);
       // this.sendEventMessage('arbitrage-opportunity', { opportunity: payload }); // send event to main thread
     });
   }

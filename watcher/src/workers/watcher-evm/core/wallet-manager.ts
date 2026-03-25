@@ -2,16 +2,8 @@ import { ethers } from 'ethers';
 import { TokenManager } from '../core/token-manager';
 import { Blockchain } from '../core/blockchain';
 import { createLogger, type Logger } from '@/utils';
-import type { TokenOnChain } from '@/shared/data-model/token';
 import type { ChainConfig } from '@/config/models';
 import type { PriceOracle } from './price-oracle';
-
-export interface TokenBalance {
-  token: TokenOnChain;
-  balance: bigint;
-  balanceFormatted: string;
-  lastUpdated: number;
-}
 
 export interface WalletState {
   address: string;
@@ -51,10 +43,9 @@ export class WalletManager {
   private priceOracle: PriceOracle;
 
   private readonly NATIVE_TOKEN: string;
-  private readonly WRAPPED_NATIVE_TOKEN_ADDRESS: string;
 
   // 💾 IN-MEMORY STORAGE: Token balances by address
-  private tokenBalances: Map<string, TokenBalance> = new Map();
+  private tokenBalances: Map<string, bigint> = new Map();
 
   constructor(input: WalletManagerInput) {
     this.logger = createLogger(`[${input.chainConfig.name}.WalletManager]`);
@@ -67,7 +58,6 @@ export class WalletManager {
     this.signer = new ethers.Wallet(input.chainConfig.walletPrivateKey, input.blockchain.getProvider());
 
     this.NATIVE_TOKEN = this.chainConfig.nativeToken;
-    this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress;
 
     // init walletState with default values
     this.walletState = { address: '', nativeTokenBalance: 0n, lastUpdated: Date.now() };
@@ -91,28 +81,22 @@ export class WalletManager {
     }
 
     // Load balances for discovery tokens at startup
-    await Promise.all(this.chainConfig.discoveryTokens.map((symbol) => this.loadTokenBalance(symbol)));
+    await Promise.all(
+      this.chainConfig.discoveryTokens.map((symbol) => {
+        const token = this.tokenManager.getTokenBySymbol(symbol);
+        if (!token) throw new Error(`Discovery token ${symbol} not found in token manager, skipping balance load`);
+        this.loadTokenBalance(token.address);
+      }),
+    );
     this.logger.info(`👤 Wallet ${this.getWalletSummary()}`);
   }
 
   /**
    * LOAD TOKEN BALANCE: Get balance for a specified token
    */
-  async loadTokenBalance(tokenSymbol: string): Promise<void> {
-    // Get token info from token manager
-    const token = this.tokenManager.getTokenBySymbol(tokenSymbol);
-    if (!token) throw new Error(`Token ${tokenSymbol} not found in token manager`);
-    const balance = await this.tokenManager.getTokenBalance(token.address, this.walletState.address);
-
-    const tokenBalance: TokenBalance = {
-      token,
-      balance,
-      balanceFormatted: ethers.formatUnits(balance, token.decimals),
-      lastUpdated: Date.now(),
-    };
-
-    // Store by token address
-    this.tokenBalances.set(token.address, tokenBalance);
+  async loadTokenBalance(tokenAddress: string): Promise<void> {
+    const balance = await this.tokenManager.getTokenBalance(tokenAddress, this.walletState.address);
+    this.tokenBalances.set(tokenAddress, balance); // Store by token address
   }
 
   /**
@@ -141,24 +125,31 @@ export class WalletManager {
   /**
    * 🔄 UPDATE BALANCES AFTER TRANSACTION: Refresh balances and log changes
    */
-  async updateBalancesAfterTransaction(involvedTokens: TokenOnChain[]) {
+  async updateBalancesAfterTransaction(involvedTokens: string[]) {
     this.logger.info('🔄 Updating balances after transaction...');
 
     // Store old balances for comparison
     const oldNativeTokenBalance = this.walletState.nativeTokenBalance;
     const oldTokenBalances = new Map<string, bigint>();
-
-    involvedTokens.forEach((token) => {
-      const balance = this.tokenBalances.get(token.address);
-      if (balance) oldTokenBalances.set(token.address, balance.balance);
-    });
+    involvedTokens.forEach((addr) => oldTokenBalances.set(addr, this.tokenBalances.get(addr) ?? 0n));
 
     // refresh native and ERC20 token balances
-    const refreshPromises = involvedTokens.map((token) => this.loadTokenBalance(token.symbol)); // Refresh involved token balances
+    const refreshPromises = involvedTokens.map((addr) => this.loadTokenBalance(addr)); // Refresh involved token balances
     await Promise.all([this.refreshNativeTokenBalance(), ...refreshPromises]);
 
+    // get new balances after refresh
+    const newNativeTokenBalance = this.walletState.nativeTokenBalance;
+    const newTokenBalances = new Map<string, bigint>();
+    involvedTokens.forEach((addr) => newTokenBalances.set(addr, this.tokenBalances.get(addr) ?? 0n));
+
     // get balance changes and log them
-    const balanceChanges = this.getBalanceChanges(oldNativeTokenBalance, oldTokenBalances, involvedTokens);
+    const balanceChanges = this.getBalanceChanges({
+      oldNativeTokenBalance,
+      newNativeTokenBalance,
+      oldTokenBalances,
+      newTokenBalances,
+      involvedTokens,
+    });
     this.displayBalanceChanges(balanceChanges);
     return balanceChanges;
   }
@@ -166,46 +157,47 @@ export class WalletManager {
   /**
    * 📋 Get Balance Changes: Compare old and new balances
    */
-  private getBalanceChanges(
-    oldNativeTokenBalance: bigint,
-    oldTokenBalances: Map<string, bigint>,
-    involvedTokens: TokenOnChain[],
-  ): BalanceChangesType {
+  private getBalanceChanges(input: {
+    oldNativeTokenBalance: bigint;
+    newNativeTokenBalance: bigint;
+    oldTokenBalances: Map<string, bigint>;
+    newTokenBalances: Map<string, bigint>;
+    involvedTokens: string[];
+  }): BalanceChangesType {
+    const { oldNativeTokenBalance, newNativeTokenBalance, oldTokenBalances, newTokenBalances, involvedTokens } = input;
+
     const balanceChanges: BalanceChangesType = {};
 
     // NATIVE_TOKEN balance change
-    const nativeTokenDiff = this.walletState!.nativeTokenBalance - oldNativeTokenBalance;
+    const nativeTokenDiff = newNativeTokenBalance - oldNativeTokenBalance;
 
     balanceChanges[this.NATIVE_TOKEN] = {
       oldBalance: oldNativeTokenBalance,
       oldBalanceFormatted: ethers.formatEther(oldNativeTokenBalance),
-      oldBalanceValueInUSD: this.priceOracle
-        .calculateUSDValue(this.WRAPPED_NATIVE_TOKEN_ADDRESS, oldNativeTokenBalance)
-        .toFixed(4),
-      newBalance: this.walletState.nativeTokenBalance,
-      newBalanceFormatted: ethers.formatEther(this.walletState.nativeTokenBalance),
-      newBalanceValueInUSD: this.priceOracle
-        .calculateUSDValue(this.WRAPPED_NATIVE_TOKEN_ADDRESS, this.walletState.nativeTokenBalance)
-        .toFixed(4),
+      oldBalanceValueInUSD: this.priceOracle.calculateUSDValue(ethers.ZeroAddress, oldNativeTokenBalance).toFixed(4),
+      newBalance: newNativeTokenBalance,
+      newBalanceFormatted: ethers.formatEther(newNativeTokenBalance),
+      newBalanceValueInUSD: this.priceOracle.calculateUSDValue(ethers.ZeroAddress, newNativeTokenBalance).toFixed(4),
       diff: nativeTokenDiff,
       diffFormatted: ethers.formatEther(nativeTokenDiff),
-      diffValueInUSD: this.priceOracle.calculateUSDValue(this.WRAPPED_NATIVE_TOKEN_ADDRESS, nativeTokenDiff).toFixed(4),
+      diffValueInUSD: this.priceOracle.calculateUSDValue(ethers.ZeroAddress, nativeTokenDiff).toFixed(4),
     };
 
     // Token balance changes
-    involvedTokens.forEach((token) => {
-      const oldBalance = oldTokenBalances.get(token.address)!;
-      const newBalance = this.tokenBalances.get(token.address)!;
+    involvedTokens.forEach((addr) => {
+      const oldBalance = oldTokenBalances.get(addr)!;
+      const newBalance = newTokenBalances.get(addr)!;
+      const token = this.tokenManager.getToken(addr)!;
 
-      const diff = newBalance.balance - oldBalance;
+      const diff = newBalance - oldBalance;
 
       balanceChanges[token.symbol] = {
         oldBalance,
         oldBalanceFormatted: ethers.formatUnits(oldBalance, token.decimals),
         oldBalanceValueInUSD: this.priceOracle.calculateUSDValue(token.address, oldBalance).toFixed(4),
-        newBalance: newBalance.balance,
-        newBalanceFormatted: newBalance.balanceFormatted,
-        newBalanceValueInUSD: this.priceOracle.calculateUSDValue(token.address, newBalance.balance).toFixed(4),
+        newBalance: newBalance,
+        newBalanceFormatted: ethers.formatUnits(newBalance, token.decimals),
+        newBalanceValueInUSD: this.priceOracle.calculateUSDValue(token.address, newBalance).toFixed(4),
         diff,
         diffFormatted: ethers.formatUnits(diff, token.decimals),
         diffValueInUSD: this.priceOracle.calculateUSDValue(token.address, diff).toFixed(4),
@@ -245,29 +237,18 @@ export class WalletManager {
   getNativeTokenBalance() {
     return this.walletState.nativeTokenBalance;
   }
-  /**
-   * 🪙 GET TOKEN BALANCE: Get balance for specific token by address
-   */
-  getTokenBalance(tokenAddress: string): TokenBalance | null {
-    return this.tokenBalances.get(tokenAddress) || null;
-  }
-
-  /**
-   * 📊 GET ALL TOKEN BALANCES: Get all tracked token balances
-   */
-  getAllTokenBalances(): TokenBalance[] {
-    return Array.from(this.tokenBalances.values());
-  }
 
   /**
    * 📋 GET WALLET SUMMARY: Get formatted summary
    */
   getWalletSummary(): string {
-    const allBalances = this.getAllTokenBalances();
     const nativeTokenBalanceFormatted = ethers.formatEther(this.walletState.nativeTokenBalance);
     const summary = [`Address: ${this.walletState.address}`, `${this.NATIVE_TOKEN}: ${nativeTokenBalanceFormatted}`];
 
-    allBalances.forEach((balance) => summary.push(`${balance.token.symbol}: ${balance.balanceFormatted}`));
+    for (const [tokenAddress, balance] of this.tokenBalances.entries()) {
+      const token = this.tokenManager.getToken(tokenAddress);
+      if (token) summary.push(`${token.symbol}: ${ethers.formatUnits(balance, token.decimals)}`);
+    }
     return summary.join('\n');
   }
 }
