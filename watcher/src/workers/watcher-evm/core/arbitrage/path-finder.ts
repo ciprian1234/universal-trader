@@ -210,7 +210,7 @@ export class PathFinder implements IPathFinder {
       slippage: 0,
     }));
 
-    const pathKey = edges.map((e) => `${e.pool.venue.name}(${e.pool.tokenPair.key}:${e.feeBps})`).join('_');
+    const pathKey = edges.map((e) => `${e.pool.venue.name}(${e.feeBps})[${e.tokenIn.symbol}->${e.tokenOut.symbol}]`).join('___');
 
     return {
       id: `${Date.now()}@${pathKey}`,

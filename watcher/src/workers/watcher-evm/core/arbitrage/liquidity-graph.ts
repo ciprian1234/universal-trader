@@ -187,7 +187,7 @@ export class LiquidityGraph {
   private normalizeToken(token: TokenOnChain): TokenOnChain {
     // NOTE: marked symbol as nETH for easier debugging, but address is the important part for graph identity
     if (token.address === ethers.ZeroAddress) {
-      return { ...token, address: this.config.wrappedNativeTokenAddress, symbol: 'nETH' };
+      return { ...token, address: this.config.wrappedNativeTokenAddress };
     }
     return token;
   }

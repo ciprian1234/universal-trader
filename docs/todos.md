@@ -1,9 +1,9 @@
 # TODOS
 
+- select arbitrage paths based on some different logic
+- review gas calculation/analysis and bribe calculation
 - integrate burn/mint events for V3
 - fetch and keep in sync ticks liquidity for V3 conditionally
-- wallet manager => periodically convert profit into ETH to pay for GAS
-- deploy new contract
 
 ## Arbitrage Features
 

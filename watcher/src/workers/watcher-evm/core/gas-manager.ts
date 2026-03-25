@@ -154,7 +154,7 @@ export class GasManager {
     // cap gas budget to wallet balance
     let cappedGasBudgetWEI = gasBudgetWEI;
     if (cappedGasBudgetWEI > this.walletManager.getNativeTokenBalance()) {
-      this.logger.warn(
+      this.logger.debug(
         `⚠️  Capped gas budget ${this.formatGwei(gasBudgetWEI)} exceeds wallet balance funds ${this.formatGwei(
           this.walletManager.getNativeTokenBalance(),
         )}, capping gas budget to wallet balance`,
@@ -202,7 +202,7 @@ export class GasManager {
   // - profit (high profit => high urgency, we afford to pay more)
   // - network conditions (if baseFee its high => network congestion)
   private calculateOptimalPriorityFeePerGas(
-    profitUSD: number,
+    grossProfitUSD: number,
     priorityFeeCap: bigint,
     nativeTokenPriceUSD: number,
     gasEstimate: bigint,
@@ -213,10 +213,10 @@ export class GasManager {
       );
 
     // STEP 1: Calculate base priority fee as % of gross profit: how much of gross profit are we willing to spend on priority?
-    const profitBidPercentage = this.calculateProfitBidPercentage(profitUSD);
+    const profitBidPercentage = this.calculateProfitBidPercentage(grossProfitUSD);
 
     // Convert to priority fee in WEI
-    const profitBasedPriorityBudgetUSD = profitUSD * profitBidPercentage;
+    const profitBasedPriorityBudgetUSD = grossProfitUSD * profitBidPercentage;
     const profitBasedPriorityBudgetWEI = BigInt(Math.floor((profitBasedPriorityBudgetUSD / nativeTokenPriceUSD) * 1e18));
 
     // Priority fee per gas unit
@@ -232,13 +232,13 @@ export class GasManager {
     if (priorityFeePerGas < this.MIN_PRIORITY_FEE) priorityFeePerGas = this.MIN_PRIORITY_FEE;
 
     if (priorityFeePerGas > this.MAX_PRIORITY_FEE) {
-      this.logger.warn(
+      this.logger.debug(
         `⚠️  Capping PriorityFee at ${this.formatGwei(this.MAX_PRIORITY_FEE)} (was: ${this.formatGwei(priorityFeePerGas)})`,
       );
       priorityFeePerGas = this.MAX_PRIORITY_FEE;
     }
     if (priorityFeePerGas > priorityFeeCap) {
-      this.logger.warn(
+      this.logger.debug(
         `⚠️  PriorityFee ${this.formatGwei(priorityFeePerGas)} > ${this.formatGwei(priorityFeeCap)} priorityFeeCap`,
       );
       priorityFeePerGas = priorityFeeCap; // TODO: we should allow a risky trade like this?

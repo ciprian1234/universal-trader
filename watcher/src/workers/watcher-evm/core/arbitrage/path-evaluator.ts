@@ -111,8 +111,8 @@ export class PathEvaluator {
         timestamp: Date.now(),
       };
 
-      this.logger.debug(`Evaluated path ${path.id}: Profit $${grossProfitUSD.toFixed(2)}, Slippage ${totalSlippage.toFixed(4)}%`);
-      this.displayPath(evaluatedPath);
+      // this.logger.debug(`Evaluated path ${path.id}: Profit $${grossProfitUSD.toFixed(2)}, Slippage ${totalSlippage.toFixed(4)}%`);
+      // this.displayPath(evaluatedPath);
 
       // 5. Gas analysis
       try {

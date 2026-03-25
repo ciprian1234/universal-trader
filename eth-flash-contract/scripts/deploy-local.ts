@@ -3,7 +3,7 @@ const { ethers } = require('hardhat');
 async function main() {
   // NOTE: use account[0] for contract deployment
   // NOTE: use account[1] for swaps
-  const [_, deployer] = await ethers.getSigners();
+  const [deployer] = await ethers.getSigners();
   const network = await ethers.provider.getNetwork();
   const balance = await deployer.provider.getBalance(deployer.address);
   const balanceETH = ethers.formatEther(balance);
@@ -13,7 +13,7 @@ async function main() {
   const baseFee = block.baseFeePerGas;
 
   // Set fees well above current base fee
-  const maxPriorityFeePerGas = ethers.parseUnits('0.01', 'gwei');
+  const maxPriorityFeePerGas = ethers.parseUnits('0.001', 'gwei');
   const maxFeePerGas = baseFee * 2n + maxPriorityFeePerGas; // 2x base fee + tip
 
   console.log('🚀 Deploying FlashArbitrage contract...');
