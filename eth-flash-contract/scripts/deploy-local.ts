@@ -27,7 +27,7 @@ async function main() {
 
   // Deploy the contract
   console.log('📦 Deploying contract...');
-  const FlashArbitrage = await ethers.getContractFactory('FlashArbitrage');
+  const FlashArbitrage = await ethers.getContractFactory('FlashArbitrage', deployer);
   const flashArbitrage = await FlashArbitrage.deploy({
     maxFeePerGas,
     maxPriorityFeePerGas,
