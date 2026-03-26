@@ -134,6 +134,26 @@ export class DexManager {
     this.logger.info(`✅ Updated ${this.pools.size} active pool states`);
   }
 
+  // update only specific pools by their ids (currently called only at reorg events, for affected pools)
+  async updatePoolsByIds(poolIds: Set<string>): Promise<void> {
+    this.logger.info(`🔄 Updating ${poolIds.size} pool states...`);
+    for (const poolId of poolIds) {
+      const pool = this.pools.get(poolId);
+      if (!pool) {
+        this.logger.warn(`⚠️ Pool ${poolId} not found in registry, skipping`);
+        continue;
+      }
+      try {
+        const updatedPool = await this.dexAdapter.updatePoolFromCall(pool);
+        this.pools.set(poolId, updatedPool);
+        this.eventBus.emitPoolStateUpsert({ pool: updatedPool, previousState: pool });
+      } catch (error) {
+        this.logger.warn(`❌ Failed updatePoolFromCall`, { poolId, error });
+      }
+    }
+    this.logger.info(`✅ Updated ${poolIds.size} pool states after reorg`);
+  }
+
   // ================================================================================================
   // POOLS OPERATIONS
   // ================================================================================================

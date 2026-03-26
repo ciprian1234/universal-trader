@@ -11,10 +11,33 @@ import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 // EVENT TYPES
 // ================================================================================================
 
-export interface ApplicationEventPayload {
-  name: string;
-  data?: any;
+export type ApplicationEventName = 'initialized' | 'reorg-detected' | 'reorg-recovered';
+
+export interface ApplicationEventBase {
+  name: ApplicationEventName;
 }
+
+export interface InitializedApplicationEvent extends ApplicationEventBase {
+  name: 'initialized';
+}
+
+export interface ReorgDetectedApplicationEvent extends ApplicationEventBase {
+  name: 'reorg-detected';
+  data: {
+    blockNumber: number;
+  };
+}
+
+export interface ReorgRecoveredApplicationEvent extends ApplicationEventBase {
+  name: 'reorg-recovered';
+  data: {
+    blockNumber: number;
+    affectedPoolIds: Set<string>;
+    error?: boolean; // Indicates if recovery had issues
+  };
+}
+
+export type ApplicationEvent = InitializedApplicationEvent | ReorgDetectedApplicationEvent | ReorgRecoveredApplicationEvent;
 
 export interface PoolStateUpsertEventPayload {
   pool: DexPoolState;
@@ -48,7 +71,7 @@ export class EventBus extends EventEmitter {
   // EVENT EMISSION
   // ================================================================================================
 
-  emitApplicationEvent(payload: ApplicationEventPayload): void {
+  emitApplicationEvent(payload: ApplicationEvent): void {
     this.emit('application-event', payload);
   }
 
@@ -95,7 +118,7 @@ export class EventBus extends EventEmitter {
   // EVENT SUBSCRIPTION HELPERS
   // ================================================================================================
 
-  onApplicationEvent(callback: (payload: ApplicationEventPayload) => void): () => void {
+  onApplicationEvent(callback: (payload: ApplicationEvent) => void): () => void {
     this.on('application-event', callback);
     return () => this.off('application-event', callback); // Return unsubscribe function
   }

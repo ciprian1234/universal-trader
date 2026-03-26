@@ -9,11 +9,19 @@
 ## MVP
 
 - revisit gas calculation
-- handle blocks reorg gracefully
+- fix same pre-failed execution transaction submission over and over again
+- handle 429 if noticed again
 
-## Integrate with COW Protocol for resolving swaps using best routes
+## POST_MVP
 
-## Contract
+- search arbitrage paths for all tokens we can borrow
+- introspect graph to discover new pools for key edges/bridges
+- log general errors to DB identified by logId: 'timestamp_from', (things like event parsing failuire, async callbacks issues, etcc.)
+- consider trigger full scan for opportunity paths
+
+### Integrate with COW Protocol for resolving swaps using best routes
+
+### Contract
 
 allow to specify option: if last swap has WETH, convert only the amount we want to borrow and keep eth
 this allows to pay the bribe in contract

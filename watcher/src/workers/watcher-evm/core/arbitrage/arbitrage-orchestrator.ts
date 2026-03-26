@@ -1,7 +1,7 @@
 import { createLogger } from '@/utils';
 import type { ArbitrageOpportunity } from '../interfaces';
 import type { ArbitragePath, IPathFinder } from './interfaces';
-import { EventBus, type ApplicationEventPayload, type PoolsBatchEventPayload } from '../event-bus';
+import { EventBus, type ApplicationEvent, type PoolsBatchEventPayload } from '../event-bus';
 import { LiquidityGraph } from './liquidity-graph';
 import { PathFinder } from './path-finder';
 import { PathEvaluator } from './path-evaluator';
@@ -107,16 +107,24 @@ export class ArbitrageOrchestrator {
   // EVENT HANDLING
   // ============================================
 
-  handleApplicationEvent(event: ApplicationEventPayload) {
-    if (event.name === 'pool-states-updated') {
-      this.logger.info('✅ Pools updated, building graph and enabling service');
+  handleApplicationEvent(event: ApplicationEvent) {
+    if (event.name === 'initialized') {
       this.graph.buildGraph();
       this.enabled = true;
+      this.logger.info('✅ ArbitrageOrchestrator is enabled and ready');
     }
 
     if (event.name === 'reorg-detected') {
-      this.logger.warn(`⚠️  Reorg detected at block ${event.data?.blockNumber}, disabling`);
+      this.logger.warn(`⚠️ Reorg detected at block ${event.data.blockNumber}, disabling`);
       this.enabled = false;
+    }
+
+    if (event.name === 'reorg-recovered') {
+      const updatedPools = this.getUpdatedPools(event.data.affectedPoolIds);
+      this.graph.updatePools(updatedPools);
+      this.enabled = true;
+      this.logger.info('✅ Graph updated with affected pools after reorg recovery');
+      // TODO: consider trigger full scan for opportunity paths
     }
   }
 

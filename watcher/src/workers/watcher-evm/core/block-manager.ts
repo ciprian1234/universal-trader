@@ -40,6 +40,7 @@ export class BlockManager {
 
   // new block data
   private currentBlock: BlockEntry = { number: 0, receivedTimestamp: 0 };
+  private isRecoveringFromReorg = false; // flag to prevent multiple simultaneous reorg recoveries
 
   // events
   private eventFilter: ethers.Filter | null = null;
@@ -179,26 +180,52 @@ export class BlockManager {
    * 🔄 HANDLE REORG: Recover from chain reorganization
    */
   private async handleReorg(blockNumber: number) {
-    this.logger.info(`🔄 Handling reorg at block ${blockNumber}...`);
+    if (this.isRecoveringFromReorg) return this.logger.warn(`⚠️ Already recovering from reorg`, { blockNumber });
+    this.isRecoveringFromReorg = true;
 
-    // Notify subscribers (suspend arbitrage checking while we recover)
-    this.eventBus.emitApplicationEvent({ name: 'reorg-detected', data: { blockNumber } });
+    try {
+      this.logger.info(`🔄 Handling reorg at block ${blockNumber}...`);
 
-    // reinitialize block manager (safe an straightforward way to recover)
-    this.cleanup();
-    await this.init(); // re-fetch latest blockNumber
-    // this.listenPoolEvents(); // re-subscribe to pool events
+      // 1. Notify subscribers — suspend arbitrage checking while we recover
+      this.eventBus.emitApplicationEvent({ name: 'reorg-detected', data: { blockNumber } });
 
-    // Refresh all pool states
-    this.logger.info('🔄 Refreshing pool states after reorg...');
-    // TODO: implement HandleReorg efficiently without full refresh
-    process.exit(1); // for now just restart the process to ensure a clean state (TODO: implement proper in-process recovery without restart)
-    // await this.dexManager.updateAllPools();
-    // this.dexManager.calculateAllPoolsLiquidityUSD();
+      // 2. Clear buffered events — they may reference reorged transactions
+      this.eventBuffer = [];
+      if (this.eventsProcessingTimer) {
+        clearTimeout(this.eventsProcessingTimer);
+        this.eventsProcessingTimer = null;
+      }
 
-    // resume arbitrage checking after recovery
-    this.logger.info('✅ Reorg recovery completed. Current block number:', this.currentBlock.number);
-    this.eventBus.emitApplicationEvent({ name: 'pool-states-updated' });
+      // 3. Identify affected pools — pools whose latest applied event came from a reorged block
+      const affectedPoolIds: Set<string> = new Set();
+      for (const [poolId, meta] of this.latestPoolEventsMeta) if (meta.blockNumber >= blockNumber) affectedPoolIds.add(poolId);
+      this.logger.info(`🔄 Reorg affects ${affectedPoolIds.size} pools (from ${this.latestPoolEventsMeta.size} tracked)`);
+
+      // 4. Clear latest event metadata — stale metadata could cause valid post-reorg events to be rejected as "outdated"
+      this.latestPoolEventsMeta.clear();
+
+      // 5. Re-fetch the canonical block number to ensure we're on the right chain
+      const canonicalBlock = await this.blockchain.getBlockNumber();
+      this.currentBlock = { number: canonicalBlock, receivedTimestamp: Date.now() };
+      this.eventBus.emitNewBlock(this.currentBlock);
+
+      // 6. Refresh only affected pools — re-fetch their on-chain state via RPC calls
+      if (affectedPoolIds.size > 0) await this.dexManager.updatePoolsByIds(affectedPoolIds);
+
+      // 7. resume arbitrage checking after recovery
+      this.logger.info('✅ Reorg recovery completed. Current block number:', this.currentBlock.number);
+      this.eventBus.emitApplicationEvent({ name: 'reorg-recovered', data: { blockNumber: canonicalBlock, affectedPoolIds } });
+    } catch (error) {
+      this.logger.error(`❌ Error during reorg handling:`, { blockNumber, error });
+      // Still emit reorg-recovered so the system doesn't stay permanently disabled.
+      // Pool states may be stale but will self-correct on next events.
+      this.eventBus.emitApplicationEvent({
+        name: 'reorg-recovered',
+        data: { blockNumber, error: true, affectedPoolIds: new Set() },
+      });
+    } finally {
+      this.isRecoveringFromReorg = false;
+    }
   }
 
   /**

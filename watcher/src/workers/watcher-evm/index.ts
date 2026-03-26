@@ -214,7 +214,7 @@ class EVMWorker extends BaseWorker {
     // optionally create trading pairs between discovery tokens at startup
     // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
     this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
-    this.eventBus.emitApplicationEvent({ name: 'pool-states-updated' }); // enable arbitrage
+    this.eventBus.emitApplicationEvent({ name: 'initialized' }); // enable arbitrage orchstrator
 
     // set interval to display stats
     // set interval to display token pairs stats every 30 seconds for monitoring purposes
