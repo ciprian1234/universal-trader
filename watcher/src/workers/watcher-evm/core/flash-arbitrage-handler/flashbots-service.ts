@@ -1,4 +1,4 @@
-import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
+import { FlashbotsBundleProvider, type SimulationResponse } from '@flashbots/ethers-provider-bundle';
 import { ethers } from 'ethers';
 import type { Logger } from '@/utils';
 import type { Blockchain } from '../blockchain';
@@ -29,6 +29,7 @@ export interface SimulationResult {
   gasUsed?: number;
   profit?: bigint;
   bundleHash?: string;
+  data: SimulationResponse;
 }
 
 export class FlashbotsService {
@@ -79,26 +80,22 @@ export class FlashbotsService {
    */
   async simulateBundle(signedTransactions: string[], targetBlock: number): Promise<SimulationResult> {
     if (!this.flashbotsProvider) throw new Error('Flashbots provider not initialized');
-
-    this.logger.info(`🔍 Simulating bundle for block ${targetBlock}...`);
     const simulation = await this.flashbotsProvider.simulate(signedTransactions, targetBlock);
-    this.logger.info('📄 Simulation result:', { simulation });
+    if (!simulation) throw new Error('No response from Flashbots simulation');
 
     // Check simulation results
-    if ('error' in simulation) throw new Error(`Simulation error: ${simulation.error.message}`);
-
-    // Simulation succeeded
-    const result = simulation.results[0]; // First (and only) transaction in bundle
-    const gasUsed = result.gasUsed;
-
-    this.logger.info('✅ Simulation succeeded');
-    this.logger.info(`   Gas used: ${gasUsed}`);
-    this.logger.info(`   Tx hash: ${result.txHash}`);
+    if ('error' in simulation) {
+      return {
+        success: false,
+        error: `Simulation error: ${simulation.error.message}`,
+        data: simulation,
+      };
+    }
 
     return {
       success: true,
-      gasUsed,
       bundleHash: simulation.bundleHash,
+      data: simulation,
     };
   }
 
@@ -110,10 +107,7 @@ export class FlashbotsService {
 
     const currentBlock = this.blockManager.getCurrentBlockNumber();
     const targetBlock = options.targetBlock || currentBlock + 1;
-
-    this.logger.info(`📤 Submitting bundle to block ${targetBlock} (non-blocking)...`);
     const bundleSubmission = await this.flashbotsProvider.sendRawBundle(signedTransactions, targetBlock);
-    this.logger.info(`📄 Flashbots bundle submitted:`, { bundleSubmission });
 
     if ('error' in bundleSubmission) throw new Error(`Flashbots bundle submission failed: ${bundleSubmission.error.message}`);
     return bundleSubmission; // DON'T wait for inclusion - return immediately

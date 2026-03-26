@@ -8,6 +8,7 @@
 
 ## MVP
 
+- revisit gas calculation
 - handle blocks reorg gracefully
 
 ## Integrate with COW Protocol for resolving swaps using best routes

@@ -224,13 +224,14 @@ export class FlashArbitrageHandler {
         }
 
         // STEP 1b: If using Flashbots, check bundle stats from previous block
-        if (this.USE_FLASHBOTS) {
-          const bundleStats = await this.flashbotsService!.getBundleStats(
-            execution.response!.bundleResponse!.bundleHash,
-            newBlock.number - 1,
-          );
-          this.logger.info(`Flashbots bundle stats at submission`, { bundleStats });
-        }
+        // NOTE: disabled due to not whitelisted yet in flashbots
+        // if (this.USE_FLASHBOTS) {
+        //   const bundleStats = await this.flashbotsService!.getBundleStats(
+        //     execution.response!.bundleResponse!.bundleHash,
+        //     newBlock.number - 1,
+        //   );
+        //   this.logger.info(`Flashbots bundle stats at submission`, { bundleStats });
+        // }
 
         // STEP 2: Check if execution is still valid
         // NOTE: take new baseGasFee into account (TBD)
@@ -346,11 +347,7 @@ export class FlashArbitrageHandler {
       // push pending log with transaction details
       await this.db.pushArbitrageLog(opportunity.id, {
         status: 'pending',
-        logEntry: {
-          submittedAtBlock: nextBlockNumber,
-          trade,
-          tx: { tx: response.tx, bundleHash: response.bundleResponse?.bundleHash },
-        },
+        logEntry: { submittedAtBlock: nextBlockNumber, trade, response },
       });
     } catch (error: any) {
       this.logger.error(`❌ Failed execution of opportunity: ${opportunity.id}`, { error });
@@ -390,40 +387,55 @@ export class FlashArbitrageHandler {
     const bufferedBaseFee = (gasAnalysis.baseFeePerGas * BigInt(BASE_FEE_BUFFER_PERCENT)) / 100n;
     const gasPricePerUnit = bufferedBaseFee + this.MIN_PRIORITY_FEE;
 
-    const unsignedArbitrageTx = {
-      ...tx,
-      nonce,
-      chainId: this.blockchain.chainId,
-      gasLimit: gasAnalysis.gasTxSettings.gasLimit,
-      maxFeePerGas: gasPricePerUnit,
-      maxPriorityFeePerGas: this.MIN_PRIORITY_FEE,
-      type: 2, // EIP-1559
-    };
+    // create bundle array with unsignedArbitrageTx
+    const unsignedBundle: ethers.TransactionRequest[] = [
+      {
+        ...tx,
+        nonce,
+        chainId: this.blockchain.chainId,
+        gasLimit: gasAnalysis.gasTxSettings.gasLimit,
+        maxFeePerGas: gasPricePerUnit,
+        maxPriorityFeePerGas: this.MIN_PRIORITY_FEE,
+        type: 2, // EIP-1559
+      },
+    ];
 
-    // Create coinbase bribe transaction
-    const unsignedBribeTx = {
-      to: ethers.ZeroAddress, // Placeholder (builder sets block.coinbase)
-      value: this.calculateBribeWEI(opportunity),
-      data: '0x',
-      nonce: nonce + 1,
-      chainId: this.blockchain.chainId,
-      gasLimit: 21000n,
-      maxFeePerGas: gasPricePerUnit,
-      maxPriorityFeePerGas: this.MIN_PRIORITY_FEE, // Same as arbitrage tx
-      type: 2, // EIP-1559
-    };
+    // if bribe not handle inside contract => add separate transaction for coinbase bribe
+    if (trade.coinbaseBribe === 0n) {
+      this.logger.warn('⚠️ Bribe not handled inside contract, adding separate transaction for coinbase bribe');
+
+      // Create coinbase bribe transaction
+      const unsignedBribeTx = {
+        to: ethers.ZeroAddress, // Placeholder (builder sets block.coinbase)
+        value: this.calculateBribeWEI(opportunity),
+        data: '0x',
+        nonce: nonce + 1,
+        chainId: this.blockchain.chainId,
+        gasLimit: 21000n,
+        maxFeePerGas: gasPricePerUnit,
+        maxPriorityFeePerGas: this.MIN_PRIORITY_FEE, // Same as arbitrage tx
+        type: 2, // EIP-1559
+      };
+
+      unsignedBundle.push(unsignedBribeTx);
+    } else {
+      this.logger.info('✅ Bribe handled inside flash arbitrage contract, no separate transaction needed');
+    }
 
     // Create bundle with signed transactions
-    const bundle = await Promise.all([signer.signTransaction(unsignedArbitrageTx), signer.signTransaction(unsignedBribeTx)]);
+    const bundle = await Promise.all(unsignedBundle.map((tx) => signer.signTransaction(tx)));
     const targetBlock = this.blockManager.getCurrentBlockNumber() + 1;
 
     // Simulate bundle and send if successful
-    await this.flashbotsService.simulateBundle(bundle, targetBlock);
+    const simulation = await this.flashbotsService.simulateBundle(bundle, targetBlock);
+    this.db.pushArbitrageLog(opportunity.id, { status: 'simulated', logEntry: { simulation } }); // not awaiting for DB write to avoid blocking execution
+    if (!simulation.success) throw new Error(`Bundle simulation failed for "${opportunity.id}": ${simulation.error}`);
     const bundleResponse = await this.flashbotsService.submitBundle(bundle, { targetBlock }); // non-blocking
 
     // !!! Parse transaction to get hash
     const parsedArbitrageTx = ethers.Transaction.from(bundle[0]);
     const txHash = parsedArbitrageTx.hash!;
+    this.db.pushArbitrageLog(opportunity.id, { status: 'submitted', logEntry: { txHash, bundleResponse } }); // not awaiting for DB write to avoid blocking execution
 
     return {
       tx: {
@@ -617,16 +629,17 @@ export class FlashArbitrageHandler {
       }
 
       // Simulate transaction before sending (via static call)
-      this.logger.info(`🔍 Simulating trade on-chain via static call...`);
-      const simulationResult = await this.contract!.executeTrade.staticCall(trade);
-      this.logger.info(`✅ Pre-execution validation passed`, simulationResult);
+      this.logger.info(`🔍 Performing static call check for: "${opportunity.id}"`);
+      const staticCallResult = await this.contract!.executeTrade.staticCall(trade);
+      this.logger.info(`✅ Pre-execution validation passed for: "${opportunity.id}"`, { staticCallResult });
       return { success: true, error: null };
     } catch (error: any) {
       // remove opportunity from pending executions
       this.pendingExecutions.delete(opportunity.id);
 
       // log error and update execution record
-      this.logger.error(`❌ Pre-execution validation failed for ${opportunity.id}`, { error });
+      const reason = `reason: ${error.reason ?? error.message ?? 'Unknown reason'}`;
+      this.logger.error(`❌ Pre-execution validation failed for: "${opportunity.id}" ${reason}`);
       return { success: false, error };
     }
   }

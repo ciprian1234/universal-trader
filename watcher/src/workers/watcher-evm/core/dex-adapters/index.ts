@@ -269,9 +269,7 @@ export class DexAdapter {
     const poolEntries = Array.from(registeredPools.entries());
     for (let i = 0; i < poolEntries.length; i += PROMISE_BATCH_SIZE) {
       const batch = poolEntries.slice(i, i + PROMISE_BATCH_SIZE);
-      this.logger.debug(
-        `Syncing batch of ${batch.length} pools to DB (${i + 1}-${i + batch.length} of ${poolEntries.length})...`,
-      );
+      this.logger.info(`Syncing batch of ${batch.length} pools to DB (${i + 1}-${i + batch.length} of ${poolEntries.length})...`);
       await Promise.all(
         batch.map(([poolId, pool]) =>
           this.db
