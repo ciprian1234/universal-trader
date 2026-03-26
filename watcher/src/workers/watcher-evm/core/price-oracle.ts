@@ -213,6 +213,7 @@ export class PriceOracle {
     return {
       anchorTokens: this.anchorTokens.length,
       resolvedPrices: this.resolvedPrices.size,
+      ethPriceUSD: this.getPriceUSD(ethers.ZeroAddress),
     };
   }
 

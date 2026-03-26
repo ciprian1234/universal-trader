@@ -18,3 +18,8 @@ export function isZeroForOne(normalizedTokenInAddress: string, pool: DexPoolStat
 export function formatGwei(wei: bigint): string {
   return (Number(wei) / 1e9).toFixed(8) + ' gwei';
 }
+
+export function deltaMs(timestamp: number): string {
+  const delta = Date.now() - timestamp;
+  return `${delta}ms`;
+}

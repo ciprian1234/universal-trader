@@ -179,7 +179,6 @@ class EVMWorker extends BaseWorker {
     this.arbitrageOrchestrator = new ArbitrageOrchestrator({
       chainConfig: this.chainConfig,
       eventBus: this.eventBus,
-      db: this.db,
       dexManager: this.dexManager,
       gasManager: this.gasManager,
       tokenManager: this.tokenManager,
@@ -201,6 +200,7 @@ class EVMWorker extends BaseWorker {
     await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
     await this.walletManager.initAndValidateWallet();
     await this.flashArbitrageHandler.validateContract();
+    await this.flashArbitrageHandler.init(); // initialize flashbots service if enabled
 
     await this.priceOracle.init(); // fetch initial anchor prices and start periodic updates
     await this.dexManager.init(); // init contracts for dex venues
@@ -218,26 +218,26 @@ class EVMWorker extends BaseWorker {
     // set interval to display stats
     // set interval to display token pairs stats every 30 seconds for monitoring purposes
     this.displayStats(); // display initial stats immediately after startup
-    this.displayStatsIntervalId = setInterval(() => this.displayStats(), 30_000);
+    this.displayStatsIntervalId = setInterval(() => this.displayStats(), 60_000);
   }
 
   displayStats() {
-    this.logger.info('================ STATS ================');
+    this.logger.info('================================ STATS ================================');
     const currentBlock = this.blockManager.getCurrentBlockNumber();
     const baseFeePerGas = this.gasManager.getBaseFeePerGas();
-    const tokenStats = this.tokenManager.getStats();
-    const priceOracleStats = this.priceOracle.getStats();
+    const { registredTokens, storedTokens } = this.tokenManager.getStats();
+    const { resolvedPrices, ethPriceUSD } = this.priceOracle.getStats();
     const tokenPairStats = this.tokenPairManager.getStats();
     const dexManagerStats = this.dexManager.getStats();
     const arbitrageStats = this.arbitrageOrchestrator.getStats();
 
-    this.logger.info(`🔗 Current block: ${currentBlock} (⛽ GasCost: ${formatGwei(baseFeePerGas)})`);
-    this.logger.info(`📦 Registered tokens: ${tokenStats.registredTokens} (stored: ${tokenStats.storedTokens})`);
-    this.logger.info(`📊 Price oracle resolved USD prices: ${priceOracleStats.resolvedPrices}`);
+    this.logger.info(`⛽ GasPrice: ${formatGwei(baseFeePerGas)} ETH price: ${ethPriceUSD?.toFixed(2)}$ (${currentBlock})`);
+    this.logger.info(`📊 Resolved priceUSD: ${resolvedPrices} of ${registredTokens} registered tokens (stored: ${storedTokens})`);
     this.logger.info(`🔀 Registered token pairs: ${tokenPairStats.registredTokenPairs}`);
     this.logger.info(`🏦 Registered DEX pools: ${dexManagerStats.registredPools} (stored: ${dexManagerStats.storedPools})`);
     this.logger.info(`🌐 Graph tokens: ${arbitrageStats.graph.tokenCount} graph edges: ${arbitrageStats.graph.edgeCount}`);
     this.logger.info(`💰 Arbitrage opportunities found: ${arbitrageStats.opportunitiesFound}`);
+    this.logger.info(`=======================================================================`);
   }
 
   async stop() {

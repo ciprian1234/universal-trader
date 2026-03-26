@@ -58,7 +58,7 @@ export class FlashbotsService {
   /**
    * Initialize Flashbots provider
    */
-  async initialize(): Promise<void> {
+  async connect(): Promise<void> {
     try {
       this.flashbotsProvider = await FlashbotsBundleProvider.create(
         this.blockchain.getProvider(),
@@ -69,7 +69,7 @@ export class FlashbotsService {
 
       this.logger.info('✅ Connected to Flashbots relay');
     } catch (error: any) {
-      this.logger.error('❌ Failed to initialize Flashbots provider:', error.message);
+      this.logger.error('❌ Failed to connect to Flashbots relay:', error.message);
       throw error;
     }
   }
@@ -113,9 +113,9 @@ export class FlashbotsService {
 
     this.logger.info(`📤 Submitting bundle to block ${targetBlock} (non-blocking)...`);
     const bundleSubmission = await this.flashbotsProvider.sendRawBundle(signedTransactions, targetBlock);
-    this.logger.info(`📄 Bundle submitted:`, { bundleSubmission });
+    this.logger.info(`📄 Flashbots bundle submitted:`, { bundleSubmission });
 
-    if ('error' in bundleSubmission) throw new Error(`Bundle submission failed: ${bundleSubmission.error.message}`);
+    if ('error' in bundleSubmission) throw new Error(`Flashbots bundle submission failed: ${bundleSubmission.error.message}`);
     return bundleSubmission; // DON'T wait for inclusion - return immediately
   }
 
@@ -130,7 +130,7 @@ export class FlashbotsService {
       this.logger.info('📊 Flashbots user stats:', { stats });
       return stats;
     } catch (error: any) {
-      this.logger.error('❌ Failed to get user stats:', { error });
+      this.logger.error('❌ Failed to get Flashbots user stats:', { error });
       return null;
     }
   }
@@ -146,7 +146,7 @@ export class FlashbotsService {
       this.logger.info('📊 Flashbots bundle stats:', { stats });
       return stats;
     } catch (error: any) {
-      this.logger.error('❌ Failed to get bundle stats:', { error });
+      this.logger.error('❌ Failed to get Flashbots bundle stats:', { error });
       return null;
     }
   }

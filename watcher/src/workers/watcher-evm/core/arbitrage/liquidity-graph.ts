@@ -58,7 +58,7 @@ export class LiquidityGraph {
     }
 
     // LOGGING: Verify bidirectional edges
-    this.logger.info('🔍 Verifying bidirectional edges...\n');
+    this.logger.debug('🔍 Verifying bidirectional edges...\n');
 
     // Original debug logging (keep for reference)
     for (const tokenAddr of this.edges.keys()) {
@@ -75,7 +75,7 @@ export class LiquidityGraph {
 
     const duration = Date.now() - startTime;
     const stats = this.getStats();
-    this.logger.info(`🌐 Built graph: ${stats.tokenCount} tokens, ${stats.edgeCount} edges (${duration}ms)`);
+    this.logger.debug(`🌐 Built graph: ${stats.tokenCount} tokens, ${stats.edgeCount} edges (${duration}ms)`);
   }
 
   /**

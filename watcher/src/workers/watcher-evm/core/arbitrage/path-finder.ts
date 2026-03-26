@@ -60,28 +60,15 @@ export class PathFinder implements IPathFinder {
    */
   findCycles(affectedTokens: Set<string>): ArbitragePath[] {
     const startTokens = this.getStartTokens(affectedTokens); // Get start tokens (intersection with preferred borrow tokens)
-
     const paths: ArbitragePath[] = [];
 
     for (const startToken of startTokens) {
       const token = this.tokenManager.getToken(startToken);
-
       // this.logger.debug(`🔎 DFS from ${token?.symbol || startToken}...`);
-
       const tokenPaths = this.findCyclesFromToken(token!);
-
       // this.logger.debug(`   Found ${tokenPaths.length} paths from ${token?.symbol || startToken}`);
-
       paths.push(...tokenPaths);
-
-      // Limit total paths
-      // if (paths.length >= this.config.maxPathsPerToken * startTokens.size) {
-      //   break;
-      // }
     }
-
-    // ✅ LOG 5: Total paths found
-    this.logger.info(`✅ Total paths found: ${paths.length}`);
 
     return paths;
   }

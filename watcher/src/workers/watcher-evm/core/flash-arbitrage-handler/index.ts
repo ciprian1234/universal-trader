@@ -114,6 +114,12 @@ export class FlashArbitrageHandler {
     }
   }
 
+  async init(): Promise<void> {
+    if (this.USE_FLASHBOTS && this.flashbotsService) {
+      await this.flashbotsService.connect();
+    }
+  }
+
   // ================================================================================================
   // EVENT HANDLER
   // ================================================================================================

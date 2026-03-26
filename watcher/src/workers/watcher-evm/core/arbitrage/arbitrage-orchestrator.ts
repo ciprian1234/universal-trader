@@ -1,5 +1,5 @@
 import { createLogger } from '@/utils';
-import type { ArbitrageOpportunity, PoolEvent } from '../interfaces';
+import type { ArbitrageOpportunity } from '../interfaces';
 import type { ArbitragePath, IPathFinder } from './interfaces';
 import { EventBus, type ApplicationEventPayload, type PoolsBatchEventPayload } from '../event-bus';
 import { LiquidityGraph } from './liquidity-graph';
@@ -14,6 +14,7 @@ import type { WorkerDb } from '../../db';
 import type { ChainConfig } from '@/config/models';
 import type { PriceOracle } from '../price-oracle';
 import type { DexPoolState } from '@/shared/data-model/layer1';
+import { deltaMs } from '../helpers';
 
 // ============================================
 // CONFIGURATION
@@ -22,7 +23,6 @@ import type { DexPoolState } from '@/shared/data-model/layer1';
 export interface ArbitrageOrchestratorInput {
   chainConfig: ChainConfig;
   eventBus: EventBus;
-  db: WorkerDb;
   dexManager: DexManager;
   gasManager: GasManager;
   tokenManager: TokenManager;
@@ -44,7 +44,6 @@ export class ArbitrageOrchestrator {
   // Core dependencies
   private readonly chainConfig: ChainConfig;
   private readonly eventBus: EventBus;
-  private readonly db: WorkerDb;
   private readonly dexManager: DexManager;
   private readonly gasManager: GasManager;
   private readonly tokenManager: TokenManager;
@@ -61,10 +60,9 @@ export class ArbitrageOrchestrator {
   };
 
   constructor(input: ArbitrageOrchestratorInput) {
-    this.logger = createLogger(`[${input.chainConfig.name}.ArbitrageOrchestrator]`);
+    this.logger = createLogger(`[${input.chainConfig.name}.Orchestrator]`);
     this.chainConfig = input.chainConfig;
     this.eventBus = input.eventBus;
-    this.db = input.db;
     this.gasManager = input.gasManager;
     this.dexManager = input.dexManager;
     this.tokenManager = input.tokenManager;
@@ -123,10 +121,9 @@ export class ArbitrageOrchestrator {
   }
 
   async handlePoolsBatchEvent(payload: PoolsBatchEventPayload): Promise<void> {
-    const startTime = Date.now();
-    const deltaMs = startTime - payload.blockData.receivedTimestamp;
-    this.logger.info(`🔍 Block ${payload.blockData.number}: ${payload.poolIds.size} events (+${deltaMs}ms)`);
-
+    const blockStr = `(${payload.blockData.number})`;
+    const blockTime = payload.blockData.receivedTimestamp;
+    this.logger.info(`⏳ Applying ${payload.poolIds.size} batched events ${blockStr} (+${deltaMs(blockTime)}ms)`);
     if (!this.enabled) return this.logger.warn('⚠️  Service not enabled yet');
 
     try {
@@ -141,30 +138,31 @@ export class ArbitrageOrchestrator {
 
       // 3. Discover candidate paths
       const candidatePaths = this.pathFinder.findCycles(affectedTokens);
-      this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths (block:${payload.blockData.number})`);
+      this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths ${blockStr} (+${deltaMs(blockTime)}ms)`);
 
       if (candidatePaths.length === 0) return;
 
       // 4. Evaluate paths concurrently (batched)
       const evaluatedPaths = await this.evaluatePathsConcurrently(candidatePaths, 30);
-      this.logger.info(`✅ Found ${evaluatedPaths.length} profitable paths`);
 
       if (evaluatedPaths.length === 0) return;
+      this.logger.info(`✅ Found ${evaluatedPaths.length} profitable paths ${blockStr} (+${deltaMs(blockTime)}ms)`);
 
       // 5. Select non-overlapping paths
       const selectedPaths = this.selectBestPaths(evaluatedPaths);
 
       // 6. Emit opportunities
       for (const path of selectedPaths) {
+        this.stats.opportunitiesFound++;
         this.displayPath(path);
         this.eventBus.emitArbitrageOpportunity(path);
       }
     } catch (error) {
       this.logger.error('❌ Error processing pool events:', { error });
     } finally {
-      const duration = Date.now() - startTime;
+      const duration = Date.now() - blockTime;
       // this.updateExecutionTimeStats(duration);
-      this.logger.info(`⏱️  Execution time ${duration}ms`);
+      this.logger.info(`⏱️ Total execution time ${blockStr} ${deltaMs(blockTime)}`);
     }
   }
 
@@ -225,7 +223,7 @@ export class ArbitrageOrchestrator {
     const hops = path.steps.length;
     const route = path.steps.map((s) => `${s.tokenIn.symbol}→${s.tokenOut.symbol}`).join(' → ');
 
-    this.logger.info(`\n🎯 ${hops}-Hop Arbitrage: ${path.id}`);
+    this.logger.info(`🎯 ${hops}-Hop Arbitrage: ${path.id}`);
     this.logger.info(`   📍 Route: ${route}`);
     this.logger.info(`   💰 Borrow: ${formatUnits(path.borrowAmount, path.borrowToken.decimals)} ${path.borrowToken.symbol}`);
 
