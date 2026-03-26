@@ -60,13 +60,14 @@ class EVMWorker extends BaseWorker {
     // "token-registered" routing
     // For each new token: create trading pairs with DISCOVERY tokens and emit "token-pair-registered" events for those pairs
     this.eventBus.onTokenRegistered((token) => {
-      this.logger.info(`✅ Registered token ${token.symbol} (addr: ${token.address}) (trusted: ${token.trusted})`);
+      this.logger.debug(`✅ Registered token ${token.symbol} (addr: ${token.address}) (trusted: ${token.trusted})`);
       // this.sendEventMessage('token-registered', { token }); // send event to main thread
     });
 
     // "token-pair-registered" routing
     // Only fired for meaningful pairs (preconfigured + anchor pairs)
     this.eventBus.onTokenPairRegistered((tokenPair) => {
+      // NOTE: emited only on discovery not on pool events
       this.logger.info(`Token pair ${tokenPair.key} registered:`);
       this.logger.info(` • ${tokenPair.token0.symbol} (${tokenPair.token0.address})`);
       this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
@@ -243,6 +244,7 @@ class EVMWorker extends BaseWorker {
   async stop() {
     this.logger.info('💾 Saving cache to disk...');
     await this.cache.save(); // do not force save if cache is not dirty
+    await this.dexManager.syncRegisteredPoolsToStorage();
 
     // clear stats display interval
     if (this.displayStatsIntervalId) clearInterval(this.displayStatsIntervalId);

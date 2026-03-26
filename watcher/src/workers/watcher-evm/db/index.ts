@@ -26,7 +26,7 @@ export interface StoredPool {
   pairId: string; // canonical token pair id (e.g. "ETH:USDC")
 
   state: DexPoolState; // we store full state but we care only about static fields
-  source: 'config' | 'event';
+  source: 'config' | 'event' | 'sync';
   isEnabled: boolean; // whether this pool is enabled for trading (not blacklisted)
   createdAt?: number;
   updatedAt?: number;
@@ -191,6 +191,7 @@ export class WorkerDb {
         "venueName" = EXCLUDED."venueName",
         "state" = EXCLUDED."state",
         "isEnabled" = EXCLUDED."isEnabled",
+        "source" = EXCLUDED."source",
         "updatedAt" = CURRENT_TIMESTAMP
     `;
   }

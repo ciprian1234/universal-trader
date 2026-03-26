@@ -94,7 +94,6 @@ export class DexAdapter {
     else if (pool.protocol === 'v4') V4.updatePoolFromEvent(pool, poolEvent as V4SwapEvent);
     else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)} and event: ${safeStringify(poolEvent)}`);
     this.deriveTokenPricesAndLiquidity(pool);
-    this.syncToStorage(pool, false); // update cache but not persist to DB immediately for event updates
     return pool;
   }
 
@@ -108,7 +107,6 @@ export class DexAdapter {
       await this.tokenManager.ensureTokenRegistered(pool.tokenPair.token0.address, 'address');
       await this.tokenManager.ensureTokenRegistered(pool.tokenPair.token1.address, 'address');
       this.deriveTokenPricesAndLiquidity(pool);
-      this.syncToStorage(pool, false); // update cache only
     } else {
       this.logger.debug(`Pool for event ${event.poolId} not found in cache, introspecting from event data...`);
       if (event.protocol === 'v2') pool = await V2.introspectPoolFromEvent(ctx, event as V2SyncEvent);
@@ -117,9 +115,17 @@ export class DexAdapter {
       else throw new Error(`Unsupported pool event: ${safeStringify(event)}`);
       pool.venue.name = this.identifyVenueNameForPool(pool);
       this.deriveTokenPricesAndLiquidity(pool);
-      this.syncToStorage(pool, true);
+      this.savePoolToStorage(pool);
     }
     return pool;
+  }
+
+  private identifyVenueNameForPool(pool: DexPoolState): DexVenueName {
+    const dexConfigListByProtocol = this.chainConfig.dexConfigs.filter((config) => config.protocol === pool.protocol);
+    if (pool.protocol === 'v2') return V2.identifyVenueForPool(pool, dexConfigListByProtocol as DexV2Config[]);
+    else if (pool.protocol === 'v3') return V3.identifyVenueForPool(pool, dexConfigListByProtocol as DexV3Config[]);
+    else if (pool.protocol === 'v4') return V4.identifyVenueForPool(pool, dexConfigListByProtocol as DexV4Config[]);
+    else return 'unknown';
   }
 
   private initPoolFromStorage(storedPool: DexPoolState, poolEvent: PoolEvent | undefined): DexPoolState {
@@ -171,7 +177,6 @@ export class DexAdapter {
       this.logger.error(`Failed to update pool from call: ${printPool(pool)} - ${error.message}`);
       pool.error = `${error instanceof Error ? error.message : String(error)}`;
     }
-    this.syncToStorage(pool, true);
     return pool;
   }
 
@@ -251,15 +256,32 @@ export class DexAdapter {
   //
   // handle stored pools cache and database sync
   // note: for registered pool events - only update cache but not persist to DB immediately
-  private syncToStorage(pool: DexPoolState, persist: boolean) {
-    // update stored pools cache - always
-    this.storedPools.set(pool.id, pool);
+  private savePoolToStorage(pool: DexPoolState) {
+    this.storedPools.set(pool.id, pool); // update stored pools cache - always
+    this.db
+      .upsertPool(pool, 'event', true)
+      .catch((e) => this.logger.error(`Failed to save new pool ${printPool(pool)} to DB:`, { error: e }));
+  }
 
-    if (persist) {
-      this.db
-        .upsertPool(pool, 'event', true)
-        .catch((e) => this.logger.error(`Failed to save new pool ${printPool(pool)} to DB:`, { error: e }));
+  async syncRegisteredPoolsToStorage(registeredPools: Map<string, DexPoolState>): Promise<void> {
+    const PROMISE_BATCH_SIZE = 20;
+
+    const poolEntries = Array.from(registeredPools.entries());
+    for (let i = 0; i < poolEntries.length; i += PROMISE_BATCH_SIZE) {
+      const batch = poolEntries.slice(i, i + PROMISE_BATCH_SIZE);
+      this.logger.debug(
+        `Syncing batch of ${batch.length} pools to DB (${i + 1}-${i + batch.length} of ${poolEntries.length})...`,
+      );
+      await Promise.all(
+        batch.map(([poolId, pool]) =>
+          this.db
+            .upsertPool(pool, 'sync', true)
+            .catch((e) => this.logger.error(`Failed to sync pool ${printPool(pool)} to DB:`, { error: e })),
+        ),
+      );
     }
+
+    this.logger.info(`✅ Synced ${registeredPools.size} registered pools to DB`);
   }
 
   // ================================================================================================
@@ -275,15 +297,6 @@ export class DexAdapter {
       if (pool.tokenPair.key === tokenPair.key && pool.venue.name === venue) foundPools.push(pool);
     }
     return foundPools;
-  }
-
-  // helper to identify venue name for pool
-  private identifyVenueNameForPool(pool: DexPoolState): DexVenueName {
-    const dexConfigListByProtocol = this.chainConfig.dexConfigs.filter((config) => config.protocol === pool.protocol);
-    if (pool.protocol === 'v2') return V2.identifyVenueForPool(pool, dexConfigListByProtocol as DexV2Config[]);
-    else if (pool.protocol === 'v3') return V3.identifyVenueForPool(pool, dexConfigListByProtocol as DexV3Config[]);
-    else if (pool.protocol === 'v4') return V4.identifyVenueForPool(pool, dexConfigListByProtocol as DexV4Config[]);
-    else return 'unknown';
   }
 
   // helper to get config for venue or throw if not exist

@@ -163,6 +163,10 @@ export class DexManager {
     return this.pools.get(id);
   }
 
+  syncRegisteredPoolsToStorage(): Promise<void> {
+    return this.dexAdapter.syncRegisteredPoolsToStorage(this.pools);
+  }
+
   getStats() {
     return {
       registredPools: this.pools.size,
