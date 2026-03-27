@@ -372,7 +372,10 @@ export function initPool(
 /**
  * Update pool state via Singleton PoolManager
  */
-export async function updatePool(ctx: DexAdapterContext, pool: DexV4PoolState): Promise<DexV4PoolState> {
+export async function updatePool(
+  ctx: { blockchain: Blockchain; config: DexV4Config },
+  pool: DexV4PoolState,
+): Promise<DexV4PoolState> {
   if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 pool update');
   const { token0, token1 } = pool.tokenPair;
   const poolKey = pool.poolKeyHash;

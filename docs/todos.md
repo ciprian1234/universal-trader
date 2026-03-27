@@ -1,23 +1,28 @@
 # TODOS
 
 - debug failed arbitrages
-- select arbitrage paths based on some different logic
-- review gas calculation/analysis and bribe calculation
-- integrate burn/mint events for V3
-- fetch and keep in sync ticks liquidity for V3 conditionally
 
 ## MVP
 
-- revisit gas calculation
-- fix same pre-failed execution transaction submission over and over again
-- handle 429 if noticed again
+- if running with localhost provider do not sync pools!!!
+- review gas calculation/analysis and bribe calculation
+- fix update pool from id witout knowing venue
+
+### handle pre-failed execution transaction submission over and over again
+
+1. delete opp from DB since it has invalid calculation
+2. fetch tick data => re-calculate again but this time with ticks
 
 ## POST_MVP
 
-- search arbitrage paths for all tokens we can borrow
+- search arbitrage paths for all tokens we can borrow (also check which tokens can we borrow and max amount borrow )
 - introspect graph to discover new pools for key edges/bridges
-- log general errors to DB identified by logId: 'timestamp_from', (things like event parsing failuire, async callbacks issues, etcc.)
+- handle fw ERC20 tokens (see how to bridge from WETH to fwWETH for example and others like fwUSDC, fwWBTC, etc..)
+- log general errors to DB identified by logId: 'timestamp_from', (things like event parsing failuire, async callbacks issues, etc.)
 - consider trigger full scan for opportunity paths
+- it may happen that relay its on network spikes => fallback to old TX if relay its down
+- integrate burn/mint events for V3
+- fetch and keep in sync ticks liquidity for V3 conditionally
 
 ### Integrate with COW Protocol for resolving swaps using best routes
 

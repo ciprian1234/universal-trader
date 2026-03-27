@@ -212,10 +212,10 @@ export function initPool(
 /**
  * Update pool state with dynamic data
  */
-export async function updatePool(ctx: DexAdapterContext, pool: DexV3PoolState): Promise<DexV3PoolState> {
+export async function updatePool(blockchain: Blockchain, pool: DexV3PoolState): Promise<DexV3PoolState> {
   const { token0, token1 } = pool.tokenPair;
 
-  const contract = ctx.blockchain.getContract(pool.address);
+  const contract = blockchain.getContract(pool.address);
   if (!contract) throw new Error(`Pool contract not found for address: ${pool.address}`);
 
   const [slot0, liquidity] = await Promise.all([contract.slot0(), contract.liquidity()]);

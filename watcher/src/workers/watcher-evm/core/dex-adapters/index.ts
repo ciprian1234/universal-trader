@@ -163,11 +163,11 @@ export class DexAdapter {
 
   async updatePoolFromCall(pool: DexPoolState): Promise<DexPoolState> {
     try {
-      const ctx = { blockchain: this.blockchain, tokenManager: this.tokenManager, config: this.requireConfig(pool.venue.name) };
-      if (pool.protocol === 'v2') await V2.updatePool(ctx, pool);
-      else if (pool.protocol === 'v3') await V3.updatePool(ctx, pool);
-      else if (pool.protocol === 'v4') await V4.updatePool(ctx, pool);
-      else throw new Error(`Unsupported update operation for pool: ${safeStringify(pool)}`);
+      if (pool.protocol === 'v2') await V2.updatePool(this.blockchain, pool);
+      else if (pool.protocol === 'v3') await V3.updatePool(this.blockchain, pool);
+      else if (pool.protocol === 'v4') {
+        await V4.updatePool({ blockchain: this.blockchain, config: this.requireConfig(pool.venue.name) as DexV4Config }, pool);
+      } else throw new Error(`Unsupported update operation for pool: ${safeStringify(pool)}`);
       this.deriveTokenPricesAndLiquidity(pool);
 
       this.logger.info(

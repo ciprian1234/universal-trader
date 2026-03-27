@@ -140,8 +140,8 @@ export function initPool(
 /**
  * 📊 GET POOL STATE: Fetch current pool state
  */
-export async function updatePool(ctx: DexAdapterContext, pool: DexV2PoolState): Promise<DexV2PoolState> {
-  const contract = ctx.blockchain.getContract(pool.address);
+export async function updatePool(blockchain: Blockchain, pool: DexV2PoolState): Promise<DexV2PoolState> {
+  const contract = blockchain.getContract(pool.address);
   if (!contract) throw new Error(`Pool contract not found: ${pool.address}`);
 
   // Fetch reserves
