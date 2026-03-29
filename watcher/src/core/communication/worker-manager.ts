@@ -31,7 +31,7 @@ export class WorkerManager {
       ctx: { requestName: string; requestData: any };
     }
   > = new Map();
-  DEFAULT_TIMEOUT_MS = 10_000;
+  DEFAULT_TIMEOUT_MS = 60_000;
 
   constructor(input: WorkerManagerInput) {
     this.eventBus = input.eventBus;

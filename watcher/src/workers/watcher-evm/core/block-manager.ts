@@ -14,6 +14,7 @@ import { createLogger, type Logger } from '@/utils';
 import { dexPoolId, type DexPoolState, type EventMetadata } from '@/shared/data-model/layer1';
 import type { DexManager } from './dex-manager';
 import type { ChainConfig } from '@/config/models';
+import { deltaMs } from './helpers';
 
 type BlockManagerInput = {
   chainConfig: ChainConfig;
@@ -43,7 +44,7 @@ export class BlockManager {
   private isRecoveringFromReorg = false; // flag to prevent multiple simultaneous reorg recoveries
 
   // events
-  private eventFilter: ethers.Filter | null = null;
+  private eventFilter: ethers.Filter;
   private eventBuffer: PoolEvent[] = [];
   private eventsProcessingTimer: NodeJS.Timeout | null = null;
 
@@ -103,6 +104,21 @@ export class BlockManager {
     this.blockchain = input.blockchain;
     this.eventBus = input.eventBus;
     this.dexManager = input.dexManager;
+
+    //
+    this.eventFilter = {
+      // address: poolAddresses, // NOTE: if set it would restrict discovery
+      topics: [
+        [
+          this.EVENT_TOPICS.V2_SYNC,
+          this.EVENT_TOPICS.V3_SWAP,
+          this.EVENT_TOPICS.V3_MINT, // for now ignore mint/burn events
+          this.EVENT_TOPICS.V3_BURN, // for now ignore mint/burn events
+          this.EVENT_TOPICS.V4_SWAP,
+          this.EVENT_TOPICS.V4_MODIFY_LIQUIDITY,
+        ],
+      ],
+    };
   }
 
   /**
@@ -138,8 +154,17 @@ export class BlockManager {
           return this.handleReorg(newBlockNumber);
         }
 
-        // if we reach here it means that this new block its mined in sequence
+        // NOTE: if we reach here it means that this new block its mined in sequence
         this.eventBus.emitNewBlock(this.currentBlock);
+
+        // fetch events for current block
+        const poolEvents = await this.fetchLogsByBlock(newBlockNumber);
+        this.logger.info(
+          `🔄 Fetched ${poolEvents.length} events (${newBlockNumber}) (+${deltaMs(this.currentBlock.receivedTimestamp)})`,
+        );
+
+        poolEvents.forEach((event) => this.latestPoolEventsMeta.set(event.poolId, event.meta));
+        this.dexManager.handlePoolEventsBatch(poolEvents, this.currentBlock);
       } catch (error) {
         this.logger.error(`❌ Error processing new block ${newBlockNumber}:`, error);
         // Curenltly only gas manager listens to block events => not a big isssue if block processing fails
@@ -151,29 +176,21 @@ export class BlockManager {
   /**
    * 🎧 Listen for pool events
    */
-  listenPoolEvents(): void {
+  listenPoolEvents_depracated(): void {
     // const poolAddresses = this.dexManager.getPoolAddresses();
     // if (poolAddresses.length === 0) return this.logger.error('❌ No pools to monitor');
     // this.logger.info(`Setting up event filter for ${poolAddresses.length} pools...`);
 
-    // Create single filter for ALL pool addresses and ALL event types
-    this.eventFilter = {
-      // address: poolAddresses, // TEMP - restrict discovery
-      topics: [
-        [
-          this.EVENT_TOPICS.V2_SYNC,
-          this.EVENT_TOPICS.V3_SWAP,
-          // this.EVENT_TOPICS.V3_MINT, // for now ignore mint/burn events
-          // this.EVENT_TOPICS.V3_BURN, // for now ignore mint/burn events
-          this.EVENT_TOPICS.V4_SWAP,
-          // this.EVENT_TOPICS.V4_MODIFY_LIQUIDITY,
-        ],
-      ],
-    };
-
     // Subscribe to logs
-    this.blockchain.on(this.eventFilter, (log: ethers.Log) => this.handlePoolEvent(log));
+    this.blockchain.on(this.eventFilter, (log: ethers.Log) => this.handlePoolEvent_deprecated(log));
     this.logger.info(`🎧 Subscribed to pool events`);
+  }
+
+  // Get logs from block
+  async fetchLogsByBlock(blockNumber: number): Promise<PoolEvent[]> {
+    const filter = { ...this.eventFilter, fromBlock: blockNumber, toBlock: blockNumber };
+    const logs = await this.blockchain.getLogs(filter);
+    return logs.map((log) => this.parseLog(log));
   }
 
   /**
@@ -210,7 +227,7 @@ export class BlockManager {
       this.eventBus.emitNewBlock(this.currentBlock);
 
       // 6. Refresh only affected pools — re-fetch their on-chain state via RPC calls
-      if (affectedPoolIds.size > 0) await this.dexManager.updatePoolsByIds(affectedPoolIds);
+      if (affectedPoolIds.size > 0) await this.dexManager.updatePoolsByIds(affectedPoolIds, this.currentBlock);
 
       // 7. resume arbitrage checking after recovery
       this.logger.info('✅ Reorg recovery completed. Current block number:', this.currentBlock.number);
@@ -231,7 +248,7 @@ export class BlockManager {
   /**
    * 📥 HANDLE POOL EVENT: Buffer events by block
    */
-  private handlePoolEvent(log: ethers.Log): void {
+  private handlePoolEvent_deprecated(log: ethers.Log): void {
     try {
       const event = this.parseLog(log);
 
@@ -245,12 +262,9 @@ export class BlockManager {
       // Push event to event buffer
       this.eventBuffer.push(event);
 
-      // Update pool state immediately - handlePoolEvent applies only if event is newer (by blockNumber, txIndex, logIndex)
-      this.dexManager.handlePoolEvent(event);
-
       // start processing timer to send all events in batch after timeout (with debounce)
       if (this.eventsProcessingTimer) clearTimeout(this.eventsProcessingTimer); // Reset timer (debounce)
-      this.eventsProcessingTimer = setTimeout(() => this.processPoolEventsBatch(), this.BLOCK_EVENT_TIMEOUT);
+      this.eventsProcessingTimer = setTimeout(() => this.processPoolEventsBatch_deprecated(), this.BLOCK_EVENT_TIMEOUT);
     } catch (error) {
       this.logger.error('Error handling pool event:', { error });
     }
@@ -259,18 +273,16 @@ export class BlockManager {
   /**
    * 📦 PROCESS POOL EVENTS BATCH: Process all buffered events for the latest block
    */
-  private processPoolEventsBatch(): void {
+  private processPoolEventsBatch_deprecated(): void {
     if (!this.eventBuffer.length) {
       this.eventsProcessingTimer = null;
       return; // nothing to process
     }
 
-    // Extract unique poolIds from buffered pool events
-    const poolIds = new Set<string>();
-    for (const event of this.eventBuffer) poolIds.add(event.poolId);
+    // Emit batch of events to dex manager for processing
+    this.dexManager.handlePoolEventsBatch([...this.eventBuffer], this.currentBlock);
     this.eventBuffer = []; // clear buffered pool events
 
-    this.eventBus.emitPoolsBatchEvent({ blockData: this.currentBlock, poolIds });
     this.eventsProcessingTimer = null;
   }
 

@@ -43,6 +43,9 @@ export const ROUTER_ABI = [
   'function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
 ];
 
+// Initialize pool interface
+export const POOL_INTERFACE = new ethers.Interface(POOL_ABI);
+
 /**
  * 🔍 FIND POOLS: Find all V2 pools for a token pair
  */
@@ -140,22 +143,12 @@ export function initPool(
 /**
  * 📊 GET POOL STATE: Fetch current pool state
  */
-export async function updatePool(blockchain: Blockchain, pool: DexV2PoolState): Promise<DexV2PoolState> {
-  const contract = blockchain.getContract(pool.address);
-  if (!contract) throw new Error(`Pool contract not found: ${pool.address}`);
-
-  // Fetch reserves
-  const reserves = await contract.getReserves();
-  if (!reserves) throw new Error(`Failed to fetch reserves for pool: ${pool.address}`);
-
-  // derived fields
+export function updatePool(pool: DexV2PoolState, reserves: { reserve0: bigint; reserve1: bigint }): void {
   const { token0, token1 } = pool.tokenPair;
-
   pool.reserve0 = reserves.reserve0;
   pool.reserve1 = reserves.reserve1;
   pool.spotPrice0to1 = calculateSpotPrice(reserves.reserve0, reserves.reserve1, token0, token1, true);
   pool.spotPrice1to0 = calculateSpotPrice(reserves.reserve0, reserves.reserve1, token0, token1, false);
-  return pool;
 }
 
 /**

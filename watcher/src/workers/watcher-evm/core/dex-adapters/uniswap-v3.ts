@@ -53,6 +53,9 @@ export const ROUTER_ABI = [
   'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)',
 ];
 
+// Initialize pool interface
+export const POOL_INTERFACE = new ethers.Interface(POOL_ABI);
+
 // ================================================================================================
 // POOL DISCOVERY AND STATE MANAGEMENT
 // ================================================================================================
@@ -212,25 +215,18 @@ export function initPool(
 /**
  * Update pool state with dynamic data
  */
-export async function updatePool(blockchain: Blockchain, pool: DexV3PoolState): Promise<DexV3PoolState> {
+export function updatePool(pool: DexV3PoolState, data: { sqrtPriceX96: bigint; tick: number; liquidity: bigint }): void {
   const { token0, token1 } = pool.tokenPair;
+  const { sqrtPriceX96, tick, liquidity } = data;
 
-  const contract = blockchain.getContract(pool.address);
-  if (!contract) throw new Error(`Pool contract not found for address: ${pool.address}`);
-
-  const [slot0, liquidity] = await Promise.all([contract.slot0(), contract.liquidity()]);
-  if (!slot0 || !liquidity) throw new Error(`Failed to fetch slot0 or liquidity for pool ${pool.address}`);
-
-  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(slot0.sqrtPriceX96, liquidity);
+  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(sqrtPriceX96, liquidity);
   pool.reserve0 = reserve0;
   pool.reserve1 = reserve1;
-  pool.sqrtPriceX96 = slot0.sqrtPriceX96;
-  pool.tick = slot0.tick;
+  pool.sqrtPriceX96 = sqrtPriceX96;
+  pool.tick = Number(tick); // Convert BigInt to number for tick
   pool.liquidity = liquidity;
-  pool.spotPrice0to1 = calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, true);
-  pool.spotPrice1to0 = calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, false);
-  // await fetchInitializedTicksMulticall3(ctx, pool); // fetch initialized ticks for multi-tick simulation
-  return pool;
+  pool.spotPrice0to1 = calculateSpotPrice(sqrtPriceX96, token0, token1, true);
+  pool.spotPrice1to0 = calculateSpotPrice(sqrtPriceX96, token0, token1, false);
 }
 
 // ================================================================================================
@@ -356,7 +352,7 @@ export function updatePoolFromEvent(pool: DexV3PoolState, event: PoolEvent): Dex
 
 /**
  * Fetch initialized ticks around the current tick for multi-tick simulation.
- * Called during pool update, not during simulation.
+ * NOTE: expensive operation - for each tick in range we call the contract
  */
 export async function fetchInitializedTicks(
   ctx: DexAdapterContext,
@@ -408,9 +404,8 @@ async function fetchInitializedTicksMulticall3(
   const contract = ctx.blockchain.getContract(pool.id);
   if (!contract) throw new Error(`Pool contract not found for address: ${pool.address}`);
 
-  const currentTick = Number(pool.tick!);
-  const tickSpacing = Number(pool.tickSpacing!);
-  pool.tickSpacing = tickSpacing;
+  const currentTick = pool.tick;
+  const tickSpacing = pool.tickSpacing;
 
   // Align to tick spacing
   const minTick = Math.floor((currentTick - tickRange * tickSpacing) / tickSpacing) * tickSpacing;

@@ -9,6 +9,7 @@ import type { WorkerDb } from '../db';
 import { DexAdapter } from './dex-adapters';
 import type { PriceOracle } from './price-oracle';
 import type { EventBus } from './event-bus';
+import type { BlockEntry } from './block-manager';
 
 type DexManagerInput = {
   chainConfig: ChainConfig;
@@ -32,9 +33,6 @@ export class DexManager {
 
   // list of registred pools in the system, updated on discovery and on events
   private pools: Map<string, DexPoolState> = new Map();
-
-  // used to process events in sequence for the same pool, avoiding multiple concurrent introspections for the same unknown pool
-  private promiseChainsPoolEventUpdates: Map<string, Promise<void>> = new Map();
 
   constructor(input: DexManagerInput) {
     this.logger = createLogger(`[${input.chainConfig.name}.DexManager]`);
@@ -61,44 +59,82 @@ export class DexManager {
     await this.dexAdapter.init();
   }
 
+  async registerStoredPools(): Promise<void> {
+    const dummyBlock: BlockEntry = { number: 0, receivedTimestamp: Date.now() }; // Used for initial batch emit
+
+    // 1. init pools
+    const pools = await this.dexAdapter.loadPoolsFromStorageCache();
+    for (const pool of pools) this.pools.set(pool.id, pool); // TBD: set if not exist (to avoid overwriting pools updated from events during startup)
+    this.logger.info(`📦 Initialized with ${this.pools.size} registred pools from storage`);
+
+    // 2. update pools with fresh on-chain data
+    await this.dexAdapter.updatePoolsInBatch(this.pools);
+
+    // log dynamic data for all pools after update
+    // for (const pool of this.pools.values()) {
+    //   const data: any = {
+    //     reserve0: pool.reserve0,
+    //     reserve1: pool.reserve1,
+    //     spotPrice0to1: pool.spotPrice0to1,
+    //     spotPrice1to0: pool.spotPrice1to0,
+    //     totalLiquidityUSD: pool.totalLiquidityUSD,
+    //     error: pool.error,
+    //   };
+    //   if (pool.protocol === 'v3' || pool.protocol === 'v4') {
+    //     data.sqrtPriceX96 = pool.sqrtPriceX96;
+    //     data.tick = pool.tick;
+    //     data.liquidity = pool.liquidity;
+    //   }
+    //   this.logger.info(`${printPool(pool)}`, { data }); // pool-log
+    // }
+    this.logger.info(`✅ Registered and updated ${this.pools.size} pools from storage`);
+    this.eventBus.emitPoolsUpsertBatch({ pools: Array.from(this.pools.values()), block: dummyBlock }); // EMIT: pool-state-upsert-batch for all stored pools
+  }
+
   // ================================================================================================
   // EVENT HANDLERS
   // ================================================================================================
-  handlePoolEvent(event: PoolEvent): void {
-    // get the last promise for this poolId, or a resolved promise if none exists
-    const prev = this.promiseChainsPoolEventUpdates.get(event.poolId) ?? Promise.resolve();
+  async handlePoolEventsBatch(events: PoolEvent[], block: BlockEntry): Promise<void> {
+    const handledPools: DexPoolState[] = [];
+    const unhandledEvents: PoolEvent[] = [];
+    for (const event of events) {
+      let pool = this.pools.get(event.poolId) ?? null;
+      if (!pool) {
+        unhandledEvents.push(event);
+        continue;
+      }
 
-    const next = prev
-      .then(() => this.processPoolEvent(event))
-      .catch((error) => this.logger.error(`Error handling pool event`, { event, error }))
-      .finally(() => {
-        // if the current promise chain is the same as the one we just executed, remove it from the map
-        // to prevent memory leaks; if it's different, it means another event for the same poolId was added while we were processing, so we keep it
-        if (this.promiseChainsPoolEventUpdates.get(event.poolId) === next) {
-          this.promiseChainsPoolEventUpdates.delete(event.poolId);
-        }
-      });
-
-    this.promiseChainsPoolEventUpdates.set(event.poolId, next);
-  }
-
-  private async processPoolEvent(event: PoolEvent): Promise<void> {
-    let pool = this.pools.get(event.poolId) ?? null;
-
-    if (!pool) {
-      pool = await this.dexAdapter.handleEventForUnknownPool(event);
-      if (!pool) return void this.logger.error(`Unable to introspect pool from event`, { event });
-    } else {
-      pool = this.dexAdapter.updatePoolFromEvent(pool, event);
+      this.dexAdapter.updatePoolFromEvent(pool, event);
+      handledPools.push(pool);
     }
 
-    this.logger.debug(printPoolInEvent(pool, event)); // pool-event-log
-    this.pools.set(pool.id, pool);
-    this.eventBus.emitPoolStateUpsert({ pool }); // EMIT: pool-state-upsert
+    // emit updates for all handled pools in batch
+    this.eventBus.emitPoolsUpsertBatch({ pools: handledPools, block });
+
+    const resolvedPools: DexPoolState[] = [];
+    // process unhandled events sequentially to avoid multiple concurrent introspections for the same unknown pool
+    const results = await Promise.allSettled(unhandledEvents.map((events) => this.dexAdapter.handleEventForUnknownPool(events)));
+
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value) {
+        this.pools.set(result.value.id, result.value);
+        this.logger.info(`✅ Registered new pool from event: ${printPool(result.value)}`); // pool-log
+        resolvedPools.push(result.value);
+      }
+
+      const event = unhandledEvents[index];
+      if (result.status === 'rejected') this.logger.warn(`⚠️ Error handling pool event`, { reason: result.reason, event });
+      if (result.status === 'fulfilled' && !result.value) this.logger.warn(`⚠️ Failed to handle pool event`, { event }); // pool-event-log
+    });
+
+    this.logger.info(
+      `🔄 Pool events batch processed. Handled: ${handledPools.length}, Unhandled: ${unhandledEvents.length}, Resolved unknown pools: ${resolvedPools.length}`,
+    );
+    this.eventBus.emitPoolsUpsertBatch({ pools: resolvedPools, block }); // EMIT: pool-state-upsert-batch for newly discovered pools
   }
 
   //
-  // Called by TokenPairManager when a new tokenPair its registred
+  // Called by TokenPairManager when a new tokenPair its registred (not used currently)
   //
   async handlePoolsDiscoveryForTokenPair(tokenPair: TokenPairOnChain, skipPoolId?: string): Promise<DexPoolState[]> {
     this.logger.info(`🔍 Starting discovery for new token pair: ${tokenPair.key}...`);
@@ -111,47 +147,31 @@ export class DexManager {
       }
 
       this.pools.set(pool.id, pool);
-      this.eventBus.emitPoolStateUpsert({ pool }); // EMIT: pool-state-upsert
+      // this.eventBus.emitPoolStateUpsert({ pool }); // EMIT: pool-state-upsert
     }
 
     this.logger.info(`✅ Discovery complete for pair ${tokenPair.key}, registered ${foundPools.length} new pools`);
     return foundPools;
   }
 
-  //
-  // update the state on all registred pools (currently called only at reorg events)
-  //
-  async updateAllPools(): Promise<void> {
-    this.logger.info('🔄 Updating all pool states...');
-    for (const [poolId, pool] of this.pools.entries()) {
-      try {
-        const updatedPool = await this.dexAdapter.updatePoolFromCall(pool);
-        this.pools.set(poolId, updatedPool);
-      } catch (error) {
-        this.logger.warn(`❌ Failed updatePoolFromCall`, { poolId, pool, error });
-      }
-    }
-    this.logger.info(`✅ Updated ${this.pools.size} active pool states`);
-  }
-
   // update only specific pools by their ids (currently called only at reorg events, for affected pools)
-  async updatePoolsByIds(poolIds: Set<string>): Promise<void> {
+  async updatePoolsByIds(poolIds: Set<string>, block: BlockEntry): Promise<void> {
     this.logger.info(`🔄 Updating ${poolIds.size} pool states...`);
+    const subset = new Map<string, DexPoolState>();
     for (const poolId of poolIds) {
       const pool = this.pools.get(poolId);
-      if (!pool) {
-        this.logger.warn(`⚠️ Pool ${poolId} not found in registry, skipping`);
-        continue;
-      }
-      try {
-        const updatedPool = await this.dexAdapter.updatePoolFromCall(pool);
-        this.pools.set(poolId, updatedPool);
-        this.eventBus.emitPoolStateUpsert({ pool: updatedPool, previousState: pool });
-      } catch (error) {
-        this.logger.warn(`❌ Failed updatePoolFromCall`, { poolId, error });
-      }
+      if (pool) subset.set(poolId, pool);
     }
-    this.logger.info(`✅ Updated ${poolIds.size} pool states after reorg`);
+
+    await this.dexAdapter.updatePoolsInBatch(subset);
+
+    const updatedPools: DexPoolState[] = [];
+    for (const poolId of poolIds) {
+      const pool = this.pools.get(poolId);
+      if (pool) updatedPools.push(pool);
+    }
+    this.logger.info(`✅ Updated ${subset.size} pool states after reorg`);
+    this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block });
   }
 
   // ================================================================================================
@@ -191,6 +211,8 @@ export class DexManager {
     return {
       registredPools: this.pools.size,
       storedPools: this.dexAdapter.getStats().storedPools,
+      // count of pools with errors
+      poolsWithErrors: Array.from(this.pools.values()).filter((pool) => pool.error).length,
     };
   }
 

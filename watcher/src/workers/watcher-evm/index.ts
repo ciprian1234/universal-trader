@@ -73,26 +73,13 @@ class EVMWorker extends BaseWorker {
       this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
     });
 
-    // "pool-state-upsert" routing
-    this.eventBus.onPoolStateUpsert((payload) => {
-      this.tokenPairManager.handlePoolStateUpsertEvent(payload);
+    // "pools-upsert-batch" routing
+    this.eventBus.onPoolsUpsertBatch((payload) => {
+      this.tokenPairManager.handlePoolsUpsertBatch(payload);
+      this.arbitrageOrchestrator.handlePoolsUpsertBatch(payload);
       // TODO: notify main thread about pool state update (after processing the event and updating the state)
       // TODO: notify liquidity graph to update
       // this.sendEventMessage('pool-update', { pool });
-    });
-
-    // "pool-events-batch" routing
-    // send updated pools to main thread
-    this.eventBus.onPoolsBatchEvent((payload) => {
-      this.arbitrageOrchestrator.handlePoolsBatchEvent(payload);
-      // // events are already applied to poolStates by the time they are emitted => so send the updated pool states
-      // const updatedPoolStates = payload.events
-      //   .map((event) => this.poolStatesManager.getPoolState(event.poolId))
-      //   .filter((state) => state !== null);
-      // this.sendEventMessage('pool-update-batch', {
-      //   blockData: payload.blockData,
-      //   updatedPoolStates,
-      // });
     });
 
     // new "arbitrage-opportunity" routing
@@ -204,20 +191,24 @@ class EVMWorker extends BaseWorker {
     await this.flashArbitrageHandler.init(); // initialize flashbots service if enabled
 
     await this.priceOracle.init(); // fetch initial anchor prices and start periodic updates
-    await this.dexManager.init(); // init contracts for dex venues
+    await this.dexManager.init(); // init stored pools cache from DB
 
     // start listening for block and pool events
     await this.blockManager.init();
     this.blockManager.listenBlockEvents();
-    this.blockManager.listenPoolEvents();
+    // this.blockManager.listenPoolEvents_depracated();
 
     // optionally create trading pairs between discovery tokens at startup
     // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
-    this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
-    this.eventBus.emitApplicationEvent({ name: 'initialized' }); // enable arbitrage orchstrator
+    // this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
 
-    // set interval to display stats
-    // set interval to display token pairs stats every 30 seconds for monitoring purposes
+    // register and load fresh data for all cached stored pools
+    await this.dexManager.registerStoredPools(); // FETCH + EMIT ALL POOLS
+
+    // enable arbitrage orchstrator
+    this.eventBus.emitApplicationEvent({ name: 'initialized' });
+
+    // set interval to display stats every minute
     this.displayStats(); // display initial stats immediately after startup
     this.displayStatsIntervalId = setInterval(() => this.displayStats(), 60_000);
   }
@@ -236,6 +227,7 @@ class EVMWorker extends BaseWorker {
     this.logger.info(`📊 Resolved priceUSD: ${resolvedPrices} of ${registredTokens} registered tokens (stored: ${storedTokens})`);
     this.logger.info(`🔀 Registered token pairs: ${tokenPairStats.registredTokenPairs}`);
     this.logger.info(`🏦 Registered DEX pools: ${dexManagerStats.registredPools} (stored: ${dexManagerStats.storedPools})`);
+    this.logger.info(`⚠️ Pools with errors: ${dexManagerStats.poolsWithErrors}`);
     this.logger.info(`🌐 Graph tokens: ${arbitrageStats.graph.tokenCount} graph edges: ${arbitrageStats.graph.edgeCount}`);
     this.logger.info(`💰 Arbitrage opportunities found: ${arbitrageStats.opportunitiesFound}`);
     this.logger.info(`=======================================================================`);
@@ -244,7 +236,7 @@ class EVMWorker extends BaseWorker {
   async stop() {
     this.logger.info('💾 Saving cache to disk...');
     await this.cache.save(); // do not force save if cache is not dirty
-    await this.dexManager.syncRegisteredPoolsToStorage();
+    // await this.dexManager.syncRegisteredPoolsToStorage();
 
     // clear stats display interval
     if (this.displayStatsIntervalId) clearInterval(this.displayStatsIntervalId);

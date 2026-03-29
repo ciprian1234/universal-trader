@@ -39,14 +39,9 @@ export interface ReorgRecoveredApplicationEvent extends ApplicationEventBase {
 
 export type ApplicationEvent = InitializedApplicationEvent | ReorgDetectedApplicationEvent | ReorgRecoveredApplicationEvent;
 
-export interface PoolStateUpsertEventPayload {
-  pool: DexPoolState;
-  previousState?: DexPoolState; // only available for 'update' actions
-}
-
-export interface PoolsBatchEventPayload {
-  blockData: BlockEntry;
-  poolIds: Set<string>; // list of unique pool IDs that had events in this block
+export interface PoolsUpsertBatchPayload {
+  pools: DexPoolState[];
+  block: BlockEntry;
 }
 
 // ================================================================================================
@@ -87,12 +82,9 @@ export class EventBus extends EventEmitter {
     this.emit('token-pair-registered', payload);
   }
 
-  emitPoolStateUpsert(payload: PoolStateUpsertEventPayload): void {
-    this.emit('pool-state-upsert', payload);
-  }
-
-  emitPoolsBatchEvent(payload: PoolsBatchEventPayload): void {
-    this.emit('pools-batch-event', payload);
+  emitPoolsUpsertBatch(payload: PoolsUpsertBatchPayload): void {
+    if (payload.pools.length === 0) return; // Skip empty batches
+    this.emit('pools-upsert-batch', payload);
   }
 
   /**
@@ -143,14 +135,9 @@ export class EventBus extends EventEmitter {
     return () => this.off('arbitrage-opportunity', callback); // Return unsubscribe function
   }
 
-  onPoolStateUpsert(callback: (payload: PoolStateUpsertEventPayload) => void): () => void {
-    this.on('pool-state-upsert', callback);
-    return () => this.off('pool-state-upsert', callback); // Return unsubscribe function
-  }
-
-  onPoolsBatchEvent(callback: (payload: PoolsBatchEventPayload) => void): () => void {
-    this.on('pools-batch-event', callback);
-    return () => this.off('pools-batch-event', callback); // Return unsubscribe function
+  onPoolsUpsertBatch(callback: (payload: PoolsUpsertBatchPayload) => void): () => void {
+    this.on('pools-upsert-batch', callback);
+    return () => this.off('pools-upsert-batch', callback); // Return unsubscribe function
   }
 
   // ================================================================================================

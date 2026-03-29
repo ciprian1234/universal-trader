@@ -213,6 +213,9 @@ export const STATE_VIEW_ABI_2 = [
   },
 ];
 
+// Initialize pool interface
+export const STATE_VIEW_INTERFACE = new ethers.Interface(STATE_VIEW_ABI);
+
 function isWETH(address: string): boolean {
   const WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'; // Ethereum mainnet
   return address.toLowerCase() === WETH_ADDRESS.toLowerCase();
@@ -372,32 +375,19 @@ export function initPool(
 /**
  * Update pool state via Singleton PoolManager
  */
-export async function updatePool(
-  ctx: { blockchain: Blockchain; config: DexV4Config },
-  pool: DexV4PoolState,
-): Promise<DexV4PoolState> {
-  if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 pool update');
+export function updatePool(pool: DexV4PoolState, data: { sqrtPriceX96: bigint; tick: number; liquidity: bigint }): void {
   const { token0, token1 } = pool.tokenPair;
-  const poolKey = pool.poolKeyHash;
-
-  // Call PoolManager for this specific ID
-  const stateViewContract = ctx.blockchain.getContract(ctx.config.stateViewAddress);
-  if (!stateViewContract) throw new Error(`StateView contract not found at address: ${ctx.config.stateViewAddress}`);
-  const [slot0, liquidity] = await Promise.all([stateViewContract.getSlot0(poolKey), stateViewContract.getLiquidity(poolKey)]);
-  if (!slot0) throw new Error(`Failed to fetch slot0 for pool ID ${poolKey}`);
-
-  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(slot0.sqrtPriceX96, liquidity);
+  const { sqrtPriceX96, tick, liquidity } = data;
+  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(sqrtPriceX96, liquidity);
 
   pool.reserve0 = reserve0;
   pool.reserve1 = reserve1;
-  pool.sqrtPriceX96 = slot0.sqrtPriceX96;
-  pool.tick = Number(slot0.tick); // Convert BigInt to number for tick
+  pool.sqrtPriceX96 = sqrtPriceX96;
+  pool.tick = Number(tick); // Convert BigInt to number for tick
   pool.liquidity = liquidity;
 
-  pool.spotPrice0to1 = calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, true);
-  pool.spotPrice1to0 = calculateSpotPrice(slot0.sqrtPriceX96, token0, token1, false);
-
-  return pool;
+  pool.spotPrice0to1 = calculateSpotPrice(sqrtPriceX96, token0, token1, true);
+  pool.spotPrice1to0 = calculateSpotPrice(sqrtPriceX96, token0, token1, false);
 }
 
 // ================================================================================================
@@ -516,6 +506,7 @@ export function getFeePercent(pool: DexV4PoolState): number {
  * 🔄 UPDATE POOL STATE FROM V4 EVENTS
  */
 export function updatePoolFromEvent(pool: DexV4PoolState, event: V4SwapEvent): DexV4PoolState {
+  if (event.name != 'swap') return pool; // Only update on swap events for now - can expand to liquidity changes later
   const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
 
   // Update V4 specific state if available

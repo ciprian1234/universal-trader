@@ -2,17 +2,31 @@ import type { ChainConfig } from '@/config/models';
 import { createLogger, type Logger } from '@/utils';
 import type { CacheService } from '@/utils/cache-service';
 import { ethers } from 'ethers';
+import { MULTICALL3_ABI, MULTICALL3_ADDRESS } from './chain/abi';
 
 type BlockchainInput = {
   chainConfig: ChainConfig;
   cache: CacheService;
 };
 
+export interface Multical3Input {
+  target: string;
+  allowFailure: boolean;
+  callData: string;
+}
+
+export interface Multical3Result {
+  success: boolean;
+  returnData: string;
+}
+
 export class Blockchain {
   private readonly logger: Logger;
   private readonly chainConfig: ChainConfig;
   readonly chainId: number;
   readonly provider: ethers.Provider;
+  readonly multicall3: ethers.Contract;
+
   private readonly cache: CacheService;
   private readonly contracts: Map<string, ethers.Contract> = new Map();
 
@@ -22,12 +36,6 @@ export class Blockchain {
   private readonly HEALTH_CHECK_INTERVAL = 15000; // Check every 15 seconds
   private readonly CONNECTION_TIMEOUT = 30000; // Alert after 30 seconds without blocks
   private isConnected = true;
-
-  // Multicall3 configuration for batch calls
-  private readonly MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
-  private readonly MULTICALL3_ABI = [
-    'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) external payable returns (tuple(bool success, bytes returnData)[])',
-  ];
 
   // rate limiter configuration
   private rateLimiter = {
@@ -70,7 +78,7 @@ export class Blockchain {
     if (process.env.NODE_ENV === 'production') this.setupConnectionMonitoring();
 
     // init multicall3 contract for batch calls
-    this.initContract(this.MULTICALL3_ADDRESS, this.MULTICALL3_ABI);
+    this.multicall3 = this.initContract(MULTICALL3_ADDRESS, MULTICALL3_ABI);
   }
 
   /**
@@ -258,7 +266,19 @@ export class Blockchain {
   }
 
   getMulticall3Contract() {
-    return this.getContract(this.MULTICALL3_ADDRESS);
+    return this.getContract(MULTICALL3_ADDRESS);
+  }
+
+  async executeMulticall3(calls: Multical3Input[], chunkSize = 1000) {
+    const results: Multical3Result[] = [];
+
+    for (let i = 0; i < calls.length; i += chunkSize) {
+      const chunk = calls.slice(i, i + chunkSize);
+      const chunkResults = await this.multicall3.aggregate3.staticCall(chunk);
+      results.push(...chunkResults);
+    }
+
+    return results;
   }
 
   async getBlockNumber(): Promise<number> {
@@ -267,6 +287,10 @@ export class Blockchain {
 
   async getBlock(blockNumber: number): Promise<ethers.Block | null> {
     return this.provider.getBlock(blockNumber);
+  }
+
+  async getLogs(filter: ethers.Filter): Promise<ethers.Log[]> {
+    return this.provider.getLogs(filter);
   }
 
   async getBalance(address: string): Promise<bigint> {

@@ -9,7 +9,7 @@ import type { PoolEvent, V2SyncEvent, V3SwapEvent, V4SwapEvent } from '../interf
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { ChainConfig, DexConfig, DexV2Config, DexV3Config, DexV4Config } from '@/config/models';
 import { createLogger, printPool, safeStringify } from '@/utils';
-import type { Blockchain } from '../blockchain';
+import type { Blockchain, Multical3Input } from '../blockchain';
 import type { WorkerDb } from '../../db';
 import type { TokenManager } from '../token-manager';
 import type { PriceOracle } from '../price-oracle';
@@ -84,6 +84,15 @@ export class DexAdapter {
     this.logger.info(`📦 Loaded ${dbPools.length} pools from DB`);
   }
 
+  async loadPoolsFromStorageCache(): Promise<DexPoolState[]> {
+    const pools: DexPoolState[] = [];
+    for (const pool of this.storedPools.values()) {
+      const initializedPool = this.initPoolFromStorage(pool, undefined);
+      pools.push(initializedPool);
+    }
+    return pools;
+  }
+
   // ================================================================================================
   // ADAPTER ROUTING
   // ================================================================================================
@@ -93,6 +102,7 @@ export class DexAdapter {
     else if (pool.protocol === 'v3') V3.updatePoolFromEvent(pool, poolEvent);
     else if (pool.protocol === 'v4') V4.updatePoolFromEvent(pool, poolEvent as V4SwapEvent);
     else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)} and event: ${safeStringify(poolEvent)}`);
+    pool.error = null; // if we reached here we can clear if any error
     this.deriveTokenPricesAndLiquidity(pool);
     return pool;
   }
@@ -161,23 +171,110 @@ export class DexAdapter {
     return initializedPool;
   }
 
-  async updatePoolFromCall(pool: DexPoolState): Promise<DexPoolState> {
-    try {
-      if (pool.protocol === 'v2') await V2.updatePool(this.blockchain, pool);
-      else if (pool.protocol === 'v3') await V3.updatePool(this.blockchain, pool);
-      else if (pool.protocol === 'v4') {
-        await V4.updatePool({ blockchain: this.blockchain, config: this.requireConfig(pool.venue.name) as DexV4Config }, pool);
-      } else throw new Error(`Unsupported update operation for pool: ${safeStringify(pool)}`);
-      this.deriveTokenPricesAndLiquidity(pool);
+  // update input list of pools in batch using multicall3
+  async updatePoolsInBatch(pools: Map<string, DexPoolState>): Promise<void> {
+    const calls: Multical3Input[] = [];
+    const callsMap: {
+      poolId: string;
+      callType: 'v2-reserves' | 'v3-slot0' | 'v3-liquidity' | 'v4-slot0' | 'v4-liquidity';
+    }[] = [];
 
-      this.logger.info(
-        `✅ Updated pool on ${pool.venue.name.padEnd(15)} (${pool.tokenPair.key}:${pool.feeBps.toString().padEnd(5)}) (id: ${pool.id})`,
-      );
-    } catch (error: any) {
-      this.logger.error(`Failed to update pool from call: ${printPool(pool)} - ${error.message}`);
-      pool.error = `${error instanceof Error ? error.message : String(error)}`;
+    // 1. build call inputs and mapping to decode results later
+    for (const pool of pools.values()) {
+      if (pool.protocol === 'v2') {
+        calls.push({
+          target: pool.address,
+          allowFailure: true,
+          callData: V2.POOL_INTERFACE.encodeFunctionData('getReserves', []),
+        });
+        callsMap.push({ poolId: pool.id, callType: 'v2-reserves' });
+      } else if (pool.protocol === 'v3') {
+        calls.push(
+          { target: pool.address, allowFailure: true, callData: V3.POOL_INTERFACE.encodeFunctionData('slot0', []) },
+          { target: pool.address, allowFailure: true, callData: V3.POOL_INTERFACE.encodeFunctionData('liquidity', []) },
+        );
+        callsMap.push({ poolId: pool.id, callType: 'v3-slot0' }, { poolId: pool.id, callType: 'v3-liquidity' });
+      } else if (pool.protocol === 'v4') {
+        const config = this.requireConfig(pool.venue.name) as DexV4Config;
+        const stateViewAddr = config.stateViewAddress;
+        calls.push(
+          {
+            target: stateViewAddr,
+            allowFailure: true,
+            callData: V4.STATE_VIEW_INTERFACE.encodeFunctionData('getSlot0', [pool.poolKeyHash]),
+          },
+          {
+            target: stateViewAddr,
+            allowFailure: true,
+            callData: V4.STATE_VIEW_INTERFACE.encodeFunctionData('getLiquidity', [pool.poolKeyHash]),
+          },
+        );
+        callsMap.push({ poolId: pool.id, callType: 'v4-slot0' }, { poolId: pool.id, callType: 'v4-liquidity' });
+      } else {
+        this.logger.warn(`Unsupported protocol for batch update, skipping pool: ${printPool(pool)}`);
+      }
     }
-    return pool;
+
+    // 2. execute multicall3
+    const callResults = await this.blockchain.executeMulticall3(calls);
+    if (!callResults || callResults.length !== calls.length)
+      throw new Error(`Invalid multicall3 response, expected ${calls.length} results but got ${callResults?.length}`);
+
+    // 3. Collect decoded results per pool
+    // For v3/v4 we need both slot0 and liquidity before we can update, so collect first
+    const poolData: Map<string, { slot0?: any; liquidity?: any; reserves?: any; error?: string }> = new Map();
+    for (let i = 0; i < callResults.length; i++) {
+      const result = callResults[i];
+      const { poolId, callType } = callsMap[i];
+
+      if (!poolData.has(poolId)) poolData.set(poolId, {});
+      const data = poolData.get(poolId)!;
+
+      if (!result?.success || !result.returnData) {
+        data.error = `Multicall3 failed for ${callType}`;
+        continue;
+      }
+
+      if (callType === 'v2-reserves') {
+        data.reserves = V2.POOL_INTERFACE.decodeFunctionResult('getReserves', result.returnData);
+      } else if (callType === 'v3-slot0') {
+        data.slot0 = V3.POOL_INTERFACE.decodeFunctionResult('slot0', result.returnData);
+      } else if (callType === 'v3-liquidity') {
+        data.liquidity = V3.POOL_INTERFACE.decodeFunctionResult('liquidity', result.returnData);
+      } else if (callType === 'v4-slot0') {
+        data.slot0 = V4.STATE_VIEW_INTERFACE.decodeFunctionResult('getSlot0', result.returnData);
+      } else if (callType === 'v4-liquidity') {
+        data.liquidity = V4.STATE_VIEW_INTERFACE.decodeFunctionResult('getLiquidity', result.returnData);
+      }
+    }
+
+    for (const pool of pools.values()) {
+      const data = poolData.get(pool.id);
+      if (!data || data.error) {
+        pool.error = data?.error ?? 'No data returned from multicall3';
+        continue;
+      }
+
+      const { token0, token1 } = pool.tokenPair;
+
+      if (pool.protocol === 'v2' && data.reserves) {
+        V2.updatePool(pool, data.reserves);
+      } else if (pool.protocol === 'v3' && data.slot0 && data.liquidity != null) {
+        const [sqrtPriceX96, tick] = data.slot0;
+        const liquidity = data.liquidity[0];
+        V3.updatePool(pool, { sqrtPriceX96, tick, liquidity });
+      } else if (pool.protocol === 'v4' && data.slot0 && data.liquidity != null) {
+        const [sqrtPriceX96, tick] = data.slot0;
+        const liquidity = data.liquidity[0];
+        V4.updatePool(pool, { sqrtPriceX96, tick, liquidity });
+      } else {
+        this.logger.warn(`⚠️ Incomplete multicall data for pool ${pool.id}, skipping update`, { data });
+        pool.error = 'Incomplete multicall data';
+        continue;
+      }
+
+      this.deriveTokenPricesAndLiquidity(pool);
+    }
   }
 
   getFeePercent(pool: DexPoolState): number {
@@ -236,7 +333,8 @@ export class DexAdapter {
 
     // update all discovered pools with derived USD prices and liquidity and persist to DB
     // note: if skipPoolId provided, filter out that pool from update to avoid duplicate update after event trigger
-    return await Promise.all(allPools.filter((pool) => pool.id !== skipPoolId).map((pool) => this.updatePoolFromCall(pool)));
+    // return await Promise.all(allPools.filter((pool) => pool.id !== skipPoolId).map((pool) => this.updatePoolFromCall(pool)));
+    return allPools; // TBD: update with batch call to optimize
   }
 
   //
@@ -248,8 +346,8 @@ export class DexAdapter {
       this.priceOracle.deriveFromPool(pool);
       pool.totalLiquidityUSD = this.priceOracle.estimatePoolLiquidityUSD(pool);
     } catch (error) {
+      pool.error = `Price derivation failed: ${error instanceof Error ? error.message : String(error)}`;
       this.logger.warn(`Failed to derive priceUSD/liquidity for pool: ${printPool(pool)}`);
-      // TODO: SET POOL ERROR STATE/FLAG
     }
   }
 

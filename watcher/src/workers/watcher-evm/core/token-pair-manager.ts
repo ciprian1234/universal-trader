@@ -4,7 +4,7 @@
 import { createLogger, type Logger } from '@/utils';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { WorkerDb } from '../db';
-import type { EventBus, PoolStateUpsertEventPayload } from './event-bus';
+import type { EventBus, PoolsUpsertBatchPayload } from './event-bus';
 import type { ChainConfig } from '@/config/models';
 import type { TokenManager } from './token-manager';
 import type { DexManager } from './dex-manager';
@@ -55,43 +55,45 @@ export class TokenPairManager {
   // ================================================================================================
   // HANDLE POOL STATE EVENTS
   // ================================================================================================
-  async handlePoolStateUpsertEvent(payload: PoolStateUpsertEventPayload) {
-    const { pool } = payload;
+  async handlePoolsUpsertBatch(payload: PoolsUpsertBatchPayload) {
+    const { pools } = payload;
 
-    let tokenPairInfo = this.tokenPairs.get(pool.tokenPair.key);
-    if (!tokenPairInfo) {
-      // new tokenPair
-      tokenPairInfo = {
-        tokenPair: pool.tokenPair,
-        isDiscovered: false,
-        totalLiquidityUSD: pool.totalLiquidityUSD,
-        poolsLiquidity: new Map([[pool.id, pool.totalLiquidityUSD]]),
-        numberOfEvents: 1,
-      };
-      this.tokenPairs.set(pool.tokenPair.key, tokenPairInfo);
+    for (const pool of pools) {
+      let tokenPairInfo = this.tokenPairs.get(pool.tokenPair.key);
+      if (!tokenPairInfo) {
+        // new tokenPair
+        tokenPairInfo = {
+          tokenPair: pool.tokenPair,
+          isDiscovered: false,
+          totalLiquidityUSD: pool.totalLiquidityUSD,
+          poolsLiquidity: new Map([[pool.id, pool.totalLiquidityUSD]]),
+          numberOfEvents: 1,
+        };
+        this.tokenPairs.set(pool.tokenPair.key, tokenPairInfo);
 
-      if (!this.ENABLE_DISCOVERY) return;
-      if (pool.totalLiquidityUSD >= 100_000) {
-        tokenPairInfo.isDiscovered = true;
-        await this.dexManager.handlePoolsDiscoveryForTokenPair(pool.tokenPair, pool.id);
-        // REMINDER: discover other TokenPair combinations with the new token?
+        if (!this.ENABLE_DISCOVERY) return;
+        if (pool.totalLiquidityUSD >= 100_000) {
+          tokenPairInfo.isDiscovered = true;
+          await this.dexManager.handlePoolsDiscoveryForTokenPair(pool.tokenPair, pool.id);
+          // REMINDER: discover other TokenPair combinations with the new token?
+        } else {
+          this.logger.info(
+            `Skipping discovery of token pair ${pool.tokenPair.key} due to low liquidity (${pool.totalLiquidityUSD} USD)`,
+          );
+        }
       } else {
-        this.logger.info(
-          `Skipping discovery of token pair ${pool.tokenPair.key} due to low liquidity (${pool.totalLiquidityUSD} USD)`,
-        );
-      }
-    } else {
-      // => existing tokenPair, update stats
-      tokenPairInfo.numberOfEvents += 1;
-      tokenPairInfo.poolsLiquidity.set(pool.id, pool.totalLiquidityUSD);
-      tokenPairInfo.totalLiquidityUSD = 0; // reset total liquidity before recalculating
-      for (const liquidity of tokenPairInfo.poolsLiquidity.values()) tokenPairInfo.totalLiquidityUSD += liquidity;
+        // => existing tokenPair, update stats
+        tokenPairInfo.numberOfEvents += 1;
+        tokenPairInfo.poolsLiquidity.set(pool.id, pool.totalLiquidityUSD);
+        tokenPairInfo.totalLiquidityUSD = 0; // reset total liquidity before recalculating
+        for (const liquidity of tokenPairInfo.poolsLiquidity.values()) tokenPairInfo.totalLiquidityUSD += liquidity;
 
-      // If we haven't marked this pair as discovered yet, check if it meets the criteria now
-      if (!this.ENABLE_DISCOVERY) return;
-      if (!tokenPairInfo.isDiscovered && tokenPairInfo.totalLiquidityUSD >= 100_000) {
-        tokenPairInfo.isDiscovered = true;
-        await this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPairInfo.tokenPair, pool.id);
+        // If we haven't marked this pair as discovered yet, check if it meets the criteria now
+        if (!this.ENABLE_DISCOVERY) return;
+        if (!tokenPairInfo.isDiscovered && tokenPairInfo.totalLiquidityUSD >= 100_000) {
+          tokenPairInfo.isDiscovered = true;
+          await this.dexManager.handlePoolsDiscoveryForTokenPair(tokenPairInfo.tokenPair, pool.id);
+        }
       }
     }
   }
