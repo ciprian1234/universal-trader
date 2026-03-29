@@ -132,7 +132,7 @@ export class BlockManager {
     this.currentBlock = { number: blockNumber, receivedTimestamp: Date.now() };
 
     // Emit initial block event
-    this.logger.info(`Initializing by fetching latest blockNumber: ${blockNumber}`);
+    this.logger.info(`🔗 Latest block number: ${blockNumber}`);
     this.eventBus.emitNewBlock(this.currentBlock);
   }
 
@@ -160,7 +160,7 @@ export class BlockManager {
         // fetch events for current block
         const poolEvents = await this.fetchLogsByBlock(newBlockNumber);
         this.logger.info(
-          `🔄 Fetched ${poolEvents.length} events (${newBlockNumber}) (+${deltaMs(this.currentBlock.receivedTimestamp)})`,
+          `🔄 Fetched ${poolEvents.length} events (${newBlockNumber}) ${deltaMs(this.currentBlock.receivedTimestamp)}`,
         );
 
         poolEvents.forEach((event) => this.latestPoolEventsMeta.set(event.poolId, event.meta));

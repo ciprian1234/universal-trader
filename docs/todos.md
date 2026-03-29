@@ -1,12 +1,13 @@
 # TODOS
 
 - debug failed arbitrages
+- implement optimized ticks fetching using multicall3
+- implement blacklist of tokens
 
 ## MVP
 
 - if running with localhost provider do not sync pools!!!
 - review gas calculation/analysis and bribe calculation
-- fix update pool from id witout knowing venue
 
 ### handle pre-failed execution transaction submission over and over again
 

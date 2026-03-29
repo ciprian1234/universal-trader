@@ -131,7 +131,7 @@ export class ArbitrageOrchestrator {
   async handlePoolsUpsertBatch(payload: PoolsUpsertBatchPayload): Promise<void> {
     const blockStr = `(${payload.block.number})`;
     const blockTime = payload.block.receivedTimestamp;
-    this.logger.info(`⏳ Applying ${payload.pools.length} batched events ${blockStr} (+${deltaMs(blockTime)}ms)`);
+    this.logger.info(`⏳ Applying ${payload.pools.length} batched events ${blockStr} ${deltaMs(blockTime)}`);
     if (!this.enabled) return this.logger.warn('⚠️  Service not enabled yet');
 
     try {
@@ -146,7 +146,7 @@ export class ArbitrageOrchestrator {
 
       // 3. Discover candidate paths
       const candidatePaths = this.pathFinder.findCycles(affectedTokens);
-      this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths ${blockStr} (+${deltaMs(blockTime)}ms)`);
+      this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths ${blockStr} ${deltaMs(blockTime)}`);
 
       if (candidatePaths.length === 0) return;
 
@@ -154,7 +154,7 @@ export class ArbitrageOrchestrator {
       const opportunities = await this.evaluatePathsConcurrently(candidatePaths, 30);
 
       if (opportunities.length === 0) return;
-      this.logger.info(`✅ Found ${opportunities.length} opportunities ${blockStr} (+${deltaMs(blockTime)}ms)`);
+      this.logger.info(`✅ Found ${opportunities.length} opportunities ${blockStr} ${deltaMs(blockTime)}`);
 
       // 5. Select non-overlapping paths
       const selectedPaths = this.selectBestPaths(opportunities);

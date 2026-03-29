@@ -74,20 +74,23 @@ export class DexAdapter {
 
   // init load stored pools from DB and cache them
   async init() {
-    this.logger.info('🔧 Initializing DexAdapter...');
     // load stored pools from DB into cache for quick lookup during pool discovery
     const dbPools = await this.db.loadAllPools();
     for (const pool of dbPools) {
       this.storedPools.set(pool.id, pool.state);
       // init contracts for faster execution of handleEventForUnknownPool later
     }
-    this.logger.info(`📦 Loaded ${dbPools.length} pools from DB`);
+    this.logger.info(`📦 Cached ${dbPools.length} stored pools from DB`);
   }
 
   async loadPoolsFromStorageCache(): Promise<DexPoolState[]> {
     const pools: DexPoolState[] = [];
     for (const pool of this.storedPools.values()) {
       const initializedPool = this.initPoolFromStorage(pool, undefined);
+      await Promise.all([
+        this.tokenManager.ensureTokenRegistered(initializedPool.tokenPair.token0.address, 'address'),
+        this.tokenManager.ensureTokenRegistered(initializedPool.tokenPair.token1.address, 'address'),
+      ]);
       pools.push(initializedPool);
     }
     return pools;

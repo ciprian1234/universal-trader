@@ -21,5 +21,5 @@ export function formatGwei(wei: bigint): string {
 
 export function deltaMs(timestamp: number): string {
   const delta = Date.now() - timestamp;
-  return `${delta}ms`;
+  return `(+${delta}ms)`;
 }

@@ -108,18 +108,14 @@ export class DexManager {
       handledPools.push(pool);
     }
 
-    // emit updates for all handled pools in batch
-    this.eventBus.emitPoolsUpsertBatch({ pools: handledPools, block });
-
-    const resolvedPools: DexPoolState[] = [];
     // process unhandled events sequentially to avoid multiple concurrent introspections for the same unknown pool
     const results = await Promise.allSettled(unhandledEvents.map((events) => this.dexAdapter.handleEventForUnknownPool(events)));
 
     results.forEach((result, index) => {
       if (result.status === 'fulfilled' && result.value) {
         this.pools.set(result.value.id, result.value);
-        this.logger.info(`✅ Registered new pool from event: ${printPool(result.value)}`); // pool-log
-        resolvedPools.push(result.value);
+        // this.logger.info(`✅ Registered new pool from event: ${printPool(result.value)}`); // pool-log
+        handledPools.push(result.value);
       }
 
       const event = unhandledEvents[index];
@@ -127,10 +123,7 @@ export class DexManager {
       if (result.status === 'fulfilled' && !result.value) this.logger.warn(`⚠️ Failed to handle pool event`, { event }); // pool-event-log
     });
 
-    this.logger.info(
-      `🔄 Pool events batch processed. Handled: ${handledPools.length}, Unhandled: ${unhandledEvents.length}, Resolved unknown pools: ${resolvedPools.length}`,
-    );
-    this.eventBus.emitPoolsUpsertBatch({ pools: resolvedPools, block }); // EMIT: pool-state-upsert-batch for newly discovered pools
+    this.eventBus.emitPoolsUpsertBatch({ pools: handledPools, block }); // EMIT: pool-state-upsert-batch for newly discovered pools
   }
 
   //
