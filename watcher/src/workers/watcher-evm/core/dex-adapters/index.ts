@@ -1,7 +1,7 @@
 // ================================================================================================
 // DEX ADAPTERS ROUTING LOGIC
 
-import type { DexPoolState, DexVenueName } from '@/shared/data-model/layer1';
+import type { DexPoolState, DexProtocol, DexV3PoolState, DexV4PoolState, DexVenueName } from '@/shared/data-model/layer1';
 import * as V2 from './uniswap-v2';
 import * as V3 from './uniswap-v3';
 import * as V4 from './uniswap-v4';
@@ -86,6 +86,8 @@ export class DexAdapter {
   async loadPoolsFromStorageCache(): Promise<DexPoolState[]> {
     const pools: DexPoolState[] = [];
     for (const pool of this.storedPools.values()) {
+      if (pool.protocol !== 'v2') continue; // TESTING ONLY
+      // TODO: filter only pools which  are active/reserves are not zero, no errors, etc..
       const initializedPool = this.initPoolFromStorage(pool, undefined);
       await Promise.all([
         this.tokenManager.ensureTokenRegistered(initializedPool.tokenPair.token0.address, 'address'),
@@ -280,10 +282,239 @@ export class DexAdapter {
     }
   }
 
+  async updatePoolTicksInBatch(pools: Map<string, DexPoolState>, tickRange = 10): Promise<void> {
+    const calls: Multical3Input[] = [];
+    const callsMap: { poolId: string; protocol: DexProtocol; tick: number }[] = [];
+
+    for (const pool of pools.values()) {
+      if (pool.protocol !== 'v3' && pool.protocol !== 'v4') continue;
+
+      const currentTick = pool.tick;
+      const tickSpacing = pool.tickSpacing;
+      const minTick = Math.floor((currentTick - tickRange * tickSpacing) / tickSpacing) * tickSpacing;
+      const maxTick = Math.ceil((currentTick + tickRange * tickSpacing) / tickSpacing) * tickSpacing;
+
+      for (let t = minTick; t <= maxTick; t += tickSpacing) {
+        if (pool.protocol === 'v3') {
+          calls.push({
+            target: pool.address,
+            allowFailure: true,
+            callData: V3.POOL_INTERFACE.encodeFunctionData('ticks', [t]),
+          });
+        } else if (pool.protocol === 'v4') {
+          const config = this.requireConfig(pool.venue.name) as DexV4Config;
+          calls.push({
+            target: config.stateViewAddress,
+            allowFailure: true,
+            callData: V4.STATE_VIEW_INTERFACE.encodeFunctionData('getTickLiquidity', [pool.poolKeyHash, t]),
+          });
+        }
+        callsMap.push({ poolId: pool.id, protocol: pool.protocol, tick: t });
+      }
+    }
+
+    if (calls.length === 0) return;
+    this.logger.info(`🎯 Fetching ticks for ${pools.size} pools (${calls.length} tick calls in multicall)...`);
+
+    const results = await this.blockchain.executeMulticall3(calls);
+
+    // Collect results grouped by pool
+    const poolTicks: Map<string, { tick: number; liquidityNet: bigint }[]> = new Map();
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const { poolId, protocol, tick } = callsMap[i];
+      if (!result?.success || !result.returnData) continue;
+
+      try {
+        let liquidityNet: bigint;
+
+        if (protocol === 'v3') {
+          const decoded = V3.POOL_INTERFACE.decodeFunctionResult('ticks', result.returnData);
+          liquidityNet = BigInt(decoded.liquidityNet);
+        } else {
+          // V4: getTickLiquidity returns (uint128 liquidityGross, int128 liquidityNet)
+          const decoded = V4.STATE_VIEW_INTERFACE.decodeFunctionResult('getTickLiquidity', result.returnData);
+          liquidityNet = BigInt(decoded.liquidityNet);
+        }
+
+        if (liquidityNet === 0n) continue;
+
+        if (!poolTicks.has(poolId)) poolTicks.set(poolId, []);
+        poolTicks.get(poolId)!.push({ tick, liquidityNet });
+      } catch {
+        // skip malformed responses
+      }
+    }
+
+    // Apply to pools
+    for (const pool of pools.values()) {
+      if (pool.protocol !== 'v3' && pool.protocol !== 'v4') continue;
+      const ticks = poolTicks.get(pool.id);
+      pool.ticks = ticks ? ticks.sort((a, b) => a.tick - b.tick) : [];
+    }
+
+    this.logger.info(`✅ Fetched ticks for ${poolTicks.size} pools with initialized ticks`);
+  }
+
+  /**
+   * Fetch initialized ticks for multiple V3/V4 pools using tick bitmap approach.
+   * Round 1: fetch bitmap words covering the tick range (1 multicall)
+   * Round 2: fetch liquidityNet only for initialized ticks found in bitmaps (1 multicall)
+   * Mutates pool.ticks in place.
+   *
+   * @param tickRange - number of bitmap words to scan in each direction from currentTick
+   *                    each word covers 256 * tickSpacing ticks, so wordRange=2 covers
+   *                    ~512 * tickSpacing ticks in each direction
+   */
+  async updatePoolTicksInBatch_v2(pools: Map<string, DexV3PoolState | DexV4PoolState>, wordRange = 4): Promise<void> {
+    // ──────────────────────────────────────────────
+    // ROUND 1: Fetch tick bitmap words
+    // ──────────────────────────────────────────────
+    const bitmapCalls: Multical3Input[] = [];
+    const bitmapCallMap: { poolId: string; wordPos: number }[] = [];
+
+    for (const pool of pools.values()) {
+      const compressedTick = Math.floor(pool.tick / pool.tickSpacing);
+      const currentWord = compressedTick >> 8; // arithmetic right shift = floor(compressedTick / 256)
+
+      for (let w = currentWord - wordRange; w <= currentWord + wordRange; w++) {
+        if (pool.protocol === 'v3') {
+          bitmapCalls.push({
+            target: pool.address,
+            allowFailure: true,
+            callData: V3.POOL_INTERFACE.encodeFunctionData('tickBitmap', [w]),
+          });
+        } else {
+          const config = this.requireConfig(pool.venue.name) as DexV4Config;
+          bitmapCalls.push({
+            target: config.stateViewAddress,
+            allowFailure: true,
+            callData: V4.STATE_VIEW_INTERFACE.encodeFunctionData('getTickBitmap', [pool.poolKeyHash, w]),
+          });
+        }
+        bitmapCallMap.push({ poolId: pool.id, wordPos: w });
+      }
+    }
+
+    const bitmapResults = await this.blockchain.executeMulticall3(bitmapCalls);
+
+    // Parse bitmaps to find initialized tick positions
+    // Map: poolId -> list of actual tick values that are initialized
+    const initializedTicksByPool: Map<string, number[]> = new Map();
+
+    for (let i = 0; i < bitmapResults.length; i++) {
+      const result = bitmapResults[i];
+      const { poolId, wordPos } = bitmapCallMap[i];
+      if (!result?.success || !result.returnData) continue;
+
+      const pool = pools.get(poolId)! as DexV3PoolState | DexV4PoolState;
+
+      let bitmap: bigint;
+      try {
+        if (pool.protocol === 'v3') {
+          const decoded = V3.POOL_INTERFACE.decodeFunctionResult('tickBitmap', result.returnData);
+          bitmap = BigInt(decoded[0]);
+        } else {
+          const decoded = V4.STATE_VIEW_INTERFACE.decodeFunctionResult('getTickBitmap', result.returnData);
+          bitmap = BigInt(decoded[0]);
+        }
+      } catch {
+        continue;
+      }
+
+      if (bitmap === 0n) continue; // no initialized ticks in this word
+
+      // Extract set bits → tick values
+      if (!initializedTicksByPool.has(poolId)) initializedTicksByPool.set(poolId, []);
+      const ticks = initializedTicksByPool.get(poolId)!;
+
+      for (let bit = 0; bit < 256; bit++) {
+        if ((bitmap >> BigInt(bit)) & 1n) {
+          const compressedTick = (wordPos << 8) + bit; // wordPos * 256 + bit
+          const actualTick = compressedTick * pool.tickSpacing;
+          ticks.push(actualTick);
+        }
+      }
+    }
+
+    // ──────────────────────────────────────────────
+    // ROUND 2: Fetch liquidityNet for initialized ticks only
+    // ──────────────────────────────────────────────
+    const tickCalls: Multical3Input[] = [];
+    const tickCallMap: { poolId: string; tick: number }[] = [];
+
+    for (const [poolId, ticks] of initializedTicksByPool) {
+      const pool = pools.get(poolId)! as DexV3PoolState | DexV4PoolState;
+
+      for (const tick of ticks) {
+        if (pool.protocol === 'v3') {
+          tickCalls.push({
+            target: pool.address,
+            allowFailure: true,
+            callData: V3.POOL_INTERFACE.encodeFunctionData('ticks', [tick]),
+          });
+        } else {
+          const config = this.requireConfig(pool.venue.name) as DexV4Config;
+          tickCalls.push({
+            target: config.stateViewAddress,
+            allowFailure: true,
+            callData: V4.STATE_VIEW_INTERFACE.encodeFunctionData('getTickLiquidity', [pool.poolKeyHash, tick]),
+          });
+        }
+        tickCallMap.push({ poolId, tick });
+      }
+    }
+
+    const totalInitialized = tickCallMap.length;
+    this.logger.info(`🎯 Round 2: Fetching ${totalInitialized} initialized ticks for ${initializedTicksByPool.size} pools...`);
+
+    const tickResults = await this.blockchain.executeMulticall3(tickCalls);
+
+    // Collect decoded ticks grouped by pool
+    const poolTicks: Map<string, { tick: number; liquidityNet: bigint }[]> = new Map();
+
+    for (let i = 0; i < tickResults.length; i++) {
+      const result = tickResults[i];
+      const { poolId, tick } = tickCallMap[i];
+      if (!result?.success || !result.returnData) continue;
+      const pool = pools.get(poolId)!;
+
+      try {
+        let liquidityNet: bigint;
+        if (pool.protocol === 'v3') {
+          const decoded = V3.POOL_INTERFACE.decodeFunctionResult('ticks', result.returnData);
+          liquidityNet = BigInt(decoded.liquidityNet);
+        } else {
+          const decoded = V4.STATE_VIEW_INTERFACE.decodeFunctionResult('getTickLiquidity', result.returnData);
+          liquidityNet = BigInt(decoded.liquidityNet);
+        }
+
+        if (liquidityNet === 0n) continue; // shouldn't happen since bitmap said initialized, but defensive
+
+        if (!poolTicks.has(poolId)) poolTicks.set(poolId, []);
+        poolTicks.get(poolId)!.push({ tick, liquidityNet });
+      } catch {
+        // skip malformed
+      }
+    }
+
+    // Apply to pools (sorted ascending)
+    for (const pool of pools.values()) {
+      const ticks = poolTicks.get(pool.id);
+      pool.ticks = ticks ? ticks.sort((a, b) => a.tick - b.tick) : [];
+    }
+
+    this.logger.info(
+      `✅ Bitmap tick fetch complete: ${totalInitialized} initialized ticks across ${initializedTicksByPool.size} pools (2 multicalls)`,
+    );
+  }
+
   getFeePercent(pool: DexPoolState): number {
-    if (pool.protocol === 'v2') return V2.getFeePercent(pool);
-    else if (pool.protocol === 'v3') return V3.getFeePercent(pool);
-    else if (pool.protocol === 'v4') return V4.getFeePercent(pool);
+    // for v2 feeBps its 30 => 0.3%, for v3/v4 feeBps its 3000 => 0.3%
+    if (pool.protocol === 'v2') return pool.feeBps / 100;
+    else if (pool.protocol === 'v3') return pool.feeBps / 10000;
+    else if (pool.protocol === 'v4') return pool.feeBps / 10000;
     else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)}`);
   }
 

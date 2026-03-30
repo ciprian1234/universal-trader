@@ -252,13 +252,6 @@ export function simulateSwap(poolState: DexV2PoolState, amountIn: bigint, zeroFo
   return amountOut;
 }
 
-/**
- * 💰 GET FEE PERCENT: Get V2 pool fee percentage
- */
-export function getFeePercent(poolState: DexV2PoolState): number {
-  return poolState.feeBps / 100; // Convert from basis points to percentage (30 bps = 0.3%)
-}
-
 // ================================================================================================
 // EVENT HANDLING
 // ================================================================================================

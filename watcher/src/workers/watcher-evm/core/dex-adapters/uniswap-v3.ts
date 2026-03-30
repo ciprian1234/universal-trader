@@ -33,10 +33,11 @@ export const POOL_ABI = [
   'function token0() external view returns (address)',
   'function token1() external view returns (address)',
   'function fee() external view returns (uint24)',
-  'function tickSpacing() external view returns (int24)',
-  'function ticks(int24 tick) external view returns (uint128 liquidityGross, int128 liquidityNet, uint256 feeGrowthOutside0X128, uint256 feeGrowthOutside1X128, int56 tickCumulativeOutside, uint160 secondsPerLiquidityOutsideX128, uint32 secondsOutside, bool initialized)',
-  'function liquidity() external view returns (uint128)',
   'function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)',
+  'function liquidity() external view returns (uint128)',
+  'function tickSpacing() external view returns (int24)',
+  'function tickBitmap(int16 wordPos) external view returns (uint256)',
+  'function ticks(int24 tick) external view returns (uint128 liquidityGross, int128 liquidityNet, uint256 feeGrowthOutside0X128, uint256 feeGrowthOutside1X128, int56 tickCumulativeOutside, uint160 secondsPerLiquidityOutsideX128, uint32 secondsOutside, bool initialized)',
   'function feeGrowthGlobal0X128() external view returns (uint256)',
   'function feeGrowthGlobal1X128() external view returns (uint256)',
   'event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)',
@@ -229,6 +230,31 @@ export function updatePool(pool: DexV3PoolState, data: { sqrtPriceX96: bigint; t
   pool.spotPrice1to0 = calculateSpotPrice(sqrtPriceX96, token0, token1, false);
 }
 
+/**
+ * 🔄 UPDATE POOL STATE FROM V3 EVENTS
+ */
+export function updatePoolFromEvent(pool: DexV3PoolState, event: PoolEvent): DexV3PoolState {
+  if (event.protocol !== 'v3' || event.name !== 'swap') return pool; // Only handle swap events for state updates (sync events not emitted in V3)
+
+  // calculate virtual reserves based on new sqrtPriceX96 and liquidity
+  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
+
+  // Update V3 specific state if available
+  pool.reserve0 = reserve0;
+  pool.reserve1 = reserve1;
+  pool.sqrtPriceX96 = event.sqrtPriceX96!;
+  pool.tick = event.tick!;
+  pool.liquidity = event.liquidity!;
+  pool.latestEventMeta = event.meta;
+
+  // Update derived fields
+  const { token0, token1 } = pool.tokenPair;
+  pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
+  pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
+
+  return pool;
+}
+
 // ================================================================================================
 // TRADING AND QUOTES
 // ================================================================================================
@@ -312,159 +338,4 @@ async function getTradeQuote(
  */
 export function simulateSwap(poolState: DexV3PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
   return SqrtMath.simulateSwap(poolState, amountIn, zeroForOne);
-}
-
-/**
- * 💰 GET FEE PERCENT: Get V3 pool fee percentage
- */
-export function getFeePercent(poolState: DexV3PoolState): number {
-  return Number(poolState.feeBps) / 10000; // Convert from basis points to percentage (3000 bps = 0.3%)
-}
-
-// ================================================================================================
-// EVENT HANDLING
-// ================================================================================================
-
-/**
- * 🔄 UPDATE POOL STATE FROM V3 EVENTS
- */
-export function updatePoolFromEvent(pool: DexV3PoolState, event: PoolEvent): DexV3PoolState {
-  if (event.protocol !== 'v3' || event.name !== 'swap') return pool; // Only handle swap events for state updates (sync events not emitted in V3)
-
-  // calculate virtual reserves based on new sqrtPriceX96 and liquidity
-  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
-
-  // Update V3 specific state if available
-  pool.reserve0 = reserve0;
-  pool.reserve1 = reserve1;
-  pool.sqrtPriceX96 = event.sqrtPriceX96!;
-  pool.tick = event.tick!;
-  pool.liquidity = event.liquidity!;
-  pool.latestEventMeta = event.meta;
-
-  // Update derived fields
-  const { token0, token1 } = pool.tokenPair;
-  pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
-  pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
-
-  return pool;
-}
-
-/**
- * Fetch initialized ticks around the current tick for multi-tick simulation.
- * NOTE: expensive operation - for each tick in range we call the contract
- */
-export async function fetchInitializedTicks(
-  ctx: DexAdapterContext,
-  pool: DexV3PoolState,
-  tickRange: number = 200,
-): Promise<void> {
-  const contract = ctx.blockchain.getContract(pool.id);
-  if (!contract) throw new Error(`Pool contract not found for address: ${pool.address}`);
-
-  const currentTick = pool.tick!;
-  const tickSpacing = Number(pool.tickSpacing!);
-  pool.tickSpacing = tickSpacing;
-
-  // Align to tick spacing
-  const minTick = Math.floor((currentTick - tickRange * tickSpacing) / tickSpacing) * tickSpacing;
-  const maxTick = Math.ceil((currentTick + tickRange * tickSpacing) / tickSpacing) * tickSpacing;
-
-  const tickPromises: Promise<{ tick: number; liquidityNet: bigint } | null>[] = [];
-
-  for (let t = minTick; t <= maxTick; t += tickSpacing) {
-    tickPromises.push(
-      contract.ticks(t).then(
-        (data: any) => {
-          const liquidityNet = BigInt(data.liquidityNet);
-          if (liquidityNet !== 0n) {
-            return { tick: t, liquidityNet };
-          }
-          return null;
-        },
-        () => null,
-      ),
-    );
-  }
-
-  const results = await Promise.all(tickPromises);
-  pool.ticks = results.filter((r): r is { tick: number; liquidityNet: bigint } => r !== null).sort((a, b) => a.tick - b.tick);
-
-  logger.debug(`Fetched ${pool.ticks.length} initialized ticks for pool ${pool.id}`);
-}
-
-/**
- * Fetch initialized ticks around the current tick using Multicall3 (single RPC call).
- */
-async function fetchInitializedTicksMulticall3(
-  ctx: DexAdapterContext,
-  pool: DexV3PoolState,
-  tickRange: number = 10,
-): Promise<void> {
-  const contract = ctx.blockchain.getContract(pool.id);
-  if (!contract) throw new Error(`Pool contract not found for address: ${pool.address}`);
-
-  const currentTick = pool.tick;
-  const tickSpacing = pool.tickSpacing;
-
-  // Align to tick spacing
-  const minTick = Math.floor((currentTick - tickRange * tickSpacing) / tickSpacing) * tickSpacing;
-  const maxTick = Math.ceil((currentTick + tickRange * tickSpacing) / tickSpacing) * tickSpacing;
-
-  logger.debug(
-    `Fetching ticks for pool ${pool.id} (current tick: ${currentTick}) in range [${minTick}, ${maxTick}] with tick spacing ${tickSpacing} using Multicall3...`,
-  );
-
-  // Build tick list
-  const tickValues: number[] = [];
-  for (let t = minTick; t <= maxTick; t += tickSpacing) {
-    tickValues.push(t);
-  }
-
-  const tickValuesStr = tickValues.map((t) => t.toString());
-  logger.debug(`Total ticks to check: ${tickValues.length}`, tickValuesStr);
-
-  if (tickValues.length === 0) return;
-
-  // Encode each ticks(int24) call
-  const poolInterface = new ethers.Interface(POOL_ABI);
-  const calls = tickValues.map((t) => ({
-    target: pool.id,
-    allowFailure: true,
-    callData: poolInterface.encodeFunctionData('ticks', [t]),
-  }));
-
-  // Batch into chunks to avoid gas limit on multicall (max ~500 per batch)
-  const BATCH_SIZE = 500;
-  const allResults: { success: boolean; returnData: string }[] = [];
-
-  const multicall = ctx.blockchain.getMulticall3Contract();
-  if (!multicall) throw new Error(`Multicall3 contract not found on blockchain ${ctx.blockchain.chainId}`);
-
-  for (let i = 0; i < calls.length; i += BATCH_SIZE) {
-    const batch = calls.slice(i, i + BATCH_SIZE);
-    const results = await multicall.aggregate3.staticCall(batch);
-    allResults.push(...results);
-  }
-
-  // Decode results
-  const initializedTicks: { tick: number; liquidityNet: bigint }[] = [];
-
-  for (let i = 0; i < allResults.length; i++) {
-    const result = allResults[i];
-    if (!result.success) continue;
-
-    try {
-      const decoded = poolInterface.decodeFunctionResult('ticks', result.returnData);
-      const liquidityNet = BigInt(decoded.liquidityNet);
-      if (liquidityNet !== 0n) {
-        initializedTicks.push({ tick: tickValues[i], liquidityNet });
-      }
-    } catch {
-      // Skip malformed responses
-    }
-  }
-
-  pool.ticks = initializedTicks.sort((a, b) => a.tick - b.tick);
-  logger.debug(`Fetched ${pool.ticks.length} initialized ticks for pool ${pool.id} (${tickValues.length} ticks in 1 RPC call)`);
 }

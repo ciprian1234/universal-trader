@@ -3,6 +3,14 @@
 - debug failed arbitrages
 - implement optimized ticks fetching using multicall3
 - implement blacklist of tokens
+- batch pool introspection into a single call
+- batch wallet balances into a single call
+- batch pool discovery into a single call
+- handle mint/brun/v4-liquidity events
+
+- add forceUpdate flag to explicitly overwrite dynamic data if pool its already initialized, othweize skip pool
+  (needed because at initialization while fetching pools a new event may arrive and batch call may fetch data from previous block and ovewrite data written by events)
+- investigate why tokenPairs are not set at init
 
 ## MVP
 
