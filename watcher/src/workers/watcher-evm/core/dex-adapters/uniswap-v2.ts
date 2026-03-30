@@ -259,7 +259,7 @@ export function simulateSwap(poolState: DexV2PoolState, amountIn: bigint, zeroFo
 /**
  * 🔄 UPDATE POOL STATE FROM V2_SYNC EVENTS
  */
-export function updatePoolFromEvent(pool: DexV2PoolState, event: V2SyncEvent): DexV2PoolState {
+export function updatePoolFromEvent(pool: DexV2PoolState, event: V2SyncEvent): void {
   pool.reserve0 = event.reserve0;
   pool.reserve1 = event.reserve1;
   pool.latestEventMeta = event.meta;
@@ -268,6 +268,4 @@ export function updatePoolFromEvent(pool: DexV2PoolState, event: V2SyncEvent): D
   const { token0, token1 } = pool.tokenPair;
   pool.spotPrice0to1 = calculateSpotPrice(event.reserve0!, event.reserve1!, token0, token1, true);
   pool.spotPrice1to0 = calculateSpotPrice(event.reserve0!, event.reserve1!, token0, token1, false);
-
-  return pool;
 }

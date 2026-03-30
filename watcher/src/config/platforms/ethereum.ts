@@ -48,7 +48,7 @@ const ethereum: ChainConfig = {
 
   // Gas
   gasDataFetchInterval: 5,
-  minPriorityFee: ethers.parseUnits('0.05', 'gwei'), // 0.05 gwei
+  minPriorityFee: ethers.parseUnits('1', 'gwei'), // 1 gwei
   maxPriorityFee: ethers.parseUnits('100', 'gwei'), // 100 gwei
 
   // DEX venues

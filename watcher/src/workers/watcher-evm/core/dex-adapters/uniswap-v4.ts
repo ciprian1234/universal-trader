@@ -2,7 +2,7 @@
  * 🦄 UNISWAP V4 ADAPTER: Support for V4 Singleton Architecture and Hooks
  */
 import { ethers, AbiCoder } from 'ethers';
-import type { TradeQuote, V4SwapEvent } from '../interfaces';
+import type { TradeQuote, V4ModifyLiquidityEvent, V4SwapEvent } from '../interfaces';
 import * as SqrtMath from './lib/sqrtPriceMath';
 import { dexPoolId, type DexV4PoolState, type DexVenue, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
@@ -10,6 +10,7 @@ import { createLogger } from '@/utils';
 import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
 import type { Blockchain } from '../blockchain';
 import type { DexV4Config } from '@/config/models';
+import { applyLiquidityDelta } from './lib/ticks';
 
 // ================================================================================================
 // Types specific to Uniswap V4
@@ -350,24 +351,27 @@ export function simulateSwap(pool: DexV4PoolState, amountIn: bigint, zeroForOne:
 /**
  * 🔄 UPDATE POOL STATE FROM V4 EVENTS
  */
-export function updatePoolFromEvent(pool: DexV4PoolState, event: V4SwapEvent): DexV4PoolState {
-  if (event.name != 'swap') return pool; // Only update on swap events for now - can expand to liquidity changes later
-  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
+export function updatePoolFromEvent(pool: DexV4PoolState, event: V4SwapEvent | V4ModifyLiquidityEvent): void {
+  if (event.name === 'swap') {
+    const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
 
-  // Update V4 specific state if available
-  pool.reserve0 = reserve0;
-  pool.reserve1 = reserve1;
-  pool.sqrtPriceX96 = event.sqrtPriceX96;
-  pool.tick = event.tick;
-  pool.liquidity = event.liquidity;
+    // Update V4 specific state if available
+    pool.reserve0 = reserve0;
+    pool.reserve1 = reserve1;
+    pool.sqrtPriceX96 = event.sqrtPriceX96;
+    pool.tick = event.tick;
+    pool.liquidity = event.liquidity;
+
+    // Update derived fields
+    const { token0, token1 } = pool.tokenPair;
+    pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
+    pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
+  } else if (event.name === 'modify-liquidity') {
+    applyLiquidityDelta(pool, event.tickLower, event.tickUpper, event.liquidityDelta);
+  }
+
+  // Update pool with latest event metadata
   pool.latestEventMeta = event.meta;
-
-  // Update derived fields
-  const { token0, token1 } = pool.tokenPair;
-  pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
-  pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
-
-  return pool;
 }
 
 // ================================================================================================

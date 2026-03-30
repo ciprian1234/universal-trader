@@ -109,7 +109,12 @@ export class DexManager {
     }
 
     // process unhandled events sequentially to avoid multiple concurrent introspections for the same unknown pool
-    const results = await Promise.allSettled(unhandledEvents.map((events) => this.dexAdapter.handleEventForUnknownPool(events)));
+    // TODO => optimize this (if mutiple events for same unknown pool)
+    const results = await Promise.allSettled(
+      unhandledEvents
+        .filter((events) => events.name === 'sync' || events.name === 'swap') // handle only sync and swap events for unknown pools
+        .map((events) => this.dexAdapter.handleEventForUnknownPool(events)),
+    );
 
     results.forEach((result, index) => {
       if (result.status === 'fulfilled' && result.value) {
@@ -158,11 +163,7 @@ export class DexManager {
 
     await this.dexAdapter.updatePoolsInBatch(subset);
 
-    const updatedPools: DexPoolState[] = [];
-    for (const poolId of poolIds) {
-      const pool = this.pools.get(poolId);
-      if (pool) updatedPools.push(pool);
-    }
+    const updatedPools = Array.from(subset.values());
     this.logger.info(`✅ Updated ${subset.size} pool states after reorg`);
     this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block });
   }

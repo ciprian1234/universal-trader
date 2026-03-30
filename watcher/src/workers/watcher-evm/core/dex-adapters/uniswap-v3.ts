@@ -2,7 +2,7 @@
  * 🦄 DEX V3 ADAPTER: High-performance V3 DEX adapter with concentrated liquidity
  */
 import { ethers } from 'ethers';
-import type { TradeQuote, PoolEvent, V3SwapEvent } from '../interfaces';
+import type { TradeQuote, V3SwapEvent, V3MintEvent, V3BurnEvent } from '../interfaces';
 import * as SqrtMath from './lib/sqrtPriceMath';
 import { dexPoolId, type DexPoolState, type DexV3PoolState, type DexVenue, type DexVenueName } from '@/shared/data-model/layer1';
 import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
@@ -12,6 +12,7 @@ import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
 import type { Blockchain } from '../blockchain';
 import { AbiCoder } from 'ethers';
 import type { DexV3Config } from '@/config/models';
+import { applyLiquidityDelta } from './lib/ticks';
 
 // ================================================================================================
 // DEX V3 ADAPTER
@@ -233,26 +234,29 @@ export function updatePool(pool: DexV3PoolState, data: { sqrtPriceX96: bigint; t
 /**
  * 🔄 UPDATE POOL STATE FROM V3 EVENTS
  */
-export function updatePoolFromEvent(pool: DexV3PoolState, event: PoolEvent): DexV3PoolState {
-  if (event.protocol !== 'v3' || event.name !== 'swap') return pool; // Only handle swap events for state updates (sync events not emitted in V3)
+export function updatePoolFromEvent(pool: DexV3PoolState, event: V3SwapEvent | V3MintEvent | V3BurnEvent): void {
+  if (event.name === 'swap') {
+    // calculate virtual reserves based on new sqrtPriceX96 and liquidity
+    const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
 
-  // calculate virtual reserves based on new sqrtPriceX96 and liquidity
-  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
+    // Update V3 specific state if available
+    pool.reserve0 = reserve0;
+    pool.reserve1 = reserve1;
+    pool.sqrtPriceX96 = event.sqrtPriceX96!;
+    pool.tick = event.tick!;
+    pool.liquidity = event.liquidity!;
 
-  // Update V3 specific state if available
-  pool.reserve0 = reserve0;
-  pool.reserve1 = reserve1;
-  pool.sqrtPriceX96 = event.sqrtPriceX96!;
-  pool.tick = event.tick!;
-  pool.liquidity = event.liquidity!;
+    // Update derived fields
+    const { token0, token1 } = pool.tokenPair;
+    pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
+    pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
+  } else if (event.name === 'mint' || event.name === 'burn') {
+    const liquidityDelta = event.name === 'mint' ? event.amount : -event.amount;
+    applyLiquidityDelta(pool, event.tickLower, event.tickUpper, liquidityDelta);
+  }
+
+  // Update latest event metadata
   pool.latestEventMeta = event.meta;
-
-  // Update derived fields
-  const { token0, token1 } = pool.tokenPair;
-  pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
-  pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
-
-  return pool;
 }
 
 // ================================================================================================

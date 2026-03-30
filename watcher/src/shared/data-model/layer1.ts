@@ -105,7 +105,8 @@ export interface EventMetadata {
 
 interface TickData {
   tick: number;
-  liquidityNet: bigint;
+  // liquidityGross: bigint; // total liquidity referencing this tick (always >= 0)
+  liquidityNet: bigint; // net liquidity change when crossing this tick (signed)
 }
 
 // ── CEX ─────────────────────────────────────────────────────

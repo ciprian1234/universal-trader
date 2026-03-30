@@ -5,7 +5,15 @@ import type { DexPoolState, DexProtocol, DexV3PoolState, DexV4PoolState, DexVenu
 import * as V2 from './uniswap-v2';
 import * as V3 from './uniswap-v3';
 import * as V4 from './uniswap-v4';
-import type { PoolEvent, V2SyncEvent, V3SwapEvent, V4SwapEvent } from '../interfaces';
+import type {
+  PoolEvent,
+  V2SyncEvent,
+  V3BurnEvent,
+  V3MintEvent,
+  V3SwapEvent,
+  V4ModifyLiquidityEvent,
+  V4SwapEvent,
+} from '../interfaces';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { ChainConfig, DexConfig, DexV2Config, DexV3Config, DexV4Config } from '@/config/models';
 import { createLogger, printPool, safeStringify } from '@/utils';
@@ -76,10 +84,7 @@ export class DexAdapter {
   async init() {
     // load stored pools from DB into cache for quick lookup during pool discovery
     const dbPools = await this.db.loadAllPools();
-    for (const pool of dbPools) {
-      this.storedPools.set(pool.id, pool.state);
-      // init contracts for faster execution of handleEventForUnknownPool later
-    }
+    for (const pool of dbPools) this.storedPools.set(pool.id, pool.state);
     this.logger.info(`📦 Cached ${dbPools.length} stored pools from DB`);
   }
 
@@ -104,8 +109,8 @@ export class DexAdapter {
 
   updatePoolFromEvent(pool: DexPoolState, poolEvent: PoolEvent): DexPoolState {
     if (pool.protocol === 'v2') V2.updatePoolFromEvent(pool, poolEvent as V2SyncEvent);
-    else if (pool.protocol === 'v3') V3.updatePoolFromEvent(pool, poolEvent);
-    else if (pool.protocol === 'v4') V4.updatePoolFromEvent(pool, poolEvent as V4SwapEvent);
+    else if (pool.protocol === 'v3') V3.updatePoolFromEvent(pool, poolEvent as V3SwapEvent | V3MintEvent | V3BurnEvent);
+    else if (pool.protocol === 'v4') V4.updatePoolFromEvent(pool, poolEvent as V4SwapEvent | V4ModifyLiquidityEvent);
     else throw new Error(`Unsupported operation for pool: ${safeStringify(pool)} and event: ${safeStringify(poolEvent)}`);
     pool.error = null; // if we reached here we can clear if any error
     this.deriveTokenPricesAndLiquidity(pool);
