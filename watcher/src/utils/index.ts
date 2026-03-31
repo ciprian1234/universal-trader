@@ -7,4 +7,4 @@ export { safeStringify, bigIntReplacer } from './logger/serialization';
 export { getFeeMultiplier } from './math';
 
 // print utils
-export { printPool, printPoolInEvent } from './print';
+export { printPool, printPoolInEvent, displayOpportunity } from './print';

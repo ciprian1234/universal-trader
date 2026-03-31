@@ -2,7 +2,7 @@
 // UNISWAP V3 MATH LIBRARIES (Port from Solidity)
 // ================================================================================================
 
-import type { DexV3PoolState } from '@/shared/data-model/layer1';
+import type { DexV3PoolState, DexV4PoolState } from '@/shared/data-model/layer1';
 
 // Constants for fixed point math
 export const Q96 = 1n << 96n; // 2**96
@@ -144,15 +144,14 @@ function mulDivRoundingUp(a: bigint, b: bigint, denominator: bigint): bigint {
  * 🧮 SIMULATE V3 SWAP - Multi-tick implementation
  * Mirrors the Uniswap V3 core swap loop to handle tick crossings correctly.
  */
-export function simulateSwap(poolState: DexV3PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+export function simulateSwap(poolState: DexV3PoolState | DexV4PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
   const sqrtPriceX96 = poolState.sqrtPriceX96!;
   let liquidity = poolState.liquidity!;
-
   if (amountIn <= 0n) throw new Error(`Invalid trade amount: ${amountIn}`);
-  if (liquidity <= 0n) throw new Error(`Insufficient liquidity`);
 
   // If no tick data available, fall back to single-tick simulation
   if (!poolState.ticks || poolState.ticks.length === 0) {
+    if (liquidity <= 0n) throw new Error(`Insufficient liquidity`);
     return simulateSwapSingleTick(poolState, amountIn, zeroForOne);
   }
 
@@ -216,12 +215,13 @@ export function simulateSwap(poolState: DexV3PoolState, amountIn: bigint, zeroFo
         liquidity += nextTick.liquidityNet; // Going up in price
       }
 
-      if (liquidity <= 0n) {
-        // No more liquidity available
-        break;
-      }
-
+      // Always advance currentTick past the crossed tick to avoid getting stuck
       currentTick = zeroForOne ? nextTick.tick - 1 : nextTick.tick;
+
+      if (liquidity <= 0n) {
+        // No more liquidity available (slide to next ticks)
+        continue;
+      }
     } else {
       // Didn't reach tick boundary, we're done
       break;
@@ -235,7 +235,7 @@ export function simulateSwap(poolState: DexV3PoolState, amountIn: bigint, zeroFo
 /**
  * Single-tick fallback (original implementation)
  */
-function simulateSwapSingleTick(poolState: DexV3PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+function simulateSwapSingleTick(poolState: DexV3PoolState | DexV4PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
   const sqrtPriceX96 = poolState.sqrtPriceX96!;
   const liquidity = poolState.liquidity!;
 
@@ -315,17 +315,35 @@ function getNextInitializedTick(
 
 /**
  * Convert tick to sqrtPriceX96
- * Formula: sqrtPriceX96 = sqrt(1.0001^tick) * 2^96
+ * Exact port of Uniswap V3 TickMath.getSqrtRatioAtTick (pure integer math)
  */
 function tickToSqrtPriceX96(tick: number): bigint {
   const absTick = Math.abs(tick);
+  if (absTick > 887272) throw new Error(`Tick out of range: ${tick}`);
 
-  // Use the same bit-manipulation approach as Uniswap V3's TickMath
-  // This is a simplified version using floating point, which is acceptable
-  // since we only need it for tick boundary prices (not for exact swap math)
-  const sqrtRatio = Math.sqrt(1.0001 ** tick);
-  const Q96_NUM = 2 ** 96;
-  const result = BigInt(Math.floor(sqrtRatio * Q96_NUM));
+  let ratio: bigint = (absTick & 0x1) !== 0 ? 0xfffcb933bd6fad37aa2d162d1a594001n : 0x100000000000000000000000000000000n;
+  if ((absTick & 0x2) !== 0) ratio = (ratio * 0xfff97272373d413259a46990580e213an) >> 128n;
+  if ((absTick & 0x4) !== 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdccn) >> 128n;
+  if ((absTick & 0x8) !== 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0n) >> 128n;
+  if ((absTick & 0x10) !== 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644n) >> 128n;
+  if ((absTick & 0x20) !== 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0n) >> 128n;
+  if ((absTick & 0x40) !== 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861n) >> 128n;
+  if ((absTick & 0x80) !== 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053n) >> 128n;
+  if ((absTick & 0x100) !== 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4n) >> 128n;
+  if ((absTick & 0x200) !== 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54n) >> 128n;
+  if ((absTick & 0x400) !== 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3n) >> 128n;
+  if ((absTick & 0x800) !== 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9n) >> 128n;
+  if ((absTick & 0x1000) !== 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825n) >> 128n;
+  if ((absTick & 0x2000) !== 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5n) >> 128n;
+  if ((absTick & 0x4000) !== 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7n) >> 128n;
+  if ((absTick & 0x8000) !== 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6n) >> 128n;
+  if ((absTick & 0x10000) !== 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9n) >> 128n;
+  if ((absTick & 0x20000) !== 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604n) >> 128n;
+  if ((absTick & 0x40000) !== 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98n) >> 128n;
+  if ((absTick & 0x80000) !== 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2n) >> 128n;
 
-  return result;
+  if (tick > 0) ratio = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn / ratio;
+
+  // Round up and shift to Q96
+  return (ratio >> 32n) + (ratio % (1n << 32n) === 0n ? 0n : 1n);
 }

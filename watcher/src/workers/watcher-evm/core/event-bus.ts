@@ -49,17 +49,9 @@ export interface PoolsUpsertBatchPayload {
 // ================================================================================================
 
 export class EventBus extends EventEmitter {
-  private recentOpportunities: Map<string, number> = new Map(); // For deduplication
-  private cleanupInterval: NodeJS.Timeout | null = null;
-
   constructor() {
     super();
     this.setMaxListeners(1024); // Allow many subscribers
-
-    // Start cleanup interval
-    // this.cleanupInterval = setInterval(() => {
-    //   this.cleanupStaleOpportunities();
-    // }, 30000); // Cleanup every 30 seconds
   }
 
   // ================================================================================================
@@ -87,23 +79,12 @@ export class EventBus extends EventEmitter {
     this.emit('pools-upsert-batch', payload);
   }
 
-  /**
-   * 🎯 EMIT ARBITRAGE OPPORTUNITY: Opportunity emission with filtering
-   */
-  emitArbitrageOpportunity(payload: ArbitrageOpportunity): void {
-    // Check for duplicates
-    // const opportunityKey = this.generateOpportunityKey(payload);
-    // const lastEmitted = this.recentOpportunities.get(opportunityKey);
-    // if (lastEmitted && Date.now() - lastEmitted < this.config.dedupTimeWindow) {
-    //   this.logger.warn(`⚠️  [EventBus] Skipping duplicate opportunity: ${payload.id}`);
-    //   return; // Skip duplicate
-    // }
+  emitNewArbitrageOpportunitiesBatch(payload: ArbitrageOpportunity[]): void {
+    this.emit('new-arbitrage-opportunities-batch', payload);
+  }
 
-    // Mark as emitted
-    // this.recentOpportunities.set(opportunityKey, Date.now());
-
-    // Emit the opportunity
-    this.emit('arbitrage-opportunity', payload);
+  emitArbitrageOpportunityEvent(payload: ArbitrageOpportunity): void {
+    this.emit('arbitrage-opportunity-event', payload);
   }
 
   // ================================================================================================
@@ -130,65 +111,18 @@ export class EventBus extends EventEmitter {
     return () => this.off('token-pair-registered', callback); // Return unsubscribe function
   }
 
-  onArbitrageOpportunity(callback: (payload: ArbitrageOpportunity) => void): () => void {
-    this.on('arbitrage-opportunity', callback);
-    return () => this.off('arbitrage-opportunity', callback); // Return unsubscribe function
-  }
-
   onPoolsUpsertBatch(callback: (payload: PoolsUpsertBatchPayload) => void): () => void {
     this.on('pools-upsert-batch', callback);
     return () => this.off('pools-upsert-batch', callback); // Return unsubscribe function
   }
 
-  // ================================================================================================
-  // UTILITY METHODS
-  // ================================================================================================
-
-  // private generateOpportunityKey(opportunity: ArbitrageOpportunity): string {
-  //   const dexPair = [opportunity.entryPool.dexName, opportunity.exitPool.dexName].sort().join('-');
-  //   return `${opportunity.tokenPair.pairKey}:${dexPair}`;
-  // }
-
-  // private cleanupStaleOpportunities(): void {
-  //   const now = Date.now();
-  //   const staleThreshold = this.config.dedupTimeWindow * 2;
-
-  //   for (const [key, timestamp] of this.recentOpportunities.entries()) {
-  //     if (now - timestamp > staleThreshold) {
-  //       this.recentOpportunities.delete(key);
-  //     }
-  //   }
-  // }
-
-  // ================================================================================================
-  // STATISTICS AND MONITORING
-  // ================================================================================================
-
-  /**
-   * 📊 GET EVENT STATISTICS: Get event bus performance metrics
-   */
-  getStatistics() {
-    const listenersByEvent: Record<string, number> = {};
-
-    for (const eventName of this.eventNames()) {
-      listenersByEvent[eventName.toString()] = this.listenerCount(eventName);
-    }
-
-    return {
-      totalListeners: Object.values(listenersByEvent).reduce((sum, count) => sum + count, 0),
-      listenersByEvent,
-      recentOpportunityCount: this.recentOpportunities.size,
-    };
+  onNewArbitrageOpportunitiesBatch(callback: (payload: ArbitrageOpportunity[]) => void): () => void {
+    this.on('new-arbitrage-opportunities-batch', callback);
+    return () => this.off('new-arbitrage-opportunities-batch', callback); // Return unsubscribe function
   }
 
-  /**
-   * 🧹 CLEANUP: Clean up resources
-   */
-  cleanup(): void {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-    }
-    this.removeAllListeners();
-    this.recentOpportunities.clear();
+  onArbitrageOpportunityEvent(callback: (payload: ArbitrageOpportunity) => void): () => void {
+    this.on('arbitrage-opportunity-event', callback);
+    return () => this.off('arbitrage-opportunity-event', callback); // Return unsubscribe function
   }
 }

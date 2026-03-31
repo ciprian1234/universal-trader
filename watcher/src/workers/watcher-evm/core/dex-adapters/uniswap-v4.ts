@@ -207,9 +207,9 @@ export function initPool(
     pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),
     tokenPair: input.tokenPair,
 
-    tickSpacing: input.tickSpacing,
+    feeBps: Number(input.feeBps),
+    tickSpacing: Number(input.tickSpacing),
     hooks: input.hooks,
-    feeBps: input.feeBps,
 
     sqrtPriceX96: 0n,
     tick: 0,
@@ -321,27 +321,7 @@ export async function getTradeQuote(
  * However, hooks can alter this behavior. This assumes NO hooks affecting swap logic.
  */
 export function simulateSwap(pool: DexV4PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
-  const sqrtPriceX96 = pool.sqrtPriceX96;
-  const liquidity = pool.liquidity;
-
-  // TBD: check how hooks affect swap calculations
-  const hooks = pool.hooks || ethers.ZeroAddress;
-  if (hooks !== ethers.ZeroAddress) logger.warn(`⚠️ Pool uses hooks: ${hooks} - simulation accuracy not guaranteed`);
-
-  if (amountIn <= 0n) throw new Error(`Invalid trade amount: ${amountIn}`);
-  if (liquidity <= 0n) throw new Error(`Insufficient liquidity`);
-
-  // Fee calculations in V4 can be dynamic via hooks, but we assume static fee here
-  const feePpm = BigInt(pool.feeBps);
-  const amountInAfterFee = (amountIn * (1_000_000n - feePpm)) / 1_000_000n;
-
-  if (zeroForOne) {
-    const sqrtPriceX96Next = SqrtMath.getNextSqrtPriceFromAmount0RoundingUp(sqrtPriceX96, liquidity, amountInAfterFee, true);
-    return SqrtMath.getAmount1Delta(sqrtPriceX96Next, sqrtPriceX96, liquidity, false);
-  } else {
-    const sqrtPriceX96Next = SqrtMath.getNextSqrtPriceFromAmount1RoundingDown(sqrtPriceX96, liquidity, amountInAfterFee, true);
-    return SqrtMath.getAmount0Delta(sqrtPriceX96, sqrtPriceX96Next, liquidity, false);
-  }
+  return SqrtMath.simulateSwap(pool, amountIn, zeroForOne);
 }
 
 // ================================================================================================
@@ -359,7 +339,7 @@ export function updatePoolFromEvent(pool: DexV4PoolState, event: V4SwapEvent | V
     pool.reserve0 = reserve0;
     pool.reserve1 = reserve1;
     pool.sqrtPriceX96 = event.sqrtPriceX96;
-    pool.tick = event.tick;
+    pool.tick = Number(event.tick);
     pool.liquidity = event.liquidity;
 
     // Update derived fields

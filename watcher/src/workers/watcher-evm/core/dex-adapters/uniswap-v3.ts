@@ -196,8 +196,8 @@ export function initPool(
     protocol: 'v3',
     pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),
     tokenPair: input.tokenPair,
-    feeBps: input.feeBps, // Fee in basis points (500, 3000, 10000)
-    tickSpacing: input.tickSpacing, // Tick spacing for the pool
+    feeBps: Number(input.feeBps), // Fee in basis points (500, 3000, 10000)
+    tickSpacing: Number(input.tickSpacing), // Tick spacing for the pool
 
     // init dynamic fields to zero (updated later)
     sqrtPriceX96: 0n,
@@ -242,8 +242,8 @@ export function updatePoolFromEvent(pool: DexV3PoolState, event: V3SwapEvent | V
     // Update V3 specific state if available
     pool.reserve0 = reserve0;
     pool.reserve1 = reserve1;
-    pool.sqrtPriceX96 = event.sqrtPriceX96!;
-    pool.tick = event.tick!;
+    pool.sqrtPriceX96 = event.sqrtPriceX96;
+    pool.tick = Number(event.tick);
     pool.liquidity = event.liquidity!;
 
     // Update derived fields

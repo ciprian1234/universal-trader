@@ -37,6 +37,11 @@ export class TokenManager {
   // cached list of trusted tokens loaded from cache (e.g. coingecko or uniswap token lists)
   private trustedTokens: TokenOnChain[] = [];
 
+  // anchor tokens and discovert tokens
+  public stablecoinTokens: TokenOnChain[] = [];
+  public anchorTokens: TokenOnChain[] = [];
+  public discoveryTokens: TokenOnChain[] = [];
+
   // Token metadata cache
   private erc20ABI = [
     'function name() view returns (string)',
@@ -85,9 +90,15 @@ export class TokenManager {
     });
 
     // ensure stablecoins, discovery tokens, and price anchor tokens are registered
-    await Promise.all(this.chainConfig.stablecoinTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
-    await Promise.all(this.chainConfig.discoveryTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
-    await Promise.all(this.chainConfig.priceAnchorTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')));
+    this.stablecoinTokens = await Promise.all(
+      this.chainConfig.stablecoinTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')),
+    );
+    this.discoveryTokens = await Promise.all(
+      this.chainConfig.discoveryTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')),
+    );
+    this.anchorTokens = await Promise.all(
+      this.chainConfig.priceAnchorTokens.map((symbol) => this.ensureTokenRegistered(symbol, 'symbol')),
+    );
   }
 
   /**

@@ -272,9 +272,13 @@ export class Blockchain {
   async executeMulticall3(calls: Multical3Input[], chunkSize = 1000) {
     const results: Multical3Result[] = [];
 
+    this.logger.info(`Executing multicall3 with ${calls.length} calls (chunk size: ${chunkSize})`);
     for (let i = 0; i < calls.length; i += chunkSize) {
       const chunk = calls.slice(i, i + chunkSize);
       const chunkResults = await this.multicall3.aggregate3.staticCall(chunk);
+      this.logger.info(
+        `   Multicall3 chunk ${i / chunkSize + 1}/${Math.ceil(calls.length / chunkSize)} executed with ${chunkResults.length} results`,
+      );
       results.push(...chunkResults);
     }
 

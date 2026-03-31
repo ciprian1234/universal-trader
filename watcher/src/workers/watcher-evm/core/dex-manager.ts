@@ -2,7 +2,7 @@ import { TokenManager } from './token-manager';
 import { Blockchain } from './blockchain';
 import { createLogger, printPool, printPoolInEvent, type Logger } from '@/utils';
 import type { ChainConfig } from '@/config/models';
-import type { DexPoolState, DexVenueName } from '@/shared/data-model/layer1';
+import type { DexPoolState, DexV3PoolState, DexV4PoolState, DexVenueName } from '@/shared/data-model/layer1';
 import type { TokenPairOnChain } from '@/shared/data-model/token';
 import type { PoolEvent } from './interfaces';
 import type { WorkerDb } from '../db';
@@ -59,16 +59,14 @@ export class DexManager {
     await this.dexAdapter.init();
   }
 
-  async registerStoredPools(): Promise<void> {
-    const dummyBlock: BlockEntry = { number: 0, receivedTimestamp: Date.now() }; // Used for initial batch emit
-
+  async registerStoredPools(): Promise<DexPoolState[]> {
     // 1. init pools
     const pools = await this.dexAdapter.loadPoolsFromStorageCache();
     for (const pool of pools) this.pools.set(pool.id, pool); // TBD: set if not exist (to avoid overwriting pools updated from events during startup)
     this.logger.info(`📦 Initialized with ${this.pools.size} registred pools from storage`);
 
     // 2. update pools with fresh on-chain data
-    await this.dexAdapter.updatePoolsInBatch(this.pools);
+    await this.dexAdapter.updatePoolsInBatch(this.pools); // TBD: use force overwrite flag
 
     // log dynamic data for all pools after update
     // for (const pool of this.pools.values()) {
@@ -88,7 +86,7 @@ export class DexManager {
     //   this.logger.info(`${printPool(pool)}`, { data }); // pool-log
     // }
     this.logger.info(`✅ Registered and updated ${this.pools.size} pools from storage`);
-    this.eventBus.emitPoolsUpsertBatch({ pools: Array.from(this.pools.values()), block: dummyBlock }); // EMIT: pool-state-upsert-batch for all stored pools
+    return Array.from(this.pools.values()); // return instead of emit
   }
 
   // ================================================================================================
@@ -152,20 +150,30 @@ export class DexManager {
     return foundPools;
   }
 
-  // update only specific pools by their ids (currently called only at reorg events, for affected pools)
-  async updatePoolsByIds(poolIds: Set<string>, block: BlockEntry): Promise<void> {
-    this.logger.info(`🔄 Updating ${poolIds.size} pool states...`);
+  // update only specific pools by their ids
+  async updatePoolsByIds(poolIds: Set<string>, fetchTicks: boolean = false): Promise<DexPoolState[]> {
+    this.logger.info(`🔄 Updating states ${poolIds.size} pool states...`);
     const subset = new Map<string, DexPoolState>();
     for (const poolId of poolIds) {
       const pool = this.pools.get(poolId);
       if (pool) subset.set(poolId, pool);
     }
-
     await this.dexAdapter.updatePoolsInBatch(subset);
 
+    if (fetchTicks) {
+      const clSubset = new Map<string, DexV3PoolState | DexV4PoolState>();
+      for (const id of poolIds) {
+        const pool = this.pools.get(id);
+        if (pool && (pool.protocol === 'v3' || pool.protocol === 'v4')) clSubset.set(id, pool as DexV3PoolState | DexV4PoolState);
+      }
+      this.logger.info(`🔄 Updating ticks for ${clSubset.size} concentrated liquidity pools...`);
+      await this.dexAdapter.updatePoolTicksInBatch_v2(clSubset, 4);
+      this.logger.info(`✅ Updated ticks for ${clSubset.size} concentrated liquidity pools`);
+    }
+
     const updatedPools = Array.from(subset.values());
-    this.logger.info(`✅ Updated ${subset.size} pool states after reorg`);
-    this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block });
+    this.logger.info(`✅ Updated ${subset.size} pool states`);
+    return updatedPools;
   }
 
   // ================================================================================================
@@ -208,6 +216,28 @@ export class DexManager {
       // count of pools with errors
       poolsWithErrors: Array.from(this.pools.values()).filter((pool) => pool.error).length,
     };
+  }
+
+  // ================================================================================================
+  // POOLS OPERATIONS
+  // ================================================================================================
+  displayPool(poolId: string) {
+    const pool = this.pools.get(poolId)!;
+    let data: any;
+    if (pool.protocol === 'v3' || pool.protocol === 'v4') {
+      data = {
+        id: pool.id,
+        r0: pool.reserve0,
+        r1: pool.reserve1,
+        s: pool.sqrtPriceX96,
+        l: pool.liquidity,
+        tC: pool.ticks?.length ? pool.ticks.length : null,
+        lUSD: pool.totalLiquidityUSD,
+      };
+    } else {
+      data = { id: pool.id, r0: pool.reserve0, r1: pool.reserve1, lUSD: pool.totalLiquidityUSD };
+    }
+    this.logger.info(`${printPool(pool)}`, { ...data });
   }
 
   // ================================================================================================

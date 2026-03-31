@@ -74,19 +74,23 @@ class EVMWorker extends BaseWorker {
     });
 
     // "pools-upsert-batch" routing
-    this.eventBus.onPoolsUpsertBatch((payload) => {
-      this.tokenPairManager.handlePoolsUpsertBatch(payload);
-      this.arbitrageOrchestrator.handlePoolsUpsertBatch(payload);
+    this.eventBus.onPoolsUpsertBatch(async (payload) => {
+      await this.arbitrageOrchestrator.handlePoolsUpsertBatch(payload);
+      await this.tokenPairManager.handlePoolsUpsertBatch(payload);
       // TODO: notify main thread about pool state update (after processing the event and updating the state)
       // TODO: notify liquidity graph to update
       // this.sendEventMessage('pool-update', { pool });
     });
 
+    this.eventBus.onNewArbitrageOpportunitiesBatch(async (opportunities) => {
+      await this.flashArbitrageHandler.handleNewArbitrageOpportunitiesBatch(opportunities);
+    });
+
     // new "arbitrage-opportunity" routing
-    this.eventBus.onArbitrageOpportunity(async (opportunity) => {
-      opportunity.foundAtBlock = this.blockManager.getCurrentBlockNumber();
-      await this.db.upsertArbitrageOpportunity(opportunity);
-      this.flashArbitrageHandler.handleNewArbitrageOpportunityEvent(opportunity);
+    this.eventBus.onArbitrageOpportunityEvent(async (opportunity) => {
+      this.logger.info(`🔄 Opportunity updated: ${opportunity.id}, new status: ${opportunity.status}`);
+      if (opportunity.status === 'invalid') return;
+      else await this.db.upsertArbitrageOpportunity(opportunity);
       // this.sendEventMessage('arbitrage-opportunity', { opportunity: payload }); // send event to main thread
     });
   }
@@ -176,7 +180,6 @@ class EVMWorker extends BaseWorker {
     this.flashArbitrageHandler = new FlashArbitrageHandler({
       chainConfig: this.chainConfig,
       eventBus: this.eventBus,
-      db: this.db,
       blockchain: this.blockchain,
       blockManager: this.blockManager,
       dexManager: this.dexManager,
@@ -195,7 +198,7 @@ class EVMWorker extends BaseWorker {
 
     // start listening for block and pool events
     await this.blockManager.init();
-    this.blockManager.listenBlockEvents();
+    // this.blockManager.listenBlockEvents();
     // this.blockManager.listenPoolEvents_depracated();
 
     // optionally create trading pairs between discovery tokens at startup
@@ -203,14 +206,44 @@ class EVMWorker extends BaseWorker {
     // this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
 
     // register and load fresh data for all cached stored pools
-    await this.dexManager.registerStoredPools(); // FETCH + EMIT ALL POOLS
+    const pools = await this.dexManager.registerStoredPools(); // init and update all cached pools
+    await this.tokenPairManager.handlePoolsUpsertBatch({ pools, block: this.blockManager.getCurrentBlock() });
+    await this.arbitrageOrchestrator.handlePoolsUpsertBatch({ pools, block: this.blockManager.getCurrentBlock() });
 
-    // enable arbitrage orchstrator
+    // perform once a full opportunities scan
+    await this.performFullScanForOpportunities();
+
+    // enable arbitrage orchstrator to find opportunities based on pools batch events
     this.eventBus.emitApplicationEvent({ name: 'initialized' });
 
     // set interval to display stats every minute
     this.displayStats(); // display initial stats immediately after startup
     this.displayStatsIntervalId = setInterval(() => this.displayStats(), 60_000);
+  }
+
+  async performFullScanForOpportunities() {
+    // # 1. find initial opportunities based on current pools data (without ticks data)
+    const currentBlock = this.blockManager.getCurrentBlock();
+    const startTokenAddresses = new Set(this.tokenManager.anchorTokens.map((token) => token.address));
+    let opportunities = await this.arbitrageOrchestrator.findOpportunities(startTokenAddresses, currentBlock);
+    this.logger.info(`💰 (#1) Found initial ${opportunities.length} initial opportunities (without ticks data)`);
+
+    // go through all found opportunities and extract pool ids
+    const poolIds = new Set<string>();
+    opportunities.forEach((o) => o.steps.forEach((s) => poolIds.add(s.pool.id)));
+
+    // re-sync all involved pools from found opportunities with fresh data including ticks
+    const updatedPools = await this.dexManager.updatePoolsByIds(poolIds, true);
+    await this.tokenPairManager.handlePoolsUpsertBatch({ pools: updatedPools, block: currentBlock });
+    await this.arbitrageOrchestrator.handlePoolsUpsertBatch({ pools: updatedPools, block: currentBlock });
+    // ==============================================================================
+
+    // # 2. find again opportunities after updating pools with ticks data
+    opportunities = await this.arbitrageOrchestrator.findOpportunities(startTokenAddresses, currentBlock); // find initial opportunities based on cached pools
+    this.logger.info(`💰 (#2) Found ${opportunities.length} opportunities after resync (with ticks data)`);
+
+    // 3. if any opportunities found => forward them for execution
+    if (opportunities.length > 0) await this.flashArbitrageHandler.handleNewArbitrageOpportunitiesBatch(opportunities);
   }
 
   displayStats() {
@@ -234,29 +267,20 @@ class EVMWorker extends BaseWorker {
   }
 
   async stop() {
-    this.logger.info('💾 Saving cache to disk...');
-    await this.cache.save(); // do not force save if cache is not dirty
-    // await this.dexManager.syncRegisteredPoolsToStorage();
+    this.blockManager.cleanup(); // Cleanup BlockManager
+    await this.blockchain.cleanup(); // Cleanup Blockchain
 
     // clear stats display interval
     if (this.displayStatsIntervalId) clearInterval(this.displayStatsIntervalId);
 
-    // Cleanup Prisma
-    // await this.storage.cleanup();
+    this.logger.info('💾 Saving cache to disk...');
+    await this.cache.save(); // do not force save if cache is not dirty
+    await this.dexManager.syncRegisteredPoolsToStorage();
 
     // await this.flashArbitrageHandler.shutdown();
 
-    // Cleanup all services
-    this.eventBus.cleanup();
-
-    // Cleanup BlockManager
-    this.blockManager.cleanup();
-
     // Cleanup GasManager
     // this.gasManager.cleanup();
-
-    // Cleanup Blockchain
-    await this.blockchain.cleanup();
 
     // stop db connection
     await this.db.destroy();

@@ -91,7 +91,7 @@ export class DexAdapter {
   async loadPoolsFromStorageCache(): Promise<DexPoolState[]> {
     const pools: DexPoolState[] = [];
     for (const pool of this.storedPools.values()) {
-      if (pool.protocol !== 'v2') continue; // TESTING ONLY
+      // if (pool.protocol !== 'v2') continue; // TESTING ONLY
       // TODO: filter only pools which  are active/reserves are not zero, no errors, etc..
       const initializedPool = this.initPoolFromStorage(pool, undefined);
       await Promise.all([
@@ -511,7 +511,7 @@ export class DexAdapter {
     }
 
     this.logger.info(
-      `✅ Bitmap tick fetch complete: ${totalInitialized} initialized ticks across ${initializedTicksByPool.size} pools (2 multicalls)`,
+      `✅ Bitmap tick fetch complete: ${totalInitialized} initialized ticks across ${initializedTicksByPool.size} pools`,
     );
   }
 

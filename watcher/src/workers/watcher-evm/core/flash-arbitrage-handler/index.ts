@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { createLogger, type Logger } from '@/utils';
+import { createLogger, displayOpportunity, type Logger } from '@/utils';
 import type { ArbitrageOpportunity } from '../interfaces';
 import { DexProtocolEnum, type Trade, type SwapStepOnContract } from './flash-arbitrage-config';
 import { EventBus } from '../event-bus';
@@ -9,7 +9,6 @@ import type { BlockEntry, BlockManager } from '../block-manager';
 import type { WalletManager } from '../wallet-manager';
 import { FlashbotsService } from './flashbots-service';
 import type { FlashbotsTransactionResponse } from '@flashbots/ethers-provider-bundle';
-import type { WorkerDb } from '../../db';
 import type { DexProtocol } from '@/shared/data-model/layer1';
 import type { DexManager } from '../dex-manager';
 import { FLASH_ARBITRAGE_ABI } from './flash-arbitrage-contract-abi';
@@ -18,7 +17,6 @@ import { isZeroForOne } from '../helpers';
 export type FlashArbitrageHandlerInput = {
   chainConfig: ChainConfig;
   eventBus: EventBus;
-  db: WorkerDb;
   blockchain: Blockchain;
   blockManager: BlockManager;
   dexManager: DexManager;
@@ -49,7 +47,6 @@ export class FlashArbitrageHandler {
   private readonly logger: Logger;
   private readonly chainConfig: ChainConfig;
   private readonly eventBus: EventBus;
-  private readonly db: WorkerDb;
   private readonly dexManager: DexManager;
   private readonly blockchain: Blockchain;
   private readonly blockManager: BlockManager;
@@ -75,7 +72,6 @@ export class FlashArbitrageHandler {
     this.logger = createLogger(`[${input.chainConfig.name}.FlashArbitrageHandler]`);
     this.chainConfig = input.chainConfig;
     this.eventBus = input.eventBus;
-    this.db = input.db;
     this.blockchain = input.blockchain;
     this.blockManager = input.blockManager;
     this.walletManager = input.walletManager;
@@ -139,7 +135,24 @@ export class FlashArbitrageHandler {
     });
   }
 
-  handleNewArbitrageOpportunityEvent(opportunity: ArbitrageOpportunity) {
+  async handleNewArbitrageOpportunitiesBatch(opportunities: ArbitrageOpportunity[]) {
+    // fill foundAtBlock for each opportunity
+    const currentBlock = this.blockManager.getCurrentBlockNumber();
+    opportunities.forEach((o) => (o.foundAtBlock = currentBlock));
+
+    // sort by gross profit descending
+    opportunities.sort((a, b) => b.grossProfitUSD - a.grossProfitUSD);
+    opportunities.forEach((o) => this.logger.info(`PATH "${o.id}" => GrossProfitUSD $${o.grossProfitUSD.toFixed(2)}`));
+
+    // select best non-overlapping opportunities
+    const selectedOpportunities = this.selectNonOverlappingOpportunities(opportunities);
+    selectedOpportunities.forEach((opportunity) => this.handleNewArbitrageOpportunityEvent(opportunity));
+
+    // display selected opportunities
+    selectedOpportunities.forEach((o) => displayOpportunity(this.logger, o));
+  }
+
+  private handleNewArbitrageOpportunityEvent(opportunity: ArbitrageOpportunity) {
     if (this.USE_FLASHBOTS) this.handleParallelExecution(opportunity);
     else this.handleSequentialExecution(opportunity);
   }
@@ -203,7 +216,7 @@ export class FlashArbitrageHandler {
    * Check pending executions on new block
    */
   private async checkPendingExecutions(newBlock: BlockEntry) {
-    const confirmedAtBlock = newBlock.number;
+    const blockNumber = newBlock.number;
 
     for (const [opportunityId, execution] of this.pendingExecutions) {
       try {
@@ -241,17 +254,15 @@ export class FlashArbitrageHandler {
           if (this.USE_FLASHBOTS) {
             // Flashbots bundles can't be cancelled, just mark as invalidated
             this.logger.info(`⏳ Flashbots bundle will expire automatically if not included`);
-            await this.db.pushArbitrageLog(opportunityId, {
+            this.notifyOpportunityUpdate(execution.opportunity, {
               status: 'invalidated',
-              confirmedAtBlock,
-              logEntry: { msg: 'Execution invalidated while pending in Flashbots (will expire automatically)' },
+              logEntry: { blockNumber, msg: 'Execution invalidated while pending in Flashbots (will expire automatically)' },
             });
           } else {
             await this.cancelTransaction(txHash);
-            await this.db.pushArbitrageLog(opportunityId, {
+            this.notifyOpportunityUpdate(execution.opportunity, {
               status: 'cancelled',
-              confirmedAtBlock,
-              logEntry: { msg: 'Execution cancelled while pending in mempool' },
+              logEntry: { blockNumber, msg: 'Execution cancelled while pending in mempool' },
             });
           }
 
@@ -278,7 +289,7 @@ export class FlashArbitrageHandler {
             // TBD: might never happen => investigate further in future if this occurs
             const msg = `Transaction ${txHash} not found in mempool`;
             this.logger.warn(msg);
-            await this.db.pushArbitrageLog(opportunityId, { status: 'dropped', confirmedAtBlock, logEntry: { msg } });
+            await this.notifyOpportunityUpdate(execution.opportunity, { status: 'dropped', logEntry: { blockNumber, msg } });
             this.pendingExecutions.delete(opportunityId);
             // this.processOpportunityQueue(); // process next opportunity in queue (if any)
             continue;
@@ -290,7 +301,10 @@ export class FlashArbitrageHandler {
       } catch (error) {
         const msg = `Error checking pending execution for opportunity ${opportunityId}: ${(error as Error).message}`;
         this.logger.error(msg);
-        await this.db.pushArbitrageLog(opportunityId, { status: 'error', confirmedAtBlock, logEntry: { msg, error } });
+        await this.notifyOpportunityUpdate(execution.opportunity, {
+          status: 'error',
+          logEntry: { blockNumber, msg, error },
+        });
 
         this.pendingExecutions.delete(opportunityId);
         // this.processOpportunityQueue();
@@ -316,13 +330,7 @@ export class FlashArbitrageHandler {
 
       // Validate pre-execution conditions
       const validateResponse = await this.validatePreExecution(opportunity, trade);
-      if (!validateResponse.success) {
-        this.db.pushArbitrageLog(opportunity.id, {
-          status: 'invalid',
-          logEntry: { msg: 'Pre-execution validation failed', error: validateResponse.error, trade },
-        });
-        return;
-      }
+      if (!validateResponse.success) return this.notifyOpportunityUpdate(opportunity, { status: 'invalid' });
 
       // Execute transaction: choose execution method (flashbots or standard)
       if (this.USE_FLASHBOTS) response = await this.executeViaFlashbots(trade, opportunity);
@@ -345,13 +353,10 @@ export class FlashArbitrageHandler {
       });
 
       // push pending log with transaction details
-      await this.db.pushArbitrageLog(opportunity.id, {
-        status: 'pending',
-        logEntry: { submittedAtBlock: nextBlockNumber, trade, response },
-      });
+      this.notifyOpportunityUpdate(opportunity, { status: 'pending', logEntry: { nextBlockNumber, trade, response } });
     } catch (error: any) {
       this.logger.error(`❌ Failed execution of opportunity: ${opportunity.id}`, { error });
-      await this.db.pushArbitrageLog(opportunity.id, { status: 'error', logEntry: { error } });
+      this.notifyOpportunityUpdate(opportunity, { status: 'error', logEntry: { error } });
 
       // delete from pending executions
       this.pendingExecutions.delete(opportunity.id);
@@ -428,14 +433,14 @@ export class FlashArbitrageHandler {
 
     // Simulate bundle and send if successful
     const simulation = await this.flashbotsService.simulateBundle(bundle, targetBlock);
-    this.db.pushArbitrageLog(opportunity.id, { status: 'simulated', logEntry: { simulation } }); // not awaiting for DB write to avoid blocking execution
+    this.notifyOpportunityUpdate(opportunity, { status: 'simulated', logEntry: { simulation } });
     if (!simulation.success) throw new Error(`Bundle simulation failed for "${opportunity.id}": ${simulation.error}`);
     const bundleResponse = await this.flashbotsService.submitBundle(bundle, { targetBlock }); // non-blocking
 
     // !!! Parse transaction to get hash
     const parsedArbitrageTx = ethers.Transaction.from(bundle[0]);
     const txHash = parsedArbitrageTx.hash!;
-    this.db.pushArbitrageLog(opportunity.id, { status: 'submitted', logEntry: { txHash, bundleResponse } }); // not awaiting for DB write to avoid blocking execution
+    this.notifyOpportunityUpdate(opportunity, { status: 'submitted', logEntry: { txHash, bundleResponse } });
 
     return {
       tx: {
@@ -681,7 +686,7 @@ export class FlashArbitrageHandler {
     // update execution status in db
     this.logger.info(`Transaction: https://etherscan.io/tx/${receipt.hash}`);
     const status = receipt.status === 1 ? 'success' : 'revert';
-    await this.db.pushArbitrageLog(opportunity.id, { status, confirmedAtBlock: block.number, logEntry: { receipt, analysis } });
+    await this.notifyOpportunityUpdate(opportunity, { status, logEntry: { blockNumber: block.number, receipt, analysis } });
   }
 
   /**
@@ -762,6 +767,32 @@ export class FlashArbitrageHandler {
       this.logger.error(`❌ Error cancelling transaction ${txHash}:`, error.message);
       return null;
     }
+  }
+
+  // ================================================================================================
+  // HELPERS
+  // ================================================================================================
+  notifyOpportunityUpdate(opportunity: ArbitrageOpportunity, data: { status: string; logEntry?: any }) {
+    opportunity.status = data.status as ArbitrageOpportunity['status'];
+    if (data.logEntry) opportunity.logs.push(data.logEntry);
+    this.eventBus.emitArbitrageOpportunityEvent(opportunity);
+  }
+
+  selectNonOverlappingOpportunities(opportunities: ArbitrageOpportunity[]): ArbitrageOpportunity[] {
+    const usedPools = new Set<string>();
+    const selected: ArbitrageOpportunity[] = [];
+
+    for (const path of opportunities) {
+      const poolKeys = path.steps.map((s) => s.pool.id);
+
+      const hasOverlap = poolKeys.some((k) => usedPools.has(k));
+      if (!hasOverlap) {
+        selected.push(path);
+        poolKeys.forEach((k) => usedPools.add(k));
+      }
+    }
+
+    return selected;
   }
 
   /**

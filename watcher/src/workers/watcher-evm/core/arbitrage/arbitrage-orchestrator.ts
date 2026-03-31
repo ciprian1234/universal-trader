@@ -14,6 +14,7 @@ import type { ChainConfig } from '@/config/models';
 import type { PriceOracle } from '../price-oracle';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import { deltaMs } from '../helpers';
+import type { BlockEntry } from '../block-manager';
 
 // ============================================
 // CONFIGURATION
@@ -39,7 +40,6 @@ export interface ArbitrageStatistics {
 export class ArbitrageOrchestrator {
   private readonly logger;
   private enabled = false;
-  private opportunitiesQueue: ArbitrageOpportunity[] = [];
 
   // Core dependencies
   private readonly chainConfig: ChainConfig;
@@ -109,7 +109,7 @@ export class ArbitrageOrchestrator {
 
   handleApplicationEvent(event: ApplicationEvent) {
     if (event.name === 'initialized') {
-      this.graph.buildGraph();
+      // this.graph.buildGraph();
       this.enabled = true;
       this.logger.info('✅ ArbitrageOrchestrator is enabled and ready');
     }
@@ -129,59 +129,41 @@ export class ArbitrageOrchestrator {
   }
 
   async handlePoolsUpsertBatch(payload: PoolsUpsertBatchPayload): Promise<void> {
-    const blockStr = `(${payload.block.number})`;
     const blockTime = payload.block.receivedTimestamp;
-    this.logger.info(`⏳ Applying ${payload.pools.length} batched events ${blockStr} ${deltaMs(blockTime)}`);
-    if (!this.enabled) return this.logger.warn('⚠️  Service not enabled yet');
-
     try {
-      // 1. Extract updated pools
-      // const updatedPools = this.getUpdatedPools(payload.poolIds);
-      if (payload.pools.length === 0) return;
+      this.logger.info(`⏳ Applying ${payload.pools.length} batched events (${payload.block.number}) ${deltaMs(blockTime)}`);
+      const startTokens = this.graph.updatePools(payload.pools);
 
-      this.logger.debug(`📊 ${payload.pools.length} pools updated`);
-
-      // 2. Update graph incrementally
-      const affectedTokens = this.graph.updatePools(payload.pools);
-
-      // 3. Discover candidate paths
-      const candidatePaths = this.pathFinder.findCycles(affectedTokens);
-      this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths ${blockStr} ${deltaMs(blockTime)}`);
-
-      if (candidatePaths.length === 0) return;
-
-      // 4. Evaluate paths concurrently (batched)
-      const opportunities = await this.evaluatePathsConcurrently(candidatePaths, 30);
-
-      if (opportunities.length === 0) return;
-      this.logger.info(`✅ Found ${opportunities.length} opportunities ${blockStr} ${deltaMs(blockTime)}`);
-
-      // 5. Select non-overlapping paths
-      const selectedPaths = this.selectBestPaths(opportunities);
-
-      // 6. Emit opportunities
-      for (const path of selectedPaths) {
-        this.stats.opportunitiesFound++;
-        this.displayPath(path);
-        this.eventBus.emitArbitrageOpportunity(path);
-      }
+      if (!this.enabled) return this.logger.warn('⚠️ Service not enabled yet, skipping opportunity search');
+      const opportunities = await this.findOpportunities(startTokens, payload.block);
+      if (opportunities.length > 0) await this.eventBus.emitNewArbitrageOpportunitiesBatch(opportunities);
     } catch (error) {
       this.logger.error('❌ Error processing pool events:', { error });
     } finally {
-      this.logger.info(`⏱️ Total execution time ${blockStr} ${deltaMs(blockTime)}`);
+      this.logger.info(`⏱️ Total execution time (${payload.block.number}) ${deltaMs(blockTime)}`);
     }
   }
 
-  async handleInvalidOpportunityEvent(opportunity: ArbitrageOpportunity): Promise<void> {
-    this.logger.warn(`Opportunity ${opportunity.id} marked as invalid by execution service, re-evaluating...`);
+  async findOpportunities(startTokens: Set<string>, blockEntry: BlockEntry): Promise<ArbitrageOpportunity[]> {
+    const blockStr = `(${blockEntry.number})`;
+    const blockTime = blockEntry.receivedTimestamp;
 
-    const poolIds = new Set<string>();
-    opportunity.steps.forEach((s) => poolIds.add(s.pool.id));
+    // 3. Discover candidate paths
+    const candidatePaths = this.pathFinder.findCycles(startTokens);
+    this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths ${blockStr} ${deltaMs(blockTime)}`);
 
-    // fetch latest pool states and update graph
+    if (candidatePaths.length === 0) return [];
 
-    const updatedPools = this.getUpdatedPools(poolIds);
-    this.graph.updatePools(updatedPools);
+    // 4. Evaluate paths concurrently (batched)
+    const opportunities = await this.evaluatePathsConcurrently(candidatePaths, 30);
+
+    if (opportunities.length === 0) return [];
+    this.logger.info(`✅ Found ${opportunities.length} opportunities ${blockStr} ${deltaMs(blockTime)}`);
+
+    this.stats.opportunitiesFound++;
+
+    // 5. handle new opportunities
+    return opportunities;
   }
 
   private getUpdatedPools(poolIds: Set<string>) {
@@ -207,60 +189,6 @@ export class ArbitrageOrchestrator {
     }
 
     return results;
-  }
-
-  private selectBestPaths(opportunities: ArbitrageOpportunity[]): ArbitrageOpportunity[] {
-    // Sort by gross profit descending
-    opportunities.sort((a, b) => b.grossProfitUSD - a.grossProfitUSD);
-    opportunities.forEach((p) => this.logger.info(`PATH "${p.id}" => GrossProfitUSD $${p.grossProfitUSD.toFixed(2)}`));
-
-    // cache all opportunities in a queue and forward to execution service only the non overlapping ones
-    this.opportunitiesQueue.push(...opportunities);
-
-    // TODO: listen for opportunity status updates =>
-    // 1. if invalid => fetch ticks (and dynamic data) and try to re-evaluate => if valid => forward to execution service otherwise discard
-
-    const usedPools = new Set<string>();
-    const selected: ArbitrageOpportunity[] = [];
-
-    for (const path of opportunities) {
-      const poolKeys = path.steps.map((s) => s.pool.id);
-
-      const hasOverlap = poolKeys.some((k) => usedPools.has(k));
-      if (!hasOverlap) {
-        selected.push(path);
-        poolKeys.forEach((k) => usedPools.add(k));
-      }
-    }
-
-    return selected;
-  }
-
-  // ============================================
-  // DISPLAY & STATS
-  // ============================================
-
-  private displayPath(path: ArbitrageOpportunity): void {
-    const hops = path.steps.length;
-    const route = path.steps.map((s) => `${s.tokenIn.symbol}→${s.tokenOut.symbol}`).join(' → ');
-
-    this.logger.info(`🎯 ${hops}-Hop Arbitrage: ${path.id}`);
-    this.logger.info(`   📍 Route: ${route}`);
-    this.logger.info(`   💰 Borrow: ${formatUnits(path.borrowAmount, path.borrowToken.decimals)} ${path.borrowToken.symbol}`);
-
-    for (let i = 0; i < path.steps.length; i++) {
-      const s = path.steps[i];
-      this.logger.info(
-        `   ${i + 1}. ${formatUnits(s.amountIn, s.tokenIn.decimals)} ${s.tokenIn.symbol} → ` +
-          `${formatUnits(s.amountOut, s.tokenOut.decimals)} ${s.tokenOut.symbol} ` +
-          `(${s.pool.venue.name}, impact: ${s.priceImpact.toFixed(2)}%)`,
-      );
-    }
-
-    this.logger.info(`   💵 Gross: $${path.grossProfitUSD.toFixed(4)}`);
-    this.logger.info(`   ⛽ Gas: $${path.gasAnalysis!.totalGasCostUSD.toFixed(4)}`);
-    this.logger.info(`   💰 Net: $${path.netProfitUSD.toFixed(4)}`);
-    this.logger.info(`   📊 Total Slippage: ${path.totalSlippage.toFixed(4)}%\n`);
   }
 
   getStats() {

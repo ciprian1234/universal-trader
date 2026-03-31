@@ -227,7 +227,10 @@ export class BlockManager {
       this.eventBus.emitNewBlock(this.currentBlock);
 
       // 6. Refresh only affected pools — re-fetch their on-chain state via RPC calls
-      if (affectedPoolIds.size > 0) await this.dexManager.updatePoolsByIds(affectedPoolIds, this.currentBlock);
+      if (affectedPoolIds.size > 0) {
+        const updatedPools = await this.dexManager.updatePoolsByIds(affectedPoolIds);
+        this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block: this.currentBlock }); // EMIT: pool-state-upsert-batch for updated pools
+      }
 
       // 7. resume arbitrage checking after recovery
       this.logger.info('✅ Reorg recovery completed. Current block number:', this.currentBlock.number);
@@ -467,6 +470,10 @@ export class BlockManager {
       liquidityDelta: parsed.args.liquidityDelta, // positive = add, negative = remove
       meta,
     };
+  }
+
+  getCurrentBlock(): BlockEntry {
+    return this.currentBlock;
   }
 
   getCurrentBlockNumber(): number {

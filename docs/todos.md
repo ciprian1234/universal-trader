@@ -6,7 +6,7 @@
 - batch pool introspection into a single call
 - batch wallet balances into a single call
 - batch pool discovery into a single call
-- handle mint/brun/v4-liquidity events
+- check how much we can borrow from vault for each anchor token in a single call
 
 - add forceUpdate flag to explicitly overwrite dynamic data if pool its already initialized, othweize skip pool
   (needed because at initialization while fetching pools a new event may arrive and batch call may fetch data from previous block and ovewrite data written by events)
@@ -16,6 +16,7 @@
 
 - if running with localhost provider do not sync pools!!!
 - review gas calculation/analysis and bribe calculation
+- simulate all found opportunities in a single call
 
 ### handle pre-failed execution transaction submission over and over again
 
@@ -34,6 +35,17 @@
 - fetch and keep in sync ticks liquidity for V3 conditionally
 
 ### Integrate with COW Protocol for resolving swaps using best routes
+
+### Simulate swap v3/v4
+
+If there its not liquidity while crossing ticks:
+The swap its partially filled => the amountOut its underestimated and amountRemaining > 0
+=> handle amountRemaining > 0 case outside of simulate swap call
+
+```javascript
+// Change return type to include unconsumed input
+return { amountOut: totalAmountOut, amountUnconsumed: amountRemaining };
+```
 
 ### Contract
 
