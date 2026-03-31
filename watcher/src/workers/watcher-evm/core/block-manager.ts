@@ -193,6 +193,14 @@ export class BlockManager {
     return logs.map((log) => this.parseLog(log));
   }
 
+  async backfillBlockEvents(fromBlock: number, toBlock: number): Promise<void> {
+    this.logger.info(`⏳ Backfilling events from blocks ${fromBlock} to ${toBlock}...`);
+    const filter = { ...this.eventFilter, fromBlock, toBlock };
+    const logs = await this.blockchain.getLogs(filter);
+    const events = logs.map((log) => this.parseLog(log));
+    await this.dexManager.handlePoolEventsBatch(events, { number: toBlock, receivedTimestamp: Date.now() });
+  }
+
   /**
    * 🔄 HANDLE REORG: Recover from chain reorganization
    */

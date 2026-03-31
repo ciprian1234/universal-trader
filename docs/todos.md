@@ -1,6 +1,5 @@
 # TODOS
 
-- debug failed arbitrages
 - implement optimized ticks fetching using multicall3
 - implement blacklist of tokens
 - batch pool introspection into a single call

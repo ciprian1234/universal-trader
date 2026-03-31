@@ -48,10 +48,10 @@ export class LiquidityGraph {
    */
   buildGraph(): void {
     const startTime = Date.now();
-
     this.clear();
 
     const allPools = this.dexManager.getAllPools();
+    this.logger.debug(`Building liquidity graph from ${allPools.size} pools...`);
 
     for (const [_, pool] of allPools) {
       this.addPoolToGraph(pool); // bidirectional edges are added inside this method
@@ -73,9 +73,9 @@ export class LiquidityGraph {
       }
     }
 
-    const duration = Date.now() - startTime;
     const stats = this.getStats();
-    this.logger.debug(`🌐 Built graph: ${stats.tokenCount} tokens, ${stats.edgeCount} edges (${duration}ms)`);
+    const duration = Date.now() - startTime;
+    this.logger.info(`🌐 Built graph: ${stats.tokenCount} tokens, ${stats.edgeCount} edges (${duration}ms)`);
   }
 
   /**
@@ -113,6 +113,10 @@ export class LiquidityGraph {
       this.logger.debug(`Skipping pool with hooks: ${pool.hooks} (ID: ${pool.id}) - simulation accuracy not guaranteed`);
       return false;
     }
+
+    // 4. temp blacklist
+    // if ([pool.tokenPair.token0.address, pool.tokenPair.token1.address].includes('0x518b63da813d46556fea041a88b52e3caa8c16a8'))
+    //   return false;
 
     // Normalize native ETH (address(0)) to WETH for graph node identity
     const graphToken0 = this.normalizeToken(pool.tokenPair.token0);

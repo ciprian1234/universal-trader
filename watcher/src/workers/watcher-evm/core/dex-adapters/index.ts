@@ -155,7 +155,7 @@ export class DexAdapter {
         poolAddress: storedPool.address,
         tokenPair: storedPool.tokenPair,
         venue: storedPool.venue,
-        event: poolEvent as V2SyncEvent,
+        event: poolEvent as V2SyncEvent | undefined,
       });
     } else if (storedPool.protocol === 'v3') {
       initializedPool = V3.initPool(this.blockchain, {
@@ -164,7 +164,7 @@ export class DexAdapter {
         venue: storedPool.venue,
         feeBps: storedPool.feeBps,
         tickSpacing: storedPool.tickSpacing,
-        event: poolEvent as V3SwapEvent,
+        event: poolEvent as V3SwapEvent | undefined,
       });
     } else if (storedPool.protocol === 'v4') {
       initializedPool = V4.initPool(this.blockchain, {
@@ -175,7 +175,7 @@ export class DexAdapter {
         feeBps: storedPool.feeBps,
         tickSpacing: storedPool.tickSpacing,
         hooks: storedPool.hooks,
-        event: poolEvent as V4SwapEvent,
+        event: poolEvent as V4SwapEvent | undefined,
       });
     } else throw new Error(`Unsupported init operation for pool: ${safeStringify(storedPool)}`);
     return initializedPool;

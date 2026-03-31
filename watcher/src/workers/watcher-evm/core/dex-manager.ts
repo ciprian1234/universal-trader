@@ -62,7 +62,7 @@ export class DexManager {
   async registerStoredPools(): Promise<DexPoolState[]> {
     // 1. init pools
     const pools = await this.dexAdapter.loadPoolsFromStorageCache();
-    for (const pool of pools) this.pools.set(pool.id, pool); // TBD: set if not exist (to avoid overwriting pools updated from events during startup)
+    for (const pool of pools) this.pools.set(pool.id, pool);
     this.logger.info(`📦 Initialized with ${this.pools.size} registred pools from storage`);
 
     // 2. update pools with fresh on-chain data

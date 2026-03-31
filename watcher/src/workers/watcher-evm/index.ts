@@ -195,26 +195,33 @@ class EVMWorker extends BaseWorker {
 
     await this.priceOracle.init(); // fetch initial anchor prices and start periodic updates
     await this.dexManager.init(); // init stored pools cache from DB
-
-    // start listening for block and pool events
     await this.blockManager.init();
-    // this.blockManager.listenBlockEvents();
+
     // this.blockManager.listenPoolEvents_depracated();
 
     // optionally create trading pairs between discovery tokens at startup
     // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
     // this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
 
-    // register and load fresh data for all cached stored pools
+    // === PHASE 1: Load and sync all pools (no real-time events yet) ===
+    const initBlockNumber = this.blockManager.getCurrentBlockNumber();
     const pools = await this.dexManager.registerStoredPools(); // init and update all cached pools
     await this.tokenPairManager.handlePoolsUpsertBatch({ pools, block: this.blockManager.getCurrentBlock() });
     await this.arbitrageOrchestrator.handlePoolsUpsertBatch({ pools, block: this.blockManager.getCurrentBlock() });
 
-    // perform once a full opportunities scan
+    // === PHASE 2: Full scan with ticks ===
     await this.performFullScanForOpportunities();
 
-    // enable arbitrage orchstrator to find opportunities based on pools batch events
+    // === PHASE 3: Fill missed events during init and full scan ===
+    const currentBlockNumber = await this.blockchain.getBlockNumber();
+    if (currentBlockNumber > initBlockNumber) {
+      await this.blockManager.backfillBlockEvents(initBlockNumber + 1, currentBlockNumber);
+      this.logger.info(`✅ Backfilled block events from ${initBlockNumber + 1} to ${currentBlockNumber}`);
+    }
+
+    // === PHASE 4: Enable real-time event processing ===
     this.eventBus.emitApplicationEvent({ name: 'initialized' });
+    this.blockManager.listenBlockEvents(); // ← NOW start listening
 
     // set interval to display stats every minute
     this.displayStats(); // display initial stats immediately after startup
