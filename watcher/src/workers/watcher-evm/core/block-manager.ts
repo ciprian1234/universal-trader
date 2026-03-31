@@ -236,7 +236,7 @@ export class BlockManager {
 
       // 6. Refresh only affected pools — re-fetch their on-chain state via RPC calls
       if (affectedPoolIds.size > 0) {
-        const updatedPools = await this.dexManager.updatePoolsByIds(affectedPoolIds);
+        const updatedPools = await this.dexManager.updatePoolsByIds(affectedPoolIds, 8); // update pools with ticks data
         this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block: this.currentBlock }); // EMIT: pool-state-upsert-batch for updated pools
       }
 

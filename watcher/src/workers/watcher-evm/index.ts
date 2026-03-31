@@ -240,7 +240,7 @@ class EVMWorker extends BaseWorker {
     opportunities.forEach((o) => o.steps.forEach((s) => poolIds.add(s.pool.id)));
 
     // re-sync all involved pools from found opportunities with fresh data including ticks
-    const updatedPools = await this.dexManager.updatePoolsByIds(poolIds, true);
+    const updatedPools = await this.dexManager.updatePoolsByIds(poolIds, 4); // update pools with ticks data
     await this.tokenPairManager.handlePoolsUpsertBatch({ pools: updatedPools, block: currentBlock });
     await this.arbitrageOrchestrator.handlePoolsUpsertBatch({ pools: updatedPools, block: currentBlock });
     // ==============================================================================

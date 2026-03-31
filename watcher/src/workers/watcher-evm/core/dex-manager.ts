@@ -151,7 +151,7 @@ export class DexManager {
   }
 
   // update only specific pools by their ids
-  async updatePoolsByIds(poolIds: Set<string>, fetchTicks: boolean = false): Promise<DexPoolState[]> {
+  async updatePoolsByIds(poolIds: Set<string>, ticksRange = 0): Promise<DexPoolState[]> {
     this.logger.info(`🔄 Updating ${poolIds.size} pool states...`);
     const subset = new Map<string, DexPoolState>();
     for (const poolId of poolIds) {
@@ -160,14 +160,14 @@ export class DexManager {
     }
     await this.dexAdapter.updatePoolsInBatch(subset);
 
-    if (fetchTicks) {
+    if (ticksRange > 0) {
       const clSubset = new Map<string, DexV3PoolState | DexV4PoolState>();
       for (const id of poolIds) {
         const pool = this.pools.get(id);
         if (pool && (pool.protocol === 'v3' || pool.protocol === 'v4')) clSubset.set(id, pool as DexV3PoolState | DexV4PoolState);
       }
       this.logger.info(`🔄 Updating ticks for ${clSubset.size} concentrated liquidity pools...`);
-      await this.dexAdapter.updatePoolTicksInBatch_v2(clSubset, 4);
+      await this.dexAdapter.updatePoolTicksInBatch_v2(clSubset, ticksRange);
       this.logger.info(`✅ Updated ticks for ${clSubset.size} concentrated liquidity pools`);
     }
 

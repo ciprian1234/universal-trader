@@ -179,7 +179,7 @@ export class FlashArbitrageHandler {
     opportunities.forEach((o) => o.steps.forEach((s) => poolIds.add(s.pool.id)));
 
     // sync all involved pools from found opportunities with fresh data including ticks
-    const updatedPools = await this.dexManager.updatePoolsByIds(poolIds, true);
+    const updatedPools = await this.dexManager.updatePoolsByIds(poolIds, 16); // update pools with ticks data
 
     this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block: this.blockManager.getCurrentBlock() });
     // NOTE: emit updated pools to trigger graph update and path rediscovery in next cycle
