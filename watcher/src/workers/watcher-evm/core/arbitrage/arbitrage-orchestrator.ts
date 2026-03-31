@@ -83,7 +83,7 @@ export class ArbitrageOrchestrator {
       graph: this.graph,
       tokenManager: this.tokenManager,
       config: {
-        profitThreshold: 1.0001, // 0.01% profit threshold
+        profitThreshold: 1.001, // 0.1% profit threshold (TODO: review this)
         maxHops: input.chainConfig.arbitrage.maxHops,
         maxPathsPerToken: 10000,
         preferredBorrowTokens: this.chainConfig.priceAnchorTokens, // WE CONSIDER DISCOVERY TOKENS AS PREFFERRED BORROW TOKENS

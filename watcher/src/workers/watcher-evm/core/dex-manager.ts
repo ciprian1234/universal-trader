@@ -152,7 +152,7 @@ export class DexManager {
 
   // update only specific pools by their ids
   async updatePoolsByIds(poolIds: Set<string>, fetchTicks: boolean = false): Promise<DexPoolState[]> {
-    this.logger.info(`🔄 Updating states ${poolIds.size} pool states...`);
+    this.logger.info(`🔄 Updating ${poolIds.size} pool states...`);
     const subset = new Map<string, DexPoolState>();
     for (const poolId of poolIds) {
       const pool = this.pools.get(poolId);

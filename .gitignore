@@ -139,8 +139,9 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 
-# Local cache
+# Local cache & logs
 watcher/data/cache
+watcher/data/logs*
 bytecode.txt
 
 # backup files

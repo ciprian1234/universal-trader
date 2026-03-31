@@ -4,6 +4,7 @@
 
 import type { DexPoolState, EventMetadata } from '@/shared/data-model/layer1';
 import type { TokenOnChain } from '@/shared/data-model/token';
+import type { Trade } from './flash-arbitrage-handler/flash-arbitrage-config';
 
 // ════════════════════════════════════════════════════════════
 // POOL EVENTS — worker-internal, never crosses to main thread
@@ -157,6 +158,9 @@ export interface ArbitrageOpportunity {
   steps: SwapStep[];
   gasAnalysis?: GasAnalysis;
   logs: any[];
+
+  // Contract Trade Struct
+  trade?: Trade; // filled when preparing for execution
 
   // Metrics
   totalSlippage: number;

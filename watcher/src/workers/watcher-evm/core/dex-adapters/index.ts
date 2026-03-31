@@ -471,9 +471,7 @@ export class DexAdapter {
       }
     }
 
-    const totalInitialized = tickCallMap.length;
-    this.logger.info(`🎯 Round 2: Fetching ${totalInitialized} initialized ticks for ${initializedTicksByPool.size} pools...`);
-
+    // Execute multicall for ticks
     const tickResults = await this.blockchain.executeMulticall3(tickCalls);
 
     // Collect decoded ticks grouped by pool
@@ -509,10 +507,6 @@ export class DexAdapter {
       const ticks = poolTicks.get(pool.id);
       pool.ticks = ticks ? ticks.sort((a, b) => a.tick - b.tick) : [];
     }
-
-    this.logger.info(
-      `✅ Bitmap tick fetch complete: ${totalInitialized} initialized ticks across ${initializedTicksByPool.size} pools`,
-    );
   }
 
   getFeePercent(pool: DexPoolState): number {

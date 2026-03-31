@@ -88,7 +88,7 @@ class EVMWorker extends BaseWorker {
 
     // new "arbitrage-opportunity" routing
     this.eventBus.onArbitrageOpportunityEvent(async (opportunity) => {
-      this.logger.info(`🔄 Opportunity updated: ${opportunity.id}, new status: ${opportunity.status}`);
+      // this.logger.debug(`🔄 Opportunity updated: ${opportunity.id}, new status: ${opportunity.status}`);
       if (opportunity.status === 'invalid') return;
       else await this.db.upsertArbitrageOpportunity(opportunity);
       // this.sendEventMessage('arbitrage-opportunity', { opportunity: payload }); // send event to main thread

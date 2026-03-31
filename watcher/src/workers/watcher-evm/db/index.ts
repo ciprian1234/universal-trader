@@ -97,21 +97,9 @@ export class WorkerDb {
       await this.sql`
       CREATE TABLE IF NOT EXISTS arbitrage_opportunities (
         "id"                TEXT      PRIMARY KEY,
-        "chainId"           INTEGER   NOT NULL,
         "status"            TEXT      NOT NULL,
-
-        "grossProfitToken"  TEXT      NOT NULL,
         "grossProfitUSD"    FLOAT     NOT NULL,
-        "netProfitUSD"      FLOAT     NOT NULL,
-        "borrowToken"       JSONB     NOT NULL,
-        "borrowAmount"      TEXT      NOT NULL,
-
-        "steps"             JSONB     NOT NULL,
-        "gasAnalysis"       JSONB     NOT NULL,
-        "logs"              JSONB     NOT NULL DEFAULT '[]',
-        
-        "foundAtBlock"      INTEGER   NOT NULL,
-        "confirmedAtBlock"  INTEGER   DEFAULT NULL,
+        "state"             JSONB     NOT NULL,
         "createdAt"         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         "updatedAt"         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -227,36 +215,21 @@ export class WorkerDb {
   // ================================================================================================
   async upsertArbitrageOpportunity(opportunity: ArbitrageOpportunity): Promise<void> {
     await this.sql`
-      INSERT INTO arbitrage_opportunities (
-        "id", "chainId", "status", 
-        "grossProfitToken", "grossProfitUSD", "netProfitUSD", "borrowToken", "borrowAmount", 
-        "steps", "gasAnalysis", "foundAtBlock"
-      )
+      INSERT INTO arbitrage_opportunities ("id", "status", "grossProfitUSD", "state")
       VALUES (
         ${opportunity.id},
-        ${opportunity.chainId},
         ${opportunity.status},
-
-        ${`${opportunity.grossProfitToken.toString()}n`},
         ${opportunity.grossProfitUSD},
-        ${opportunity.netProfitUSD},
-        ${opportunity.borrowToken},
-        ${`${opportunity.borrowAmount.toString()}n`},
-
-        ${serializeObject(opportunity.steps)},
-        ${serializeObject(opportunity.gasAnalysis)},
-        ${opportunity.foundAtBlock || 0}
+        ${serializeObject(opportunity)}
       )
       ON CONFLICT ("id") DO UPDATE SET
         "status" = EXCLUDED."status",
-        "netProfitUSD" = EXCLUDED."netProfitUSD",
-        "gasAnalysis" = EXCLUDED."gasAnalysis",
-        "foundAtBlock" = EXCLUDED."foundAtBlock",
+        "state" = EXCLUDED."state",
         "updatedAt" = CURRENT_TIMESTAMP
     `;
   }
 
-  async pushArbitrageLog(
+  async pushArbitrageLog_deprecated(
     opportunityId: string,
     input: { logEntry: any; status: string; confirmedAtBlock?: number },
   ): Promise<void> {
