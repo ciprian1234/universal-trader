@@ -30,7 +30,7 @@ export function sqrtPriceX96ToPrice(sqrtPriceX96: bigint, decimals0: number, dec
  * Its just an approximation based on the current sqrtPriceX96 and liquidity
  */
 export function calculateVirtualReserves(sqrtPriceX96: bigint, liquidity: bigint): { reserve0: bigint; reserve1: bigint } {
-  if (liquidity === 0n) return { reserve0: 0n, reserve1: 0n };
+  if (liquidity === 0n || sqrtPriceX96 === 0n) return { reserve0: 0n, reserve1: 0n };
 
   // virtual reserves based on the current sqrtPrice and liquidity
   const reserve0 = (liquidity * Q96) / sqrtPriceX96;
