@@ -12,7 +12,8 @@ import type { FlashbotsTransactionResponse } from '@flashbots/ethers-provider-bu
 import type { DexProtocol } from '@/shared/data-model/layer1';
 import type { DexManager } from '../dex-manager';
 import { FLASH_ARBITRAGE_ABI } from './flash-arbitrage-contract-abi';
-import { isZeroForOne } from '../helpers';
+import { denormalizeTokenAddr } from '../helpers';
+import type { PriceOracle } from '../price-oracle';
 
 export type FlashArbitrageHandlerInput = {
   chainConfig: ChainConfig;
@@ -21,6 +22,7 @@ export type FlashArbitrageHandlerInput = {
   blockManager: BlockManager;
   dexManager: DexManager;
   walletManager: WalletManager;
+  priceOracle: PriceOracle;
 };
 
 interface ExecuteTransactionResponse {
@@ -52,6 +54,7 @@ export class FlashArbitrageHandler {
   private readonly contract: ethers.Contract | null = null;
   private readonly walletManager: WalletManager;
   private readonly flashbotsService?: FlashbotsService; // OPTIONAL Flashbots service
+  private readonly priceOracle: PriceOracle;
 
   private readonly abiCoder = new ethers.AbiCoder();
 
@@ -59,6 +62,8 @@ export class FlashArbitrageHandler {
   private readonly ENABLE_FLASH_ARBITRAGE: boolean;
   private readonly USE_FLASHBOTS: boolean;
   private readonly MIN_PRIORITY_FEE: bigint;
+  private readonly WETH_ADDR: string;
+  private readonly MAX_BRIBE_USD: number; // max bribe for direct payment opportunities
 
   // SAFE STRATEGY: Queue for pending opportunities
   private opportunityQueue: QueuedOpportunity[] = [];
@@ -75,11 +80,14 @@ export class FlashArbitrageHandler {
     this.blockManager = input.blockManager;
     this.walletManager = input.walletManager;
     this.dexManager = input.dexManager;
+    this.priceOracle = input.priceOracle;
 
     // config
     this.ENABLE_FLASH_ARBITRAGE = true;
     this.USE_FLASHBOTS = this.chainConfig.flashbotsEnabled;
     this.MIN_PRIORITY_FEE = this.chainConfig.minPriorityFee;
+    this.WETH_ADDR = this.chainConfig.wrappedNativeTokenAddress;
+    this.MAX_BRIBE_USD = 20;
 
     // Create contract instance only if flash arbitrage is enabled
     if (!this.ENABLE_FLASH_ARBITRAGE) return;
@@ -180,6 +188,8 @@ export class FlashArbitrageHandler {
 
     // sync all involved pools from found opportunities with fresh data including ticks
     await this.dexManager.updatePoolsByIds(poolIds, 16); // update pools with ticks data
+    // TODO: UPDATE graph
+    // TODO: re-evaluate opportunities after update
     // NOTE: do not emit event becaue it may cause infinite loop if same invalid opportunity its detected again
   }
 
@@ -386,7 +396,7 @@ export class FlashArbitrageHandler {
    */
   private async executeViaStandardTx(opportunity: ArbitrageOpportunity): Promise<ExecuteTransactionResponse> {
     this.logger.info('🌐 Executing via standard transaction (public mempool)...');
-    const tx = await this.contract!.executeTrade(opportunity.trade!, opportunity.gasAnalysis!.gasTxSettings);
+    const tx = await this.contract!.executeTrade(opportunity.trade!, opportunity.gasAnalysis.gasTxSettings);
     return { tx, bundle: null, bundleResponse: null };
   }
 
@@ -403,48 +413,34 @@ export class FlashArbitrageHandler {
     const tx = await this.contract!.executeTrade.populateTransaction(opportunity.trade!);
 
     // Step 1: Define gas parameters
-    const gasAnalysis = opportunity.gasAnalysis!;
-    const BASE_FEE_BUFFER_PERCENT = 125; // 125% = 25% buffer (protects against 3-4 block spikes)
-    const bufferedBaseFee = (gasAnalysis.baseFeePerGas * BigInt(BASE_FEE_BUFFER_PERCENT)) / 100n;
-    const gasPricePerUnit = bufferedBaseFee + this.MIN_PRIORITY_FEE;
+    const gasTxSettings = opportunity.gasAnalysis.gasTxSettings;
+    const gasCostUSD = opportunity.gasAnalysis.gasCostUSD.toFixed(2);
 
-    // create bundle array with unsignedArbitrageTx
-    const unsignedBundle: ethers.TransactionRequest[] = [
-      {
-        ...tx,
-        nonce,
-        chainId: this.blockchain.chainId,
-        gasLimit: gasAnalysis.gasTxSettings.gasLimit,
-        maxFeePerGas: gasPricePerUnit,
-        maxPriorityFeePerGas: this.MIN_PRIORITY_FEE,
-        type: 2, // EIP-1559
-      },
-    ];
-
-    // if bribe not handle inside contract => add separate transaction for coinbase bribe
-    if (opportunity.trade!.coinbaseBribe === 0n) {
-      this.logger.warn('⚠️ Bribe not handled inside contract, adding separate transaction for coinbase bribe');
-
-      // Create coinbase bribe transaction
-      const unsignedBribeTx = {
-        to: ethers.ZeroAddress, // Placeholder (builder sets block.coinbase)
-        value: this.calculateBribeWEI(opportunity),
-        data: '0x',
-        nonce: nonce + 1,
-        chainId: this.blockchain.chainId,
-        gasLimit: 21000n,
-        maxFeePerGas: gasPricePerUnit,
-        maxPriorityFeePerGas: this.MIN_PRIORITY_FEE, // Same as arbitrage tx
-        type: 2, // EIP-1559
-      };
-
-      unsignedBundle.push(unsignedBribeTx);
+    let bribeWEI = 0n;
+    if (opportunity.trade?.internalBribeBps) {
+      const bribePercent = Number(opportunity.trade.internalBribeBps) / 10000;
+      this.logger.info(`💰 Opportunity bribe handled internally from profit, paying ${bribePercent.toFixed(2)}% bribe`);
     } else {
-      this.logger.info('✅ Bribe handled inside flash arbitrage contract, no separate transaction needed');
+      bribeWEI = opportunity.bribe?.bribeWEI ?? 0n;
+      this.logger.info(`💰 Paying bribe via direct ETH transfer: ${ethers.formatEther(bribeWEI)} ETH`);
     }
 
+    this.logger.info(`💰 Opportunity ${opportunity.id}, gasCost: $${gasCostUSD} USD, bribe: ${ethers.formatEther(bribeWEI)} ETH`);
+
+    // create bundle array with unsignedArbitrageTx
+    const unsignedArbitrageTx: ethers.TransactionRequest = {
+      ...tx,
+      nonce,
+      value: bribeWEI,
+      chainId: this.blockchain.chainId,
+      gasLimit: gasTxSettings.gasLimit,
+      maxFeePerGas: gasTxSettings.maxFeePerGas,
+      maxPriorityFeePerGas: gasTxSettings.maxPriorityFeePerGas,
+      type: 2, // EIP-1559
+    };
+
     // Create bundle with signed transactions
-    const bundle = await Promise.all(unsignedBundle.map((tx) => signer.signTransaction(tx)));
+    const bundle = [await signer.signTransaction(unsignedArbitrageTx)];
     const targetBlock = this.blockManager.getCurrentBlockNumber() + 1;
 
     // Simulate bundle and send if successful
@@ -485,78 +481,51 @@ export class FlashArbitrageHandler {
    * NOTE: bribe can exceed wallet balance only if borrowToken is WETH!!!
    * otherwise cap bribe to wallet balance (or set to 0 if balance is too low) to avoid failed transactions due to insufficient funds
    */
-  private calculateBribeWEI(opportunity: ArbitrageOpportunity): bigint {
-    const gasAnalysis = opportunity.gasAnalysis!;
+  private calculateSpendingsAndProfit(opportunity: ArbitrageOpportunity, bribeBps: bigint = 0n) {
+    const tokenOut = opportunity.borrowToken; // tokenOut is the same as borrowToken because its a cyclic swap (first token in = last token out)
+    const nativeTokenPriceUSD = this.priceOracle.getPriceUSD(this.WETH_ADDR)!;
+    const usdPriceInNativeToken = 1 / nativeTokenPriceUSD;
 
-    // =================== BRIBE CALCULATION ======================
-    // Step 1: Define gas parameters
-    const BASE_FEE_BUFFER_PERCENT = 125; // 125% = 25% buffer (protects against 3-4 block spikes)
-    const bufferedBaseFee = (gasAnalysis.baseFeePerGas * BigInt(BASE_FEE_BUFFER_PERCENT)) / 100n;
-    const gasPricePerUnit = bufferedBaseFee + this.MIN_PRIORITY_FEE;
+    const grossProfitUSD = opportunity.grossProfitUSD;
+    const { gasCostWEI } = opportunity.gasAnalysis;
 
-    // Step 2: Calculate total gas costs (base fee + minimal priority)
-    const totalGasCostWEI = gasAnalysis.gasEstimate * gasPricePerUnit;
-
-    // Step 4: Calculate bribe budget after gas costs
-    const gasBudgetWEI = gasAnalysis.gasData.gasBudgetWEI as bigint; // gas budget based on gross profit
-    const budgetAfterGasCostWEI = gasBudgetWEI - totalGasCostWEI;
-
-    // Validate budget is positive
-    if (budgetAfterGasCostWEI <= 0n) {
-      throw new Error(
-        `Insufficient budget for bribe: budget=${ethers.formatEther(gasBudgetWEI)} ETH,  gas=${ethers.formatEther(totalGasCostWEI)} ETH`,
-      );
+    // calculate bribe from leftover profit after gas costs
+    const gasCostUSD = this.priceOracle.calculateUSDValue(this.WETH_ADDR, gasCostWEI);
+    const leftoverProfitUSD = grossProfitUSD - gasCostUSD;
+    if (leftoverProfitUSD <= 0) {
+      this.logger.warn(`Leftover profit for ${opportunity.id} is negative after gas costs`, { grossProfitUSD, gasCostUSD });
+      throw new Error(`Leftover profit negative for: ${opportunity.id}`);
     }
 
-    // allocate 80% of remaining budget to bribe
-    let bribeWEI = (budgetAfterGasCostWEI * 8n) / 10n;
-    if (bribeWEI > ethers.parseEther('0.025')) bribeWEI = ethers.parseEther('0.025'); // cap bribe to 0.025 ETH for now
-
-    this.logger.info('💰 Bribe Calculation Breakdown:');
-    this.logger.info(`   Gas Budget: ${ethers.formatEther(gasBudgetWEI)} ETH`);
-    this.logger.info(`   Total Gas Cost: ${ethers.formatEther(totalGasCostWEI)} ETH`);
-    this.logger.info(`   Budget After Gas: ${ethers.formatEther(budgetAfterGasCostWEI)} ETH`);
-
-    // Step 5: Calculate net profit
-    const profitETH = opportunity.grossProfitUSD / gasAnalysis.gasData.nativeTokenPriceUSD;
-
-    const totalCostWEI = totalGasCostWEI + bribeWEI; // gas cost + bribe
-    const totalCostETH = Number(totalCostWEI) / 1e18;
-    const netProfitETH = profitETH - totalCostETH;
-    const netProfitUSD = netProfitETH * gasAnalysis.gasData.nativeTokenPriceUSD;
-
-    // Log final pricing
-    this.logger.info('📊 Final Bundle Pricing:');
-    this.logger.info(`   Gross Profit: ${profitETH.toFixed(6)} ETH ($${opportunity.grossProfitUSD.toFixed(2)})`);
-    this.logger.info(
-      `   Coinbase Bribe: ${ethers.formatEther(bribeWEI)} ETH ($${((Number(bribeWEI) / 1e18) * gasAnalysis.gasData.nativeTokenPriceUSD).toFixed(2)})`,
-    );
-    this.logger.info(`   Total Cost: ${totalCostETH.toFixed(6)} ETH`);
-    this.logger.info(`   Net Profit: ${netProfitETH.toFixed(6)} ETH ($${netProfitUSD.toFixed(2)})`);
-    this.logger.info(`   ROI: ${((netProfitETH / totalCostETH) * 100).toFixed(1)}%`);
-
-    // Validate still profitable
-    if (netProfitETH <= 0) {
-      throw new Error(
-        `Not profitable after bribe: profit=${profitETH.toFixed(6)} ETH, cost=${totalCostETH.toFixed(6)} ETH, net=${netProfitETH.toFixed(6)} ETH`,
-      );
+    let bribeCostUSD = (leftoverProfitUSD * Number(bribeBps)) / 10000;
+    if (tokenOut.symbol !== 'WETH' && bribeCostUSD > this.MAX_BRIBE_USD) {
+      const msg = `calculated bribe $${bribeCostUSD.toFixed(2)} > $${this.MAX_BRIBE_USD}, capping to max`;
+      this.logger.warn(`Opportunity ${opportunity.id} has tokenOut: ${tokenOut.symbol}, ${msg}`);
+      bribeCostUSD = this.MAX_BRIBE_USD;
     }
+    const bribeCostETH = bribeCostUSD * usdPriceInNativeToken;
+    const bribeCostWEI = BigInt(Math.floor(bribeCostETH * 1e18));
 
-    // if borrow token is WETH we can affort to pay higher bribe then wallet balance
-    if (opportunity.borrowToken.symbol === 'WETH') return bribeWEI;
-    else {
-      // pay attention to balance to avoid failed transactions due to insufficient funds
-      const ETH_WALLET_BALANCE_CAP = this.walletManager.getNativeTokenBalance() / 3n; // use at most 33% of native token balance for bribe
-      if (bribeWEI > ETH_WALLET_BALANCE_CAP) {
-        this.logger.warn(
-          `⚠️ Calculated bribe (${ethers.formatEther(bribeWEI)} ETH) exceeds wallet balance cap (${ethers.formatEther(
-            ETH_WALLET_BALANCE_CAP,
-          )} ETH). Capping bribe to balance limit to avoid failed transaction due to insufficient funds.`,
-        );
-        return ETH_WALLET_BALANCE_CAP;
-      }
-      return bribeWEI;
-    }
+    const totalCostsWEI = gasCostWEI + bribeCostWEI;
+    const totalCostsUSD = this.priceOracle.calculateUSDValue(this.WETH_ADDR, totalCostsWEI);
+
+    const tokenOutPriceUSD = this.priceOracle.getPriceUSD(tokenOut.address);
+    if (!tokenOutPriceUSD) throw new Error(`Price not available for tokenOut ${tokenOut.symbol} (${tokenOut.address})`);
+    const totalCostInTokenOut = totalCostsUSD / tokenOutPriceUSD; // (human readable amount = > we need to convert to raw amount)
+    const totalCostInTokenOutRaw = BigInt(totalCostInTokenOut * 1e18);
+
+    return {
+      gasCostUSD,
+      bribeCostUSD,
+      gasCostWEI,
+      bribeCostWEI,
+      bribeCostETH,
+
+      totalCostWEI: totalCostsWEI,
+      totalCostUSD: totalCostsUSD,
+      totalCostInTokenOut: totalCostInTokenOutRaw,
+      netProfitUSD: grossProfitUSD - totalCostsUSD,
+    };
   }
 
   /**
@@ -566,37 +535,47 @@ export class FlashArbitrageHandler {
     // go trough each swap step and build Trade struct
     const swaps: SwapStepOnContract[] = [];
     for (const step of opportunity.steps) {
+      const poolTokenPair = step.pool.tokenPair;
+
       swaps.push({
         dexProtocol: FlashArbitrageHandler.getDexTypeEnumValueFromPool(step.pool.protocol),
         poolAddress: step.pool.address,
-        zeroForOne: isZeroForOne(step.tokenIn.address, step.pool),
-        tokenIn: step.tokenIn.address, // normalized tokenIn from graph (if ETH => WETH)
-        tokenOut: step.tokenOut.address, // normalized tokenOut from graph (if ETH => WETH)
-        amountIn: step.amountIn,
+        poolTokens: [step.pool.tokenPair.token0.address, step.pool.tokenPair.token1.address],
+        tokenIn: denormalizeTokenAddr(poolTokenPair, step.tokenIn.address, this.WETH_ADDR),
+        tokenOut: denormalizeTokenAddr(poolTokenPair, step.tokenOut.address, this.WETH_ADDR),
+        amountSpecified: 0n, // calculated by contract based on borrow amount and swap path
         amountOutMin: 0n, // don't care about min output on entry swap
-        feeBps: step.pool.feeBps,
+        poolFee: step.pool.feeBps,
 
         // extra params for other DEX protocols (not used for now => set to 0 or empty)
         extraData:
           step.pool.protocol === 'v4'
-            ? this.abiCoder.encode(
-                ['address', 'address', 'address', 'int24'],
-                [step.pool.tokenPair.token0.address, step.pool.tokenPair.token1.address, step.pool.hooks, step.pool.tickSpacing],
-              )
+            ? this.abiCoder.encode(['address', 'int24'], [step.pool.hooks, step.pool.tickSpacing])
             : '0x',
       });
     }
 
-    // on last swap, set amountOutMin based on opportunity grossProfitUSD (slippage already accounted for)
-    // NOTE: needed to protect against front-running or slippage during execution
-    const amountOutMin = opportunity.borrowAmount + (opportunity.grossProfitToken * 5n) / 10n; // set min output based on min 50% of gross profit
-    swaps[swaps.length - 1].amountOutMin = amountOutMin;
-
-    let coinbaseBribe = 0n;
-    if (this.USE_FLASHBOTS && opportunity.borrowToken.symbol === 'WETH') coinbaseBribe = this.calculateBribeWEI(opportunity);
+    const result = this.calculateSpendingsAndProfit(opportunity, this.USE_FLASHBOTS ? 9000n : 0n); // if using Flashbots, allocate up to 90% of profit for bribe
+    let minProfitTokenOut = 0n;
+    opportunity.bribe = { internalBribeBps: 0n, bribeWEI: 0n, result }; // default no bribe
+    if (this.USE_FLASHBOTS) {
+      if (opportunity.borrowToken.symbol === 'WETH') {
+        opportunity.bribe.internalBribeBps = 9000n; // allocate 90% of profit to bribe if output is ETH/WETH (because we can pay bribe directly from profit)
+        minProfitTokenOut = result.gasCostWEI; // since minProfitTokenOut will be be the leftoverProfit after bribe (handled internally) => we need to cover onyl gasCosts
+      } else {
+        opportunity.bribe.bribeWEI = result.bribeCostWEI; // NOTE: in this case bribe is paid separately via direct ETH transfer,
+        minProfitTokenOut = result.totalCostInTokenOut;
+      }
+    }
 
     // fill opportunity trade execution struct
-    opportunity.trade = { swaps, coinbaseBribe };
+    opportunity.trade = {
+      swaps,
+      borrowToken: opportunity.borrowToken.address,
+      borrowAmount: opportunity.borrowAmount,
+      internalBribeBps: opportunity.bribe.internalBribeBps,
+      minProfitTokenOut,
+    };
   }
 
   /**
@@ -675,16 +654,9 @@ export class FlashArbitrageHandler {
       },
 
       // gas usage
-      gasUsage: {
-        expectedGasUsed: opportunity.gasAnalysis?.gasData.gasEstimate,
+      gas: {
+        expectedGasUsed: opportunity.gasAnalysis.gasEstimate,
         actualGasUsed: receipt.gasUsed,
-      },
-
-      // gas price
-      gasPrice: {
-        networkBaseFeePerGas: opportunity.gasAnalysis?.gasData.baseFeePerGas,
-        maxPriorityFeePerGas: opportunity.gasAnalysis?.gasTxSettings.maxPriorityFeePerGas,
-        finalGasPricePerUnit: opportunity.gasAnalysis?.gasData.finalGasPricePerUnit,
         actualGasPrice: receipt.gasPrice,
       },
     };

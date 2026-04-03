@@ -2,9 +2,9 @@ import type { WeightedEdge } from './interfaces';
 import { getFeeMultiplier } from '@/utils';
 import type { Logger } from '@/utils';
 import type { DexManager } from '../dex-manager';
-import type { TokenOnChain } from '@/shared/data-model/token';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import { ethers } from 'ethers';
+import { normalizeToGraphToken } from '../helpers';
 
 export type LiquidityGraphConfig = {
   wrappedNativeTokenAddress: string;
@@ -28,6 +28,7 @@ export class LiquidityGraph {
   private readonly logger: Logger;
   private readonly dexManager: DexManager;
   private readonly config: LiquidityGraphConfig;
+  private readonly WETH_ADDRESS: string;
 
   // Adjacency list: tokenAddress -> outgoing edges
   private readonly edges = new Map<string, WeightedEdge[]>();
@@ -37,6 +38,7 @@ export class LiquidityGraph {
     this.logger = input.logger;
     this.dexManager = input.dexManager;
     this.config = input.config;
+    this.WETH_ADDRESS = this.config.wrappedNativeTokenAddress;
   }
 
   // ============================================
@@ -83,14 +85,15 @@ export class LiquidityGraph {
    */
   updatePools(updatedPools: DexPoolState[]): Set<string> {
     const affectedTokens = new Set<string>();
+    const wethAddr = this.config.wrappedNativeTokenAddress;
 
     for (const pool of updatedPools) {
       this.removePoolFromGraph(pool);
 
       if (this.addPoolToGraph(pool)) {
         // Track which tokens were affected (for path discovery optimization)
-        affectedTokens.add(this.normalizeToken(pool.tokenPair.token0).address);
-        affectedTokens.add(this.normalizeToken(pool.tokenPair.token1).address);
+        affectedTokens.add(normalizeToGraphToken(pool.tokenPair.token0, this.WETH_ADDRESS).address);
+        affectedTokens.add(normalizeToGraphToken(pool.tokenPair.token1, this.WETH_ADDRESS).address);
       }
     }
 
@@ -119,8 +122,8 @@ export class LiquidityGraph {
     //   return false;
 
     // Normalize native ETH (address(0)) to WETH for graph node identity
-    const graphToken0 = this.normalizeToken(pool.tokenPair.token0);
-    const graphToken1 = this.normalizeToken(pool.tokenPair.token1);
+    const graphToken0 = normalizeToGraphToken(pool.tokenPair.token0, this.WETH_ADDRESS);
+    const graphToken1 = normalizeToGraphToken(pool.tokenPair.token1, this.WETH_ADDRESS);
 
     // Add forward edge: token0 -> token1
     this.addWeightedEdge({
@@ -166,8 +169,8 @@ export class LiquidityGraph {
   }
 
   private removePoolFromGraph(pool: DexPoolState): void {
-    const token0Key = this.normalizeToken(pool.tokenPair.token0).address;
-    const token1Key = this.normalizeToken(pool.tokenPair.token1).address;
+    const token0Key = normalizeToGraphToken(pool.tokenPair.token0, this.WETH_ADDRESS).address;
+    const token1Key = normalizeToGraphToken(pool.tokenPair.token1, this.WETH_ADDRESS).address;
 
     // Remove edges in both directions
     this.removeEdgeForPool(token0Key, pool.id);
@@ -185,15 +188,6 @@ export class LiquidityGraph {
     } else {
       this.edges.set(tokenKey, filtered);
     }
-  }
-
-  // if token is ETH => normalize to WETH for graph consistency
-  private normalizeToken(token: TokenOnChain): TokenOnChain {
-    // NOTE: marked symbol as nETH for easier debugging, but address is the important part for graph identity
-    if (token.address === ethers.ZeroAddress) {
-      return { ...token, address: this.config.wrappedNativeTokenAddress };
-    }
-    return token;
   }
 
   private clear(): void {

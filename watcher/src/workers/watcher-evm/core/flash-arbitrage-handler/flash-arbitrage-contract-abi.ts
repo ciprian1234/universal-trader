@@ -21,25 +21,6 @@ export const FLASH_ARBITRAGE_ABI = [
     type: 'error',
   },
   {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: true,
-        internalType: 'address',
-        name: 'token',
-        type: 'address',
-      },
-      {
-        indexed: false,
-        internalType: 'uint256',
-        name: 'profit',
-        type: 'uint256',
-      },
-    ],
-    name: 'TradeExecuted',
-    type: 'event',
-  },
-  {
     inputs: [
       {
         internalType: 'int256',
@@ -90,6 +71,11 @@ export const FLASH_ARBITRAGE_ABI = [
             type: 'address',
           },
           {
+            internalType: 'address[]',
+            name: 'poolTokens',
+            type: 'address[]',
+          },
+          {
             internalType: 'address',
             name: 'tokenIn',
             type: 'address',
@@ -100,9 +86,9 @@ export const FLASH_ARBITRAGE_ABI = [
             type: 'address',
           },
           {
-            internalType: 'uint256',
-            name: 'amountIn',
-            type: 'uint256',
+            internalType: 'int256',
+            name: 'amountSpecified',
+            type: 'int256',
           },
           {
             internalType: 'uint256',
@@ -111,13 +97,8 @@ export const FLASH_ARBITRAGE_ABI = [
           },
           {
             internalType: 'uint24',
-            name: 'feeBps',
+            name: 'poolFee',
             type: 'uint24',
-          },
-          {
-            internalType: 'bool',
-            name: 'zeroForOne',
-            type: 'bool',
           },
           {
             internalType: 'bytes',
@@ -131,7 +112,13 @@ export const FLASH_ARBITRAGE_ABI = [
       },
     ],
     name: 'executeDirectSwap',
-    outputs: [],
+    outputs: [
+      {
+        internalType: 'uint256',
+        name: '',
+        type: 'uint256',
+      },
+    ],
     stateMutability: 'nonpayable',
     type: 'function',
   },
@@ -152,6 +139,11 @@ export const FLASH_ARBITRAGE_ABI = [
                 type: 'address',
               },
               {
+                internalType: 'address[]',
+                name: 'poolTokens',
+                type: 'address[]',
+              },
+              {
                 internalType: 'address',
                 name: 'tokenIn',
                 type: 'address',
@@ -162,9 +154,9 @@ export const FLASH_ARBITRAGE_ABI = [
                 type: 'address',
               },
               {
-                internalType: 'uint256',
-                name: 'amountIn',
-                type: 'uint256',
+                internalType: 'int256',
+                name: 'amountSpecified',
+                type: 'int256',
               },
               {
                 internalType: 'uint256',
@@ -173,13 +165,8 @@ export const FLASH_ARBITRAGE_ABI = [
               },
               {
                 internalType: 'uint24',
-                name: 'feeBps',
+                name: 'poolFee',
                 type: 'uint24',
-              },
-              {
-                internalType: 'bool',
-                name: 'zeroForOne',
-                type: 'bool',
               },
               {
                 internalType: 'bytes',
@@ -192,8 +179,23 @@ export const FLASH_ARBITRAGE_ABI = [
             type: 'tuple[]',
           },
           {
+            internalType: 'address',
+            name: 'borrowToken',
+            type: 'address',
+          },
+          {
             internalType: 'uint256',
-            name: 'coinbaseBribe',
+            name: 'borrowAmount',
+            type: 'uint256',
+          },
+          {
+            internalType: 'uint16',
+            name: 'internalBribeBps',
+            type: 'uint16',
+          },
+          {
+            internalType: 'uint256',
+            name: 'minProfitTokenOut',
             type: 'uint256',
           },
         ],
@@ -204,7 +206,7 @@ export const FLASH_ARBITRAGE_ABI = [
     ],
     name: 'executeTrade',
     outputs: [],
-    stateMutability: 'nonpayable',
+    stateMutability: 'payable',
     type: 'function',
   },
   {

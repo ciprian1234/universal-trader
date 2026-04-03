@@ -1,5 +1,4 @@
 import { ethers } from 'ethers';
-import type { ArbitrageOpportunity } from './interfaces';
 import { Blockchain } from './blockchain';
 import { createLogger, type Logger } from '@/utils';
 import { WalletManager } from './wallet-manager';
@@ -8,6 +7,8 @@ import type { PriceOracle } from './price-oracle';
 import type { DexProtocol } from '@/shared/data-model/layer1';
 import type { BlockEntry } from './block-manager';
 import { formatGwei } from './helpers';
+import type { ArbitragePath } from './arbitrage/interfaces';
+import type { GasAnalysis } from './interfaces';
 
 type GasManagerInput = {
   chainConfig: ChainConfig;
@@ -20,7 +21,6 @@ export class GasManager {
   private readonly logger: Logger;
   private readonly chainConfig: ChainConfig;
   private readonly blockchain: Blockchain;
-  private readonly walletManager: WalletManager;
   private readonly priceOracle: PriceOracle;
 
   private readonly WRAPPED_NATIVE_TOKEN_ADDRESS: string;
@@ -29,6 +29,7 @@ export class GasManager {
 
   private blockCounter = 0;
   private baseFeePerGas: bigint = ethers.parseUnits('1', 'gwei'); // latest base fee (updated every x blocks)
+  private nativeTokenPriceUSD: number = 0; // latest native token price in USD (updated every x blocks)
 
   // Gas estimation constants (for FlashArbitrageContract main operations)
   private static readonly BASE_COSTS = {
@@ -56,13 +57,25 @@ export class GasManager {
     this.logger = createLogger(`[${input.chainConfig.name}.GasManager]`); // nice emoji ⛽
     this.chainConfig = input.chainConfig;
     this.blockchain = input.blockchain;
-    this.walletManager = input.walletManager;
     this.priceOracle = input.priceOracle;
 
     // get wrapped native token
     this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress;
     this.MIN_PRIORITY_FEE = this.chainConfig.minPriorityFee;
     this.MAX_PRIORITY_FEE = this.chainConfig.maxPriorityFee;
+
+    // get native token price
+    this.nativeTokenPriceUSD = this.priceOracle.getPriceUSD(this.WRAPPED_NATIVE_TOKEN_ADDRESS)!;
+    this.logger.info(`Consstructor native token price: $${this.nativeTokenPriceUSD} USD`);
+  }
+
+  setNativeTokenPriceUSD(price: number) {
+    this.logger.info(`Updating native token price: $${price} USD`);
+    this.nativeTokenPriceUSD = price;
+  }
+
+  getBaseFeePerGas(): bigint {
+    return this.baseFeePerGas;
   }
 
   // ================================================================================================
@@ -84,23 +97,27 @@ export class GasManager {
   // ================================================================================================
   // GAS RESULT FACADE FUNCTION
   // ================================================================================================
+  getGasAnalysis(path: ArbitragePath, grossProfitUSD: number): GasAnalysis | null {
+    const gasEstimate = this.estimateGasUsage(path);
 
-  fillGasAnalysis(opportunity: ArbitrageOpportunity) {
-    const gasEstimate = this.estimateGasUsage(opportunity);
-    const { gasData, gasTxSettings } = this.getGasAnalysis(opportunity, gasEstimate);
+    const baseFeePerGas = (this.baseFeePerGas * 110n) / 100n; // add a 10% buffe to be safe
+    const gasPricePerUnit = baseFeePerGas + this.MIN_PRIORITY_FEE;
+    const gasCostWEI = gasEstimate * gasPricePerUnit;
+    const gasCostUSD = (Number(gasCostWEI) / 1e18) * this.nativeTokenPriceUSD;
+    if (gasCostUSD > grossProfitUSD) return null; // not profitable after gas
 
-    opportunity.gasAnalysis = {
-      gasEstimate: gasData.gasEstimate,
-      totalGasCostUSD: gasData.totalGasCostUSD,
-      gasData, // temporary, for debugging
-      baseFeePerGas: this.baseFeePerGas,
-      gasTxSettings,
+    return {
+      gasEstimate,
+      gasCostWEI,
+      gasCostUSD,
+      baseFeePerGas,
+      nativeTokenPriceUSD: this.nativeTokenPriceUSD,
+      gasTxSettings: {
+        gasLimit: (gasEstimate * 130n) / 100n, // add 30% buffer
+        maxFeePerGas: gasPricePerUnit, // base fee + priority fee
+        maxPriorityFeePerGas: this.MIN_PRIORITY_FEE,
+      },
     };
-    opportunity.netProfitUSD = opportunity.grossProfitUSD - gasData.totalGasCostUSD;
-  }
-
-  getBaseFeePerGas(): bigint {
-    return this.baseFeePerGas;
   }
 
   // ================================================================================================
@@ -115,7 +132,7 @@ export class GasManager {
    * 3. Two approvals (forceApprove per swap)
    * 4. Repayment + profit transfer
    */
-  private estimateGasUsage(opportunity: ArbitrageOpportunity): bigint {
+  private estimateGasUsage(path: ArbitragePath): bigint {
     let baseGasUsageEstimation =
       GasManager.BASE_COSTS.FLASH_LOAN_OVERHEAD +
       GasManager.BASE_COSTS.CONTRACT_OVERHEAD +
@@ -125,7 +142,7 @@ export class GasManager {
 
     // go through each swap and add costs
     let swapGasUsageEstimation = 0n;
-    for (const step of opportunity.steps) {
+    for (const step of path.steps) {
       swapGasUsageEstimation += this.getSwapCost(step.pool.protocol) + GasManager.BASE_COSTS.APPROVAL_OVERHEAD;
     }
 
@@ -134,154 +151,6 @@ export class GasManager {
 
   getSwapCost(dexType: DexProtocol): bigint {
     return GasManager.SWAP_COSTS[dexType];
-  }
-
-  /**
-   * Get Gas Analysis based on opportunity
-   */
-  private getGasAnalysis(opportunity: ArbitrageOpportunity, gasEstimate: bigint) {
-    const baseFeePerGas = this.baseFeePerGas;
-    const nativeTokenPriceUSD = this.priceOracle.getPriceUSD(this.WRAPPED_NATIVE_TOKEN_ADDRESS)!;
-
-    // THE CEILING OF HOW MUCH WE CAN AFFORD PAY FOR TOTAL GAS BASED ON GROSS PROFIT
-    const gasBudgetETH = opportunity.grossProfitUSD / nativeTokenPriceUSD; // we can pay x ETH for total gas (resulting => 0 profit)
-    const gasBudgetWEI = BigInt(Math.floor(gasBudgetETH * 1e18)); // we can pay x WEI for total gas (0 profit)
-
-    // calculate base gas cost (in WEI) based on baseFeePerGas and estimated gas usage
-    const baseGasCostWEI = gasEstimate * baseFeePerGas;
-    const budgetAfterBaseGasCostWEI = gasBudgetWEI - baseGasCostWEI;
-    if (budgetAfterBaseGasCostWEI <= 0) throw new Error('Skipping opportunity: budget after base gas cost is zero or negative');
-
-    // cap gas budget to wallet balance
-    let cappedGasBudgetWEI = gasBudgetWEI;
-    if (cappedGasBudgetWEI > this.walletManager.getNativeTokenBalance()) {
-      this.logger.debug(
-        `⚠️  Capped gas budget ${formatGwei(gasBudgetWEI)} exceeds wallet balance funds ${formatGwei(
-          this.walletManager.getNativeTokenBalance(),
-        )}, capping gas budget to wallet balance`,
-      );
-      cappedGasBudgetWEI = this.walletManager.getNativeTokenBalance() - ethers.parseEther('0.001'); // keep small buffer
-    }
-
-    // calculate maxFeePerGas based on gasBudgetWEI and check if opportunity exceeds baseFee
-    const maxFeePerGas = (cappedGasBudgetWEI * 5n) / 10n / gasEstimate; // set to 50% of gas budget
-    const priorityFeeCap = maxFeePerGas - baseFeePerGas;
-
-    const maxPriorityFeePerGas = this.calculateOptimalPriorityFeePerGas(
-      opportunity.grossProfitUSD,
-      priorityFeeCap,
-      nativeTokenPriceUSD,
-      gasEstimate,
-    );
-    const finalGasPricePerUnit = baseFeePerGas + maxPriorityFeePerGas; // in WEI
-    const totalGasCostWEI = gasEstimate * finalGasPricePerUnit; // in WEI
-    const totalGasCostUSD = (Number(totalGasCostWEI) / 1e18) * nativeTokenPriceUSD; // in USD
-
-    return {
-      gasData: {
-        gasEstimate,
-        baseFeePerGas,
-        totalGasCostUSD,
-        totalGasCostWEI,
-        gasBudgetETH,
-        gasBudgetWEI,
-        baseGasCostWEI,
-        budgetAfterBaseGasCostWEI,
-        priorityFeeCap,
-        nativeTokenPriceUSD,
-        finalGasPricePerUnit, // baseFee + priority fee
-      },
-      gasTxSettings: {
-        gasLimit: (gasEstimate * 120n) / 100n, // add 20% buffer
-        maxFeePerGas, // threshold
-        maxPriorityFeePerGas,
-      },
-    };
-  }
-
-  // when deciding how much priority fee we want to pay we need to take into consideration:
-  // - profit (high profit => high urgency, we afford to pay more)
-  // - network conditions (if baseFee its high => network congestion)
-  private calculateOptimalPriorityFeePerGas(
-    grossProfitUSD: number,
-    priorityFeeCap: bigint,
-    nativeTokenPriceUSD: number,
-    gasEstimate: bigint,
-  ): bigint {
-    if (priorityFeeCap < this.MIN_PRIORITY_FEE)
-      throw new Error(`PriorityFeeCap (${formatGwei(priorityFeeCap)}) < ${formatGwei(this.MIN_PRIORITY_FEE)} MIN_PRIORITY`);
-
-    // STEP 1: Calculate base priority fee as % of gross profit: how much of gross profit are we willing to spend on priority?
-    const profitBidPercentage = this.calculateProfitBidPercentage(grossProfitUSD);
-
-    // Convert to priority fee in WEI
-    const profitBasedPriorityBudgetUSD = grossProfitUSD * profitBidPercentage;
-    const profitBasedPriorityBudgetWEI = BigInt(Math.floor((profitBasedPriorityBudgetUSD / nativeTokenPriceUSD) * 1e18));
-
-    // Priority fee per gas unit
-    let priorityFeePerGas = profitBasedPriorityBudgetWEI / gasEstimate;
-
-    // STEP 2: Adjust for network congestion (competitive pressure)
-    const baseFeeGwei = Number(this.baseFeePerGas) / 1e9;
-    const congestionMultiplier = this.calculateCongestionMultiplier(baseFeeGwei);
-
-    priorityFeePerGas = (priorityFeePerGas * BigInt(Math.round(congestionMultiplier * 100))) / 100n;
-
-    // STEP 3: Apply constraints
-    if (priorityFeePerGas < this.MIN_PRIORITY_FEE) priorityFeePerGas = this.MIN_PRIORITY_FEE;
-
-    if (priorityFeePerGas > this.MAX_PRIORITY_FEE) {
-      this.logger.debug(
-        `⚠️  Capping PriorityFee at ${formatGwei(this.MAX_PRIORITY_FEE)} (was: ${formatGwei(priorityFeePerGas)})`,
-      );
-      priorityFeePerGas = this.MAX_PRIORITY_FEE;
-    }
-    if (priorityFeePerGas > priorityFeeCap) {
-      this.logger.debug(`⚠️  PriorityFee ${formatGwei(priorityFeePerGas)} > ${formatGwei(priorityFeeCap)} priorityFeeCap`);
-      priorityFeePerGas = priorityFeeCap; // TODO: we should allow a risky trade like this?
-    }
-    return priorityFeePerGas;
-  }
-
-  /**
-   * Calculate what % of gross profit we're willing to bid as priority fee
-   *
-   * Philosophy:
-   * - Small profits ($5-20): Conservative bidding (5-10% of profit)
-   * - Medium profits ($20-100): Moderate bidding (10-20% of profit)
-   * - Large profits ($100+): Aggressive bidding (20-35% of profit)
-   *
-   * Rationale: Large opportunities are rarer and more competitive, so worth
-   * paying more to secure them. Small opportunities are frequent, so be patient.
-   */
-  private calculateProfitBidPercentage(profitUSD: number): number {
-    // Logarithmic curve for smooth scaling
-    if (profitUSD >= 500) return 0.51; // 35% - Whale trades, very rare
-    if (profitUSD >= 200) return 0.51; // 30% - Major opportunities
-    if (profitUSD >= 100) return 0.51; // 25% - Large opportunities
-    if (profitUSD >= 50) return 0.36; // 20% - Good opportunities
-    if (profitUSD >= 30) return 0.33; // 15% - Decent opportunities
-    if (profitUSD >= 20) return 0.33; // 12% - Small-medium
-    if (profitUSD >= 10) return 0.33; // 10% - Small opportunities
-    if (profitUSD >= 5) return 0.33; // 8% - Tiny opportunities
-    return 0.33; // 5% - Micro opportunities (be patient)
-  }
-
-  /**
-   * Adjust bidding aggressiveness based on network congestion
-   *
-   * Logic: When baseFee is high, more arbitrageurs are active (competitive).
-   * Need to bid higher % to win transactions.
-   */
-  private calculateCongestionMultiplier(baseFeeGwei: number): number {
-    // More conservative multipliers - network conditions are just a hint
-    if (baseFeeGwei >= 100) return 1.5; // Very competitive
-    if (baseFeeGwei >= 80) return 1.4; // High competition
-    if (baseFeeGwei >= 50) return 1.3; // Moderate-high competition
-    if (baseFeeGwei >= 30) return 1.2; // Moderate competition
-    if (baseFeeGwei >= 15) return 1.15; // Light competition
-    if (baseFeeGwei >= 5) return 1.112; // Normal competition
-    return 1.061; // Very quiet (slightly above minimum)
   }
 
   // ================================================================================================

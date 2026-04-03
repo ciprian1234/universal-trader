@@ -19,16 +19,16 @@ import { ethers } from 'ethers';
 const chainConfig = appConfig.platforms['ethereum'] as ChainConfig;
 
 // NOTE: when executing swaps in parallet with watcher => deploy the contract from a different wallet so we have acurate balance tracking for the swap results
-const CONTRACT_ADDRESS = ''; // chainConfig.arbitrageContractAddress;
-const WALLET_PRIVATE_KEY = ''; // chainConfig.walletPrivateKey;
+const CONTRACT_ADDRESS = '0xb17cb6ac7dE18102FB9c979f82F88623569AA1F4'; // chainConfig.arbitrageContractAddress;
+const WALLET_PRIVATE_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'; // chainConfig.walletPrivateKey;
 
 if (!CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS not set in config');
 if (!WALLET_PRIVATE_KEY) throw new Error('WALLET_PRIVATE_KEY not set in config');
 
 // input pool from DB
-const DB_POOL_ID = '1:0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed181e22d7';
+const DB_POOL_ID = '';
 const ZERO_FOR_ONE = true;
-const amountInFormatted = '0.01'; // human readable amount to swap
+const amountInFormatted = '1'; // human readable amount to swap
 
 // ========================================================================================
 // INIT COMPONENTS
@@ -76,20 +76,14 @@ function buildSwapStep(params: {
   // if (tokenIn === ethers.ZeroAddress)
   return {
     dexProtocol: FlashArbitrageHandler.getDexTypeEnumValueFromPool(pool.protocol),
+    poolTokens: [pool.tokenPair.token0.address, pool.tokenPair.token1.address],
     poolAddress: pool.address,
     tokenIn,
     tokenOut,
-    feeBps: pool.feeBps,
-    amountIn: params.amountIn,
+    amountSpecified: 0n, // computed by contract by amount sent to contract
     amountOutMin: params.amountOutMin,
-    zeroForOne: params.zeroForOne,
-    extraData:
-      pool.protocol === 'v4'
-        ? abiCoder.encode(
-            ['address', 'address', 'address', 'int24'],
-            [token0.address, token1.address, pool.hooks, pool.tickSpacing],
-          )
-        : '0x',
+    poolFee: pool.feeBps,
+    extraData: pool.protocol === 'v4' ? abiCoder.encode(['address', 'int24'], [token0.address, pool.tickSpacing]) : '0x',
   };
 }
 

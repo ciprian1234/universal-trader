@@ -74,6 +74,10 @@ export class EventBus extends EventEmitter {
     this.emit('token-pair-registered', payload);
   }
 
+  emitNativeTokenPriceUpdated(price: number): void {
+    this.emit('native-token-price-updated', price);
+  }
+
   emitPoolsUpsertBatch(payload: PoolsUpsertBatchPayload): void {
     if (payload.pools.length === 0) return; // Skip empty batches
     this.emit('pools-upsert-batch', payload);
@@ -109,6 +113,11 @@ export class EventBus extends EventEmitter {
   onTokenPairRegistered(callback: (payload: TokenPairOnChain) => void): () => void {
     this.on('token-pair-registered', callback);
     return () => this.off('token-pair-registered', callback); // Return unsubscribe function
+  }
+
+  onNativeTokenPriceUpdated(callback: (price: number) => void): () => void {
+    this.on('native-token-price-updated', callback);
+    return () => this.off('native-token-price-updated', callback);
   }
 
   onPoolsUpsertBatch(callback: (payload: PoolsUpsertBatchPayload) => void): () => void {

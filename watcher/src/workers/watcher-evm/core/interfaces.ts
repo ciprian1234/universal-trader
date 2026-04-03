@@ -121,8 +121,9 @@ export interface TradeQuote {
 
 export interface GasAnalysis {
   gasEstimate: bigint;
-  totalGasCostUSD: number;
-  gasData: any;
+  gasCostWEI: bigint;
+  gasCostUSD: number;
+  nativeTokenPriceUSD: number;
   baseFeePerGas: bigint; // latest base fee from latest block
   gasTxSettings: GasTxSettings;
 }
@@ -156,11 +157,14 @@ export interface ArbitrageOpportunity {
 
   // details
   steps: SwapStep[];
-  gasAnalysis?: GasAnalysis;
+  gasAnalysis: GasAnalysis;
   logs: any[];
 
   // Contract Trade Struct
   trade?: Trade; // filled when preparing for execution
+
+  // bribe info
+  bribe?: { internalBribeBps: bigint; bribeWEI: bigint; result: any }; // filled when preparing for execution
 
   // Metrics
   totalSlippage: number;

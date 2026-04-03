@@ -73,6 +73,11 @@ class EVMWorker extends BaseWorker {
       this.logger.info(` • ${tokenPair.token1.symbol} (${tokenPair.token1.address})`);
     });
 
+    // "native-token-price-updated" routing
+    this.eventBus.onNativeTokenPriceUpdated((price) => {
+      this.gasManager.setNativeTokenPriceUSD(price); // update native token price in GasManager
+    });
+
     // "pools-upsert-batch" routing
     this.eventBus.onPoolsUpsertBatch(async (payload) => {
       await this.arbitrageOrchestrator.handlePoolsUpsertBatch(payload);
@@ -122,6 +127,7 @@ class EVMWorker extends BaseWorker {
     this.priceOracle = new PriceOracle({
       chainConfig: this.chainConfig,
       tokenManager: this.tokenManager,
+      eventBus: this.eventBus,
     });
 
     // create dex registry and register adapters
@@ -184,6 +190,7 @@ class EVMWorker extends BaseWorker {
       blockManager: this.blockManager,
       dexManager: this.dexManager,
       walletManager: this.walletManager,
+      priceOracle: this.priceOracle,
     });
 
     // init

@@ -1,28 +1,25 @@
 # TODOS
 
-- implement optimized ticks fetching using multicall3
-- implement blacklist of tokens
+## MVP
+
+- if updatingPools and in meantime new block arrived => updatePools overwrites with stale date => check if new block arrived by using block manager if currentBlock > startBlock => fetch logs and apply again
+
+- investigate why tokenPairs are not set at init
+- if running with localhost provider do not sync pools!!!
+
+## POST_MVP
+
+### BATCH_1
+
+- simulate all found opportunities in a single call
+
+- check how much we can borrow from vault for each anchor token in a single call
 - batch pool introspection into a single call
 - batch wallet balances into a single call
 - batch pool discovery into a single call
-- check how much we can borrow from vault for each anchor token in a single call
+- implement blacklist of tokens
 
-- add forceUpdate flag to explicitly overwrite dynamic data if pool its already initialized, othweize skip pool
-  (needed because at initialization while fetching pools a new event may arrive and batch call may fetch data from previous block and ovewrite data written by events)
-- investigate why tokenPairs are not set at init
-
-## MVP
-
-- if running with localhost provider do not sync pools!!!
-- review gas calculation/analysis and bribe calculation
-- simulate all found opportunities in a single call
-
-### handle pre-failed execution transaction submission over and over again
-
-1. delete opp from DB since it has invalid calculation
-2. fetch tick data => re-calculate again but this time with ticks
-
-## POST_MVP
+### BATCH_2
 
 - search arbitrage paths for all tokens we can borrow (also check which tokens can we borrow and max amount borrow )
 - introspect graph to discover new pools for key edges/bridges
@@ -64,10 +61,6 @@ this allows to pay the bribe in contract
 ## Liquidity graph
 
 Expand: add gas cost USD/ gasUsage per edge?
-
-## Upgrade arbitrage contract
-
-- upgrade contract to support V4 swap (update gas manager estimations)
 
 ## NOTES
 

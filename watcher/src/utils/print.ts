@@ -35,7 +35,7 @@ export function displayOpportunity(logger: Logger, path: ArbitrageOpportunity): 
   }
 
   logger.info(`   💵 Gross: $${path.grossProfitUSD.toFixed(4)}`);
-  logger.info(`   ⛽ Gas: $${path.gasAnalysis!.totalGasCostUSD.toFixed(4)}`);
+  logger.info(`   ⛽ Gas: $${path.gasAnalysis.gasCostUSD.toFixed(4)}`);
   logger.info(`   💰 Net: $${path.netProfitUSD.toFixed(4)}`);
   logger.info(`   📊 Total Slippage: ${path.totalSlippage.toFixed(4)}%\n`);
 }

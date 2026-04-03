@@ -3,11 +3,13 @@ import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenManager } from './token-manager';
 import type { ChainConfig } from '@/config/models';
 import type { TokenOnChain } from '@/shared/data-model/token';
+import type { EventBus } from './event-bus';
 import { ethers } from 'ethers';
 
 type PriceOracleInput = {
   chainConfig: ChainConfig;
   tokenManager: TokenManager;
+  eventBus: EventBus;
 };
 
 type DefiLlamaPriceResponse = {
@@ -38,6 +40,7 @@ export class PriceOracle {
   private readonly logger;
   private readonly chainConfig: ChainConfig;
   private readonly tokenManager: TokenManager;
+  private readonly eventBus: EventBus;
 
   private anchorTokens: TokenOnChain[] = []; // for quick lookup of whether a token is an anchor token
   private readonly resolvedPrices = new Map<string, PriceEntry>(); // "address" → PriceEntry
@@ -50,6 +53,7 @@ export class PriceOracle {
     this.logger = createLogger(`[${input.chainConfig.name}.PriceOracle]`);
     this.chainConfig = input.chainConfig;
     this.tokenManager = input.tokenManager;
+    this.eventBus = input.eventBus;
   }
 
   destroy(): void {
@@ -110,6 +114,8 @@ export class PriceOracle {
       source: 'anchor',
       updatedAt: Date.now(),
     });
+
+    this.eventBus.emitNativeTokenPriceUpdated(resolvedWETHPrice.priceUSD);
   }
 
   // PriceUSD derived from pool
@@ -224,7 +230,7 @@ export class PriceOracle {
     const priceEntry = this.resolvedPrices.get(address);
     if (!priceEntry) throw new Error(`Token ${address} not registered or price not available`);
 
-    const humanAmount = Number(ethers.formatUnits(rawAmount, priceEntry.token.decimals));
+    const humanAmount = Number(rawAmount) / 10 ** priceEntry.token.decimals;
     return humanAmount * priceEntry.priceUSD;
   }
 }

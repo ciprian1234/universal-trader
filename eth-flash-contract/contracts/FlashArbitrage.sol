@@ -90,7 +90,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // using CurrencyLibrary for Currency;
 
   address public owner;
-  address private constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+  address private constant WETH_ADDRESS = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
   IVault private constant vault = IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
 
   // Allow receiving ETH for V4 native swaps
@@ -99,8 +99,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // price limit for V3 swaps to prevent excessive slippage (set to min/max possible + small buffer)
   uint160 constant MIN_SQRT_RATIO = 4295128739;
   uint160 constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
-
-  event TradeExecuted(address indexed token, uint256 profit);
 
   // DEX Protocol Types
   enum DexProtocol {
@@ -115,18 +113,21 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   struct SwapStep {
     DexProtocol dexProtocol;
     address poolAddress;
+    address[] poolTokens; // for v2/v3/v4: [token0, token1], for balancer: [token0, token1, token2, ...]
     address tokenIn;
     address tokenOut;
-    uint256 amountIn;
-    uint256 amountOutMin; // for slippage protection
-    uint24 feeBps; // for v2 usually 30 (0.3%), for v3 it represents the fee tier (500, 3000, 10000)
-    bool zeroForOne; // indicates swap direction
+    int256 amountSpecified; // if negative => spending exact X tokenIn, if positive => receiving exact X tokenOut
+    uint256 amountOutMin; // optional param we can specify on each swap for price impact protection
+    uint24 poolFee; // for v2 its: 30 (0.3%), for v3 it represents the fee tier (100, 500, 3000, 10000) or custom for v4
     bytes extraData; // used by V4 and other protocols to pass additional parameters like pool keys, hook data, etc.
   }
 
   struct Trade {
     SwapStep[] swaps; // Array of swaps for multi-hop trading
-    uint256 coinbaseBribe; // Optional bribe amount to pay miner for prioritization (can be 0 for no bribe)
+    address borrowToken; // token to borrow in flash loan
+    uint256 borrowAmount; // amount to borrow in flash loan
+    uint16 internalBribeBps; // bribe paid from profit in basis points (bps 0-10000), set 0 if handled via ETH transfer
+    uint256 minProfitTokenOut; // minimum profit threshold to execute the trade (in raw amount of tokenOut from last swap)
   }
 
   constructor() {
@@ -160,25 +161,31 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
   // ENTRY POINT FOR EXECUTING AN ARBITRAGE TRADE
   // ========================================================================================
-  function executeTrade(Trade memory _trade) external onlyOwner nonReentrant {
+  function executeTrade(Trade memory _trade) external payable onlyOwner nonReentrant {
+    // Pay external bribe from msg.value BEFORE flash loan
+    // (if arb reverts, entire tx reverts — bribe is always atomic)
+    if (msg.value > 0) {
+      (bool okBribe, ) = block.coinbase.call{value: msg.value}('');
+      require(okBribe, 'Coinbase bribe failed');
+    }
+
     // Encode the trade struct to pass it to the flash loan callback
     bytes memory data = abi.encode(_trade);
 
     // Flash loan setup
     IERC20[] memory tokens = new IERC20[](1);
-    tokens[0] = IERC20(_trade.swaps[0].tokenIn); // The token we will borrow
-
     uint256[] memory amounts = new uint256[](1);
-    amounts[0] = _trade.swaps[0].amountIn; // The amount we will borrow
 
+    tokens[0] = IERC20(_trade.borrowToken); // The token we will borrow
+    amounts[0] = _trade.borrowAmount; // The amount we will borrow
     vault.flashLoan(this, tokens, amounts, data);
   }
 
   // ========================================================================================
   // DIRECT SWAP EXECUTION (FOR TESTING — REQUIRES CONTRACT TO HOLD tokenIn BEFOREHAND)
   // ========================================================================================
-  function executeDirectSwap(SwapStep memory step) external onlyOwner nonReentrant {
-    _executeSwap(step);
+  function executeDirectSwap(SwapStep memory step) external onlyOwner nonReentrant returns (uint256) {
+    return _executeSwap(step);
   }
 
   // ========================================================================================
@@ -195,110 +202,154 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     Trade memory trade = abi.decode(callbackData, (Trade)); // Decode our swap data so we can use it
     address borrowToken = address(tokens[0]);
     uint256 requiredRepayment = amounts[0] + feeAmounts[0];
+    uint256 lastIndex = trade.swaps.length - 1;
 
-    // NOTE: amountOutMin its enforced for each swap outside the contract by caller
-    // on last swap the profit should be > requiredRepayment, otherwise the tx will revert
-    for (uint256 i = 0; i < trade.swaps.length; i++) {
+    // execute each swap in sequence, using the output of the previous swap as the input for the next
+    for (uint256 i = 0; i <= lastIndex; i++) {
       SwapStep memory step = trade.swaps[i];
-
-      // For intermediate swaps, use full balance
-      if (i > 0) {
-        step.amountIn = IERC20Z(step.tokenIn).balanceOf(address(this));
-      }
-
-      // Execute the swap
-      _executeSwap(step);
+      _executeSwap(step); // Execute the swap
     }
 
-    // Repay flash loan
+    // NOTE: at this point we can have profit in either ETH, WETH or some ERC20 token
+    // depending on the last swap output — we will handle repayment and profit transfer accordingly
+    // entire output its in tokenOut of last swap
+    address lastSwapTokenOut = trade.swaps[lastIndex].tokenOut;
+    uint256 lastSwapTokenOutBalance = lastSwapTokenOut == address(0)
+      ? address(this).balance
+      : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
+
+    // ######################### REPAY FLASH LOAN #########################
+    require(lastSwapTokenOutBalance >= requiredRepayment, 'Insufficient profit to repay loan');
+    if (lastSwapTokenOut == address(0)) {
+      IWETH(WETH_ADDRESS).deposit{value: requiredRepayment}(); // => WRAP to WETH for repayment (profit in raw ETH)
+    }
+
+    // Repay flash loan (borrowToken is always ERC20)
     IERC20Z(borrowToken).safeTransfer(address(vault), requiredRepayment);
 
-    // Pay coinbase bribe (unwrap WETH → ETH, send to block.coinbase)
-    uint256 coinbaseBribe = trade.coinbaseBribe;
-    uint256 remaining = IERC20Z(borrowToken).balanceOf(address(this));
-    if (coinbaseBribe > 0) {
-      require(borrowToken == WETH, 'Bribe requires WETH borrow');
-      require(remaining >= coinbaseBribe, 'Insufficient profit for bribe');
-      IWETH(WETH).withdraw(coinbaseBribe);
-      (bool success, ) = block.coinbase.call{value: coinbaseBribe}('');
-      require(success, 'Coinbase bribe failed');
-      remaining -= coinbaseBribe;
+    // ######################### HANDLE PROFIT #########################
+    uint256 profitAfterRepayment = lastSwapTokenOutBalance - requiredRepayment;
+
+    if (lastSwapTokenOut == WETH_ADDRESS || lastSwapTokenOut == address(0)) {
+      // CASE 1: profit in ETH/WETH => we can pay bribe directly from profit and transfer remaining ETH to owner
+      if (lastSwapTokenOut == WETH_ADDRESS) IWETH(WETH_ADDRESS).withdraw(profitAfterRepayment); // unwrap WETH => profit in raw ETH
+
+      // we can only pay bribe only in if lastSwapTokenOut its ETH or WETH (at this point => profit sits in RAW ETH)
+      if (trade.internalBribeBps > 0) {
+        uint256 bribeAmount = (profitAfterRepayment * trade.internalBribeBps) / 10000;
+        (bool okBribe, ) = block.coinbase.call{value: bribeAmount}('');
+        require(okBribe, 'Internal bribe failed');
+      }
+
+      // transfer remaining ETH profit to owner
+      uint256 ethRemaining = address(this).balance;
+      require(ethRemaining >= trade.minProfitTokenOut, 'ethRemaining < minProfitTokenOut');
+      (bool okProfit, ) = owner.call{value: ethRemaining}('');
+      require(okProfit, 'ETH profit transfer failed');
+    } else {
+      // CASE 2: profit in ERC20 token => transfer profit to owner only
+      uint256 tokenRemaining = IERC20Z(lastSwapTokenOut).balanceOf(address(this));
+      require(tokenRemaining >= trade.minProfitTokenOut, 'tokenRemaining < minProfitTokenOut');
+      IERC20Z(lastSwapTokenOut).safeTransfer(owner, tokenRemaining);
+    }
+  }
+
+  // ========================================================================================
+  // RESOLVE TOKEN_IN AND RETURN AVAILABLE AMOUNT_IN FOR THE SWAP
+  // ========================================================================================
+  function _resolveTokenIn(SwapStep memory step) internal returns (uint256) {
+    address tokenIn = step.tokenIn;
+
+    // in case "tokenIn" its ETH/WETH (handle wrapping or unwrapping)
+    if (tokenIn == address(0)) {
+      uint256 wethBalance = IERC20Z(WETH_ADDRESS).balanceOf(address(this));
+      if (wethBalance > 0) IWETH(WETH_ADDRESS).withdraw(wethBalance); // UNWRAP WETH => ETH
+      return address(this).balance; // return "amountIn" of raw ETH available for swap input
+    } else if (tokenIn == WETH_ADDRESS) {
+      uint256 nativeEthBalance = address(this).balance;
+      if (nativeEthBalance > 0) IWETH(WETH_ADDRESS).deposit{value: nativeEthBalance}(); // WRAP ETH => WETH
     }
 
-    // Transfer remaining profit to owner
-    if (remaining > 0) {
-      IERC20Z(borrowToken).safeTransfer(owner, remaining);
-    }
-
-    emit TradeExecuted(borrowToken, remaining);
+    return IERC20Z(tokenIn).balanceOf(address(this)); // return "amountIn" of ERC20 balance for swap input
   }
 
   // ========================================================================================
   // SWAP EXECUTION ROUTING BASED ON DEX PROTOCOL
   // ========================================================================================
-  function _executeSwap(SwapStep memory step) internal {
-    require(step.amountIn <= uint256(type(int256).max), '_executeSwap: amountIn overflow');
+  function _executeSwap(SwapStep memory step) internal returns (uint256 amountOut) {
+    uint256 amountIn = _resolveTokenIn(step); // NOTE: this its positive balance available for swap
+    require(amountIn <= uint256(type(int256).max), 'amountIn overflow');
+    step.amountSpecified = -int256(amountIn); // always specify exact X amount of tokenIn (which must be negative)
 
-    if (step.dexProtocol == DexProtocol.V2) {
-      _swapOnV2(step);
-    } else if (step.dexProtocol == DexProtocol.V3) {
-      _swapOnV3(step);
-    } else if (step.dexProtocol == DexProtocol.V4) {
-      _swapOnV4(step);
-    } else if (step.dexProtocol == DexProtocol.CURVE) {
-      _swapOnCurve(step);
-    } else if (step.dexProtocol == DexProtocol.BALANCER) {
-      _swapOnBalancer(step);
-    } else {
-      revert('Unsupported DEX type');
-    }
+    if (step.dexProtocol == DexProtocol.V2) amountOut = _swapOnV2(step);
+    else if (step.dexProtocol == DexProtocol.V3) amountOut = _swapOnV3(step);
+    else if (step.dexProtocol == DexProtocol.V4) amountOut = _swapOnV4(step);
+    else revert('Unsupported DEX type');
+
+    require(amountOut >= step.amountOutMin, 'Insufficient amountOut');
+    return amountOut;
   }
 
   // ========================================================================================
   // V2 SWAP IMPLEMENTATION
   // ========================================================================================
-  function _swapOnV2(SwapStep memory step) internal {
+  function _swapOnV2(SwapStep memory step) internal returns (uint256) {
     IUniswapV2Pair pair = IUniswapV2Pair(step.poolAddress);
-
-    // Transfer tokens directly to pool — V2 pull model
-    IERC20Z(step.tokenIn).safeTransfer(address(pair), step.amountIn);
 
     // get reserves to calculate amountOut based on constant product formula: x * y = k
     (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
-    uint256 reserveIn = step.zeroForOne ? uint256(reserve0) : uint256(reserve1);
-    uint256 reserveOut = step.zeroForOne ? uint256(reserve1) : uint256(reserve0);
+    bool zeroForOne = step.poolTokens[0] == step.tokenIn; // determine swap direction based on tokenIn
+    uint256 reserveIn = zeroForOne ? uint256(reserve0) : uint256(reserve1);
+    uint256 reserveOut = zeroForOne ? uint256(reserve1) : uint256(reserve0);
+    uint256 amountOut;
+    uint256 amountInUsed;
 
-    // calculate amountOut
-    uint256 amountInWithFee = step.amountIn * (10000 - step.feeBps);
-    uint256 amountOut = (amountInWithFee * reserveOut) / (reserveIn * 10000 + amountInWithFee);
-    require(amountOut >= step.amountOutMin, 'V2: insufficient amountOut');
+    if (step.amountSpecified > 0) {
+      // amountIn holds the target output amount
+      amountOut = uint256(step.amountSpecified);
+      // inverse constant-product formula: how much tokenIn do we need?
+      uint256 numerator = reserveIn * amountOut * 10000;
+      uint256 denominator = (reserveOut - amountOut) * (10000 - step.poolFee);
+      amountInUsed = (numerator / denominator) + 1; // +1 to ceil (avoid off-by-one underflow)
+    } else {
+      amountInUsed = uint256(-step.amountSpecified); // convert to positive
+      uint256 amountInWithFee = amountInUsed * (10000 - step.poolFee);
+      amountOut = (amountInWithFee * reserveOut) / (reserveIn * 10000 + amountInWithFee);
+    }
 
-    (uint256 amount0Out, uint256 amount1Out) = step.zeroForOne ? (uint256(0), amountOut) : (amountOut, uint256(0));
+    // sanity check to prevent swaps that would fail due to insufficient liquidity (e.g. if amountOut >= reserveOut, the swap will fail)
+    require(amountOut < reserveOut, 'V2: insufficient liquidity for exact output');
+
+    // Transfer tokens directly to pool — V2 pull model
+    IERC20Z(step.tokenIn).safeTransfer(address(pair), amountInUsed);
+    (uint256 amount0Out, uint256 amount1Out) = zeroForOne ? (uint256(0), amountOut) : (amountOut, uint256(0));
     pair.swap(amount0Out, amount1Out, address(this), '');
+    return amountOut;
   }
 
   // ========================================================================================
   // V3 SWAP IMPLEMENTATION
   // ========================================================================================
 
-  function _swapOnV3(SwapStep memory step) internal {
+  function _swapOnV3(SwapStep memory step) internal returns (uint256) {
     IUniswapV3Pool pool = IUniswapV3Pool(step.poolAddress);
-    uint160 sqrtPriceLimitX96 = step.zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1; // TBD: send this as parameter
+    bool zeroForOne = step.poolTokens[0] == step.tokenIn; // determine swap direction based on tokenIn
+    uint160 sqrtPriceLimitX96 = zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1; // TBD: send this as parameter
 
     // trigger v3 swap via pool's swap() function, passing the tokenIn in the callback data so we know which token to transfer in the callback
     _setAllowedCallerAddress(step.poolAddress); // ← set allowed caller transient slot
     (int256 amount0, int256 amount1) = pool.swap(
       address(this),
-      step.zeroForOne,
-      int256(step.amountIn),
+      zeroForOne,
+      step.amountSpecified, // NOTE: if negative => spending exact X tokenIn, if positive => receiving exact X tokenOut
       sqrtPriceLimitX96, // Price limit for slippage control
       abi.encode(step.tokenIn) // Pass the encoded callback data
     );
     _setAllowedCallerAddress(address(0)); // ← clear transient slot after swap
 
     // validate amountOut based on swap direction (amounts are returned as int256, positive for received, negative for sent)
-    uint256 amountOut = uint256(-(step.zeroForOne ? amount1 : amount0));
-    require(amountOut >= step.amountOutMin, 'V3: insufficient amountOut');
+    uint256 amountOut = uint256(-(zeroForOne ? amount1 : amount0));
+    return amountOut;
   }
 
   // Generic callback by V3 pool during swap() to pull the owed tokens
@@ -340,31 +391,14 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // V4 SWAP IMPLEMENTATION
   // ========================================================================================
 
-  function _swapOnV4(SwapStep memory step) internal {
-    // Decode pool currencies from extraData
-    (address currency0, address currency1, , ) = abi.decode(step.extraData, (address, address, address, int24));
-
-    // Determine if native ETH is on input/output side
-    address inputCurrency = step.zeroForOne ? currency0 : currency1;
-    address outputCurrency = step.zeroForOne ? currency1 : currency0;
-
-    // Unwrap WETH → ETH if pool expects native ETH as input
-    if (inputCurrency == address(0)) {
-      IWETH(WETH).withdraw(step.amountIn);
-    }
-
+  function _swapOnV4(SwapStep memory step) internal returns (uint256) {
     // trigger v4 swap via PoolManager's unlock() function, passing the SwapStep as callback data
     _setAllowedCallerAddress(step.poolAddress); // set allowed callback caller to the PoolManager address
     bytes memory result = IPoolManager(step.poolAddress).unlock(abi.encode(step));
     _setAllowedCallerAddress(address(0)); // ← clear transient slot before returning
 
     uint256 amountOut = abi.decode(result, (uint256));
-    require(amountOut >= step.amountOutMin, 'V4: insufficient amountOut');
-
-    // Wrap ETH → WETH if pool outputs native ETH
-    if (outputCurrency == address(0)) {
-      IWETH(WETH).deposit{value: amountOut}();
-    }
+    return amountOut;
   }
 
   // called by V4 PoolManager during unlock() to execute the swap logic and handle token transfers
@@ -372,25 +406,25 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     require(msg.sender == _getAllowedCallerAddress(), 'V4: invalid callback caller');
 
     SwapStep memory step = abi.decode(data, (SwapStep));
+    bool zeroForOne = step.poolTokens[0] == step.tokenIn; // determine swap direction based on tokenIn
 
     // Decode and use original pool currencies for PoolKey (not step.tokenIn/tokenOut which are normalized WETH)
-    (address currency0, address currency1, address hooks, int24 tickSpacing) = abi.decode(
-      step.extraData,
-      (address, address, address, int24)
-    );
+    address currency0 = step.poolTokens[0];
+    address currency1 = step.poolTokens[1];
+    (address hooks, int24 tickSpacing) = abi.decode(step.extraData, (address, int24));
 
     IPoolManager.PoolKey memory key = IPoolManager.PoolKey({
       currency0: currency0,
       currency1: currency1,
-      fee: step.feeBps,
+      fee: step.poolFee,
       tickSpacing: tickSpacing,
       hooks: hooks
     });
 
     IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
-      zeroForOne: step.zeroForOne,
-      amountSpecified: -int256(step.amountIn), // negative = exact input
-      sqrtPriceLimitX96: step.zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1
+      zeroForOne: zeroForOne,
+      amountSpecified: step.amountSpecified, // NOTE: if negative => spending exact X tokenIn, if positive => receiving exact X tokenOut
+      sqrtPriceLimitX96: zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1
     });
 
     // Execute swap — returns BalanceDelta packed as int256
@@ -439,16 +473,20 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
   // CURVE SWAP IMPLEMENTATION
   // ========================================================================================
-  function _swapOnCurve(SwapStep memory step) internal {
-    // IERC20Z(step.tokenIn).forceApprove(step.poolAddress, step.amountIn); // Safe Approve token to swap
-  }
+  // function _swapOnCurve(SwapStep memory step) internal returns (uint256 amountOut) {
+  //   amountOut = 0;
+  //   return amountOut;
+  //   // IERC20Z(step.tokenIn).forceApprove(step.poolAddress, step.amountIn); // Safe Approve token to swap
+  // }
 
   // ========================================================================================
   // BALANCER SWAP IMPLEMENTATION
   // ========================================================================================
-  function _swapOnBalancer(SwapStep memory step) internal {
-    // IERC20Z(step.tokenIn).forceApprove(step.poolAddress, step.amountIn); // Safe Approve token to swap
-  }
+  // function _swapOnBalancer(SwapStep memory step) internal returns (uint256 amountOut) {
+  //   amountOut = 0;
+  //   return amountOut;
+  //   // IERC20Z(step.tokenIn).forceApprove(step.poolAddress, step.amountIn); // Safe Approve token to swap
+  // }
 
   // ========================================================================================
   // EMERGENCY FUNCTIONS

@@ -92,6 +92,9 @@ export class PathEvaluator {
         return null;
       }
 
+      const gasAnalysis = this.gasManager.getGasAnalysis(path, grossProfitUSD);
+      if (!gasAnalysis) return null; // path not profitable after gas
+
       // 4. Create evaluated path (TODO: revisit)
       const evaluatedPath: ArbitrageOpportunity = {
         id: path.id,
@@ -102,7 +105,8 @@ export class PathEvaluator {
         borrowAmount: optimalAmount,
         grossProfitToken,
         grossProfitUSD,
-        netProfitUSD: 0, // Set after gas analysis
+        netProfitUSD: grossProfitUSD - gasAnalysis.gasCostUSD,
+        gasAnalysis,
 
         steps: simulatedSteps,
         totalSlippage,
@@ -113,14 +117,6 @@ export class PathEvaluator {
 
       // this.logger.debug(`Evaluated path ${path.id}: Profit $${grossProfitUSD.toFixed(2)}, Slippage ${totalSlippage.toFixed(4)}%`);
       // this.displayPath(evaluatedPath);
-
-      // 5. Gas analysis
-      try {
-        this.gasManager.fillGasAnalysis(evaluatedPath);
-      } catch (err) {
-        this.logger.debug(`Gas analysis failed for path ${path.id}: ${(err as Error).message}`);
-        return null; // Not profitable after gas
-      }
 
       return evaluatedPath;
     } catch (error) {
@@ -157,7 +153,7 @@ export class PathEvaluator {
   private findOptimalAmountTernarySearch(path: ArbitragePath): bigint {
     const firstStep = path.steps[0];
     const borrowToken = path.borrowToken;
-    const zeroForOne = isZeroForOne(borrowToken.address, firstStep.pool);
+    const zeroForOne = isZeroForOne(firstStep.pool.tokenPair, borrowToken.address);
     const reserve = zeroForOne ? firstStep.pool.reserve0! : firstStep.pool.reserve1!;
 
     // Find bottleneck pool (smallest liquidity)
@@ -210,7 +206,7 @@ export class PathEvaluator {
   private findOptimalAmountGoldenSectionSearch(path: ArbitragePath): bigint {
     const firstStep = path.steps[0];
     const borrowToken = path.borrowToken;
-    const zeroForOne = isZeroForOne(borrowToken.address, firstStep.pool);
+    const zeroForOne = isZeroForOne(firstStep.pool.tokenPair, borrowToken.address);
     const reserve = zeroForOne ? firstStep.pool.reserve0! : firstStep.pool.reserve1!;
 
     // Find bottleneck pool (smallest liquidity)
@@ -295,7 +291,7 @@ export class PathEvaluator {
     if (inputAmount <= 0n) return -1_000_000_000_000_000n;
     let currentAmount = inputAmount;
     for (const step of steps) {
-      const zeroForOne = isZeroForOne(step.tokenIn.address, step.pool);
+      const zeroForOne = isZeroForOne(step.pool.tokenPair, step.tokenIn.address);
       const amountOut = this.dexManager.simulateSwap(step.pool, currentAmount, zeroForOne);
       currentAmount = amountOut;
     }
@@ -319,7 +315,7 @@ export class PathEvaluator {
     let currentAmount = initialAmount;
 
     for (const step of steps) {
-      const zeroForOne = isZeroForOne(step.tokenIn.address, step.pool);
+      const zeroForOne = isZeroForOne(step.pool.tokenPair, step.tokenIn.address);
 
       try {
         const amountOut = this.dexManager.simulateSwap(step.pool, currentAmount, zeroForOne);
