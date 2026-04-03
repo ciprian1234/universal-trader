@@ -19,16 +19,16 @@ import { ethers } from 'ethers';
 const chainConfig = appConfig.platforms['ethereum'] as ChainConfig;
 
 // NOTE: when executing swaps in parallet with watcher => deploy the contract from a different wallet so we have acurate balance tracking for the swap results
-const CONTRACT_ADDRESS = '0xb17cb6ac7dE18102FB9c979f82F88623569AA1F4'; // chainConfig.arbitrageContractAddress;
-const WALLET_PRIVATE_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'; // chainConfig.walletPrivateKey;
+const CONTRACT_ADDRESS = ''; // chainConfig.arbitrageContractAddress;
+const WALLET_PRIVATE_KEY = ''; // chainConfig.walletPrivateKey;
 
 if (!CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS not set in config');
 if (!WALLET_PRIVATE_KEY) throw new Error('WALLET_PRIVATE_KEY not set in config');
 
 // input pool from DB
 const DB_POOL_ID = '';
-const ZERO_FOR_ONE = true;
-const amountInFormatted = '1'; // human readable amount to swap
+const ZERO_FOR_ONE = false;
+const amountInFormatted = '0.001'; // human readable amount to swap
 
 // ========================================================================================
 // INIT COMPONENTS
@@ -70,10 +70,6 @@ function buildSwapStep(params: {
   let tokenIn = params.zeroForOne ? token0.address : token1.address;
   let tokenOut = params.zeroForOne ? token1.address : token0.address;
 
-  tokenIn = tokenIn === ethers.ZeroAddress ? WETH_ADDRESS : tokenIn;
-  tokenOut = tokenOut === ethers.ZeroAddress ? WETH_ADDRESS : tokenOut;
-
-  // if (tokenIn === ethers.ZeroAddress)
   return {
     dexProtocol: FlashArbitrageHandler.getDexTypeEnumValueFromPool(pool.protocol),
     poolTokens: [pool.tokenPair.token0.address, pool.tokenPair.token1.address],
@@ -99,23 +95,27 @@ function formatBalance(tokenAddress: string, rawBalance: bigint) {
 async function fundContract(signer: any, tokenAddr: string, amountInString: string): Promise<bigint> {
   let tx: any;
 
-  // If token is ETH => send always WETH instead of ETH
+  // ETH
   if (tokenAddr === ethers.ZeroAddress) {
-    // tx = await signer.sendTransaction({ to: CONTRACT_ADDRESS, value: amount }); // do not send ETH anymore
-    tokenAddr = WETH_ADDRESS;
+    const amount = ethers.parseEther(amountInString);
+    tx = await signer.sendTransaction({ to: CONTRACT_ADDRESS, value: amount }); // do not send ETH anymore
+    await tx.wait();
+    logger.info(`📤 Contract funded with ${ethers.formatEther(amount)} ETH`);
+    return amount;
+  } else {
+    // if WETH => WRAP
+    if (tokenAddr === WETH_ADDRESS) await wrapETH(signer, ethers.parseEther(amountInString));
+
+    // transfer ERC20 token to contract
+    const token = await tokenManager.ensureTokenRegistered(tokenAddr, 'address');
+    const amount = ethers.parseUnits(amountInString, token.decimals);
+    const tokenContract = new ethers.Contract(tokenAddr, WETH_ABI, signer);
+    tx = await tokenContract.transfer(CONTRACT_ADDRESS, amount);
+
+    await tx.wait();
+    logger.info(`📤 Contract funded with ${ethers.formatUnits(amount, token.decimals)} ${token.symbol}`);
+    return amount;
   }
-
-  // WRAP ETH first
-  if (tokenAddr === WETH_ADDRESS) await wrapETH(signer, ethers.parseEther(amountInString));
-
-  const token = await tokenManager.ensureTokenRegistered(tokenAddr, 'address');
-  const amount = ethers.parseUnits(amountInString, token.decimals);
-  const tokenContract = new ethers.Contract(tokenAddr, WETH_ABI, signer);
-  tx = await tokenContract.transfer(CONTRACT_ADDRESS, amount);
-
-  await tx.wait();
-  logger.info(`📤 Contract funded with ${ethers.formatUnits(amount, token.decimals)} ${token.symbol}`);
-  return amount;
 }
 
 // WRAP/UNWRAP helpers
@@ -147,9 +147,8 @@ async function main() {
   const storedPool = pools.find((p) => p.id === DB_POOL_ID);
   if (!storedPool) throw new Error(`Pool with id ${DB_POOL_ID} not found in database`);
   const pool = storedPool.state;
-  // const { token0, token1 } = pool.tokenPair;
-  const t0Addr = pool.tokenPair.token0.address === ethers.ZeroAddress ? WETH_ADDRESS : pool.tokenPair.token0.address;
-  const t1Addr = pool.tokenPair.token1.address === ethers.ZeroAddress ? WETH_ADDRESS : pool.tokenPair.token1.address;
+  const t0Addr = pool.tokenPair.token0.address;
+  const t1Addr = pool.tokenPair.token1.address;
 
   logger.info(`🔍 Loaded pool from DB: ${pool.venue.name} ${pool.tokenPair.key} fee ${pool.feeBps}bps`);
   const t0 = await tokenManager.ensureTokenRegistered(t0Addr, 'address');
@@ -181,11 +180,13 @@ async function main() {
   const amountFunded = await fundContract(wallet, ZERO_FOR_ONE ? t0Addr : t1Addr, amountInFormatted);
 
   // Balances before
-  // logger.info('📊 Balances BEFORE swap:');
-  // const token0Before = await tokenManager.getTokenBalance(t0Addr, CONTRACT_ADDRESS);
-  // const token1Before = await tokenManager.getTokenBalance(t1Addr, CONTRACT_ADDRESS);
-  // logger.info(`Contract token0: ${formatBalance(t0Addr, token0Before)}`);
-  // logger.info(`Contract token1: ${formatBalance(t1Addr, token1Before)}`);
+  logger.info('📊 Balances BEFORE swap:');
+  const contractEthBalance = await tokenManager.getTokenBalance(ethers.ZeroAddress, CONTRACT_ADDRESS);
+  const token0Before = await tokenManager.getTokenBalance(t0Addr, CONTRACT_ADDRESS);
+  const token1Before = await tokenManager.getTokenBalance(t1Addr, CONTRACT_ADDRESS);
+  logger.info(`Contract: ${formatBalance(ethers.ZeroAddress, contractEthBalance)}`);
+  logger.info(`Contract token0: ${formatBalance(t0Addr, token0Before)}`);
+  logger.info(`Contract token1: ${formatBalance(t1Addr, token1Before)}`);
 
   // Build the swap step
   const step = buildSwapStep({
@@ -204,17 +205,24 @@ async function main() {
   // ========================================================================================
   // VALIDATION
   // ========================================================================================
-  // logger.info('🔍 Balances AFTER swap:');
-  // const token0After = await tokenManager.getTokenBalance(t0Addr, CONTRACT_ADDRESS);
-  // const token1After = await tokenManager.getTokenBalance(t1Addr, CONTRACT_ADDRESS);
-  // const token0Delta = token0After - token0Before;
-  // const token1Delta = token1After - token1Before;
-  // logger.info(`Delta token0: ${formatBalance(t0Addr, token0Delta)}`);
-  // logger.info(`Delta token1: ${formatBalance(t1Addr, token1Delta)}`);
+  logger.info('🔍 Balances AFTER swap:');
+  const contractEthBalanceAfter = await tokenManager.getTokenBalance(ethers.ZeroAddress, CONTRACT_ADDRESS);
+  const token0After = await tokenManager.getTokenBalance(t0Addr, CONTRACT_ADDRESS);
+  const token1After = await tokenManager.getTokenBalance(t1Addr, CONTRACT_ADDRESS);
+  const token0Delta = token0After - token0Before;
+  const token1Delta = token1After - token1Before;
+  logger.info(`Contract: ${formatBalance(ethers.ZeroAddress, contractEthBalanceAfter)}`);
+  logger.info(`Contract token0: ${formatBalance(t0Addr, token0After)}`);
+  logger.info(`Contract token1: ${formatBalance(t1Addr, token1After)}`);
+  logger.info(`Delta: ${formatBalance(ethers.ZeroAddress, contractEthBalanceAfter - contractEthBalance)}`);
+  logger.info(`Delta token0: ${formatBalance(t0Addr, token0Delta)}`);
+  logger.info(`Delta token1: ${formatBalance(t1Addr, token1Delta)}`);
 
   // Withdraw result back to owner
   logger.info(`💸 Withdrawing ${ZERO_FOR_ONE ? t1.symbol : t0.symbol} to owner...`);
   await (await arbitrageContract.emergencyWithdraw(ZERO_FOR_ONE ? t1Addr : t0Addr)).wait();
+  await (await arbitrageContract.emergencyWithdraw(ethers.ZeroAddress)).wait(); // clear any leftover ETH (from unwrapping WETH if tokenOut was WETH)
+  await (await arbitrageContract.emergencyWithdraw(WETH_ADDRESS)).wait(); // clear any leftover WETH (from wrapping ETH if tokenIn was ETH)
   const newWalletToken0Balance = await tokenManager.getTokenBalance(t0Addr, walletAddress);
   const newWalletToken1Balance = await tokenManager.getTokenBalance(t1Addr, walletAddress);
 

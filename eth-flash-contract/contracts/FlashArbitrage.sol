@@ -116,7 +116,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     address[] poolTokens; // for v2/v3/v4: [token0, token1], for balancer: [token0, token1, token2, ...]
     address tokenIn;
     address tokenOut;
-    int256 amountSpecified; // if negative => spending exact X tokenIn, if positive => receiving exact X tokenOut
+    int256 amountSpecified; // computed for each swap type based on amountIn
     uint256 amountOutMin; // optional param we can specify on each swap for price impact protection
     uint24 poolFee; // for v2 its: 30 (0.3%), for v3 it represents the fee tier (100, 500, 3000, 10000) or custom for v4
     bytes extraData; // used by V4 and other protocols to pass additional parameters like pool keys, hook data, etc.
@@ -279,12 +279,17 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   function _executeSwap(SwapStep memory step) internal returns (uint256 amountOut) {
     uint256 amountIn = _resolveTokenIn(step); // NOTE: this its positive balance available for swap
     require(amountIn <= uint256(type(int256).max), 'amountIn overflow');
-    step.amountSpecified = -int256(amountIn); // always specify exact X amount of tokenIn (which must be negative)
 
-    if (step.dexProtocol == DexProtocol.V2) amountOut = _swapOnV2(step);
-    else if (step.dexProtocol == DexProtocol.V3) amountOut = _swapOnV3(step);
-    else if (step.dexProtocol == DexProtocol.V4) amountOut = _swapOnV4(step);
-    else revert('Unsupported DEX type');
+    if (step.dexProtocol == DexProtocol.V2) {
+      step.amountSpecified = -int256(amountIn); // specify exact X amount of tokenIn for V2 swap (must be negative)
+      amountOut = _swapOnV2(step);
+    } else if (step.dexProtocol == DexProtocol.V3) {
+      step.amountSpecified = int256(amountIn); // specify exact X amount of tokenIn for V3 swap (must be POSITIVE to indicate exact input in V3)
+      amountOut = _swapOnV3(step);
+    } else if (step.dexProtocol == DexProtocol.V4) {
+      step.amountSpecified = -int256(amountIn); // specify exact X amount of tokenIn for V4 swap (must be negative)
+      amountOut = _swapOnV4(step);
+    } else revert('Unsupported DEX type');
 
     require(amountOut >= step.amountOutMin, 'Insufficient amountOut');
     return amountOut;
@@ -341,7 +346,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     (int256 amount0, int256 amount1) = pool.swap(
       address(this),
       zeroForOne,
-      step.amountSpecified, // NOTE: if negative => spending exact X tokenIn, if positive => receiving exact X tokenOut
+      step.amountSpecified, // NOTE: spending exact X tokenIn (specifiedAmount must be positive to indicate exact input in V3)
       sqrtPriceLimitX96, // Price limit for slippage control
       abi.encode(step.tokenIn) // Pass the encoded callback data
     );
