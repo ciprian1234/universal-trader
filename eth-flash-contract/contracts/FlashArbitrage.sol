@@ -130,13 +130,26 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     uint256 minProfitTokenOut; // minimum profit threshold to execute the trade (in raw amount of tokenOut from last swap)
   }
 
+  // error types
+  error NotAuthorized(address caller);
+  error InvalidAddress(address addr);
+  error InvalidCaller(address caller);
+  error TransferFailed(address to, address token, uint256 amount);
+  error OverflowError(uint16 location, uint256 amount);
+  error InvalidDexProtocol(uint256 protocol);
+  error InvalidDeltasV3(int256 delta0, int256 delta1);
+  error InsufficientLiquidity(uint256 reserve, uint256 amount);
+  error InsufficientAmountOut(uint256 minimum, uint256 actual);
+  error LoanRepaymentNotMet(address token, uint256 amount, uint256 actualBalance);
+  error MinProfitNotMet(address token, uint256 minProfit, uint256 actualBalance);
+
   constructor() {
     owner = msg.sender;
   }
 
   // access control modifier
   modifier onlyOwner() {
-    require(msg.sender == owner, 'Not owner');
+    if (msg.sender != owner) revert NotAuthorized(msg.sender);
     _;
   }
 
@@ -166,7 +179,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     // (if arb reverts, entire tx reverts — bribe is always atomic)
     if (msg.value > 0) {
       (bool okBribe, ) = block.coinbase.call{value: msg.value}('');
-      require(okBribe, 'Coinbase bribe failed');
+      if (!okBribe) revert TransferFailed(block.coinbase, address(0), msg.value);
     }
 
     // Encode the trade struct to pass it to the flash loan callback
@@ -197,7 +210,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     uint256[] memory feeAmounts,
     bytes memory callbackData
   ) external override {
-    require(msg.sender == address(vault), 'Invalid caller'); // ensure caller its balancer vault
+    if (msg.sender != address(vault)) revert InvalidCaller(msg.sender); // ensure caller its balancer vault
 
     Trade memory trade = abi.decode(callbackData, (Trade)); // Decode our swap data so we can use it
     address borrowToken = address(tokens[0]);
@@ -219,7 +232,8 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
       : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
 
     // ######################### REPAY FLASH LOAN #########################
-    require(lastSwapTokenOutBalance >= requiredRepayment, 'Insufficient profit to repay loan');
+    if (lastSwapTokenOutBalance < requiredRepayment)
+      revert LoanRepaymentNotMet(lastSwapTokenOut, requiredRepayment, lastSwapTokenOutBalance);
     if (lastSwapTokenOut == address(0)) {
       IWETH(WETH_ADDRESS).deposit{value: requiredRepayment}(); // => WRAP to WETH for repayment (profit in raw ETH)
     }
@@ -238,18 +252,19 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
       if (trade.internalBribeBps > 0) {
         uint256 bribeAmount = (profitAfterRepayment * trade.internalBribeBps) / 10000;
         (bool okBribe, ) = block.coinbase.call{value: bribeAmount}('');
-        require(okBribe, 'Internal bribe failed');
+        if (!okBribe) revert TransferFailed(block.coinbase, address(0), bribeAmount);
       }
 
       // transfer remaining ETH profit to owner
       uint256 ethRemaining = address(this).balance;
-      require(ethRemaining >= trade.minProfitTokenOut, 'ethRemaining < minProfitTokenOut');
+      if (ethRemaining < trade.minProfitTokenOut) revert MinProfitNotMet(address(0), trade.minProfitTokenOut, ethRemaining);
       (bool okProfit, ) = owner.call{value: ethRemaining}('');
-      require(okProfit, 'ETH profit transfer failed');
+      if (!okProfit) revert TransferFailed(owner, address(0), ethRemaining);
     } else {
       // CASE 2: profit in ERC20 token => transfer profit to owner only
       uint256 tokenRemaining = IERC20Z(lastSwapTokenOut).balanceOf(address(this));
-      require(tokenRemaining >= trade.minProfitTokenOut, 'tokenRemaining < minProfitTokenOut');
+      if (tokenRemaining < trade.minProfitTokenOut)
+        revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, tokenRemaining);
       IERC20Z(lastSwapTokenOut).safeTransfer(owner, tokenRemaining);
     }
   }
@@ -278,20 +293,20 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
   function _executeSwap(SwapStep memory step) internal returns (uint256 amountOut) {
     uint256 amountIn = _resolveTokenIn(step); // NOTE: this its positive balance available for swap
-    require(amountIn <= uint256(type(int256).max), 'amountIn overflow');
+    if (amountIn > uint256(type(int256).max)) revert OverflowError(1, amountIn);
 
     if (step.dexProtocol == DexProtocol.V2) {
-      step.amountSpecified = -int256(amountIn); // specify exact X amount of tokenIn for V2 swap (must be negative)
+      step.amountSpecified = int256(amountIn); // specify exact X amount of tokenIn for V2 swap (must be POSITIVE on V2 formula)
       amountOut = _swapOnV2(step);
     } else if (step.dexProtocol == DexProtocol.V3) {
       step.amountSpecified = int256(amountIn); // specify exact X amount of tokenIn for V3 swap (must be POSITIVE to indicate exact input in V3)
       amountOut = _swapOnV3(step);
     } else if (step.dexProtocol == DexProtocol.V4) {
-      step.amountSpecified = -int256(amountIn); // specify exact X amount of tokenIn for V4 swap (must be negative)
+      step.amountSpecified = -int256(amountIn); // specify exact X amount of tokenIn for V4 swap (must be NEGATIVE to indicate exact input in V4)
       amountOut = _swapOnV4(step);
-    } else revert('Unsupported DEX type');
+    } else revert InvalidDexProtocol(uint256(step.dexProtocol));
 
-    require(amountOut >= step.amountOutMin, 'Insufficient amountOut');
+    if (amountOut < step.amountOutMin) revert InsufficientAmountOut(step.amountOutMin, amountOut);
     return amountOut;
   }
 
@@ -306,27 +321,17 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     bool zeroForOne = step.poolTokens[0] == step.tokenIn; // determine swap direction based on tokenIn
     uint256 reserveIn = zeroForOne ? uint256(reserve0) : uint256(reserve1);
     uint256 reserveOut = zeroForOne ? uint256(reserve1) : uint256(reserve0);
-    uint256 amountOut;
-    uint256 amountInUsed;
 
-    if (step.amountSpecified > 0) {
-      // amountIn holds the target output amount
-      amountOut = uint256(step.amountSpecified);
-      // inverse constant-product formula: how much tokenIn do we need?
-      uint256 numerator = reserveIn * amountOut * 10000;
-      uint256 denominator = (reserveOut - amountOut) * (10000 - step.poolFee);
-      amountInUsed = (numerator / denominator) + 1; // +1 to ceil (avoid off-by-one underflow)
-    } else {
-      amountInUsed = uint256(-step.amountSpecified); // convert to positive
-      uint256 amountInWithFee = amountInUsed * (10000 - step.poolFee);
-      amountOut = (amountInWithFee * reserveOut) / (reserveIn * 10000 + amountInWithFee);
-    }
+    // V2 formula with fee: amountOut = (amountIn * (10000 - fee) * reserveOut) / (reserveIn * 10000 + amountIn * (10000 - fee))
+    uint256 amountIn = uint256(step.amountSpecified); // this must be positive to indicate exact input for V2 formula
+    uint256 amountInWithFee = amountIn * (10000 - step.poolFee);
+    uint256 amountOut = (amountInWithFee * reserveOut) / (reserveIn * 10000 + amountInWithFee);
 
     // sanity check to prevent swaps that would fail due to insufficient liquidity (e.g. if amountOut >= reserveOut, the swap will fail)
-    require(amountOut < reserveOut, 'V2: insufficient liquidity for exact output');
+    if (amountOut >= reserveOut) revert InsufficientLiquidity(reserveOut, amountOut);
 
     // Transfer tokens directly to pool — V2 pull model
-    IERC20Z(step.tokenIn).safeTransfer(address(pair), amountInUsed);
+    IERC20Z(step.tokenIn).safeTransfer(address(pair), amountIn);
     (uint256 amount0Out, uint256 amount1Out) = zeroForOne ? (uint256(0), amountOut) : (amountOut, uint256(0));
     pair.swap(amount0Out, amount1Out, address(this), '');
     return amountOut;
@@ -360,7 +365,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // Generic callback by V3 pool during swap() to pull the owed tokens
   // NOTE: this callback its called inside the swap execution synchronously
   function _handleV3Callback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) internal {
-    require(msg.sender == _getAllowedCallerAddress(), 'V3: invalid callback caller');
+    if (msg.sender != _getAllowedCallerAddress()) revert InvalidCaller(msg.sender);
     address tokenIn = abi.decode(data, (address));
 
     // Determine the amount owed and transfer it to the pool
@@ -368,7 +373,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     if (amount0Delta > 0) {
       amountOwed = uint256(amount0Delta);
     } else {
-      require(amount1Delta > 0, 'V3: both deltas non-positive');
+      if (amount1Delta <= 0) revert InvalidDeltasV3(amount0Delta, amount1Delta);
       amountOwed = uint256(amount1Delta);
     }
 
@@ -408,7 +413,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
 
   // called by V4 PoolManager during unlock() to execute the swap logic and handle token transfers
   function unlockCallback(bytes calldata data) external returns (bytes memory) {
-    require(msg.sender == _getAllowedCallerAddress(), 'V4: invalid callback caller');
+    if (msg.sender != _getAllowedCallerAddress()) revert InvalidCaller(msg.sender);
 
     SwapStep memory step = abi.decode(data, (SwapStep));
     bool zeroForOne = step.poolTokens[0] == step.tokenIn; // determine swap direction based on tokenIn
@@ -501,8 +506,8 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
       // Withdraw ETH
       uint256 balance = address(this).balance;
       if (balance > 0) {
-        (bool success, ) = owner.call{value: balance}('');
-        require(success, 'ETH transfer failed');
+        (bool ok, ) = owner.call{value: balance}('');
+        if (!ok) revert TransferFailed(owner, address(0), balance);
       }
     } else {
       // Withdraw ERC20 token
@@ -514,7 +519,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   }
 
   function updateOwner(address _newOwner) external onlyOwner {
-    require(_newOwner != address(0), 'Invalid address');
+    if (_newOwner == address(0)) revert InvalidAddress(_newOwner);
     owner = _newOwner;
   }
 }
