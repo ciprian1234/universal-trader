@@ -61,7 +61,6 @@ export class FlashArbitrageHandler {
   // config
   private readonly ENABLE_FLASH_ARBITRAGE: boolean;
   private readonly USE_FLASHBOTS: boolean;
-  private readonly MIN_PRIORITY_FEE: bigint;
   private readonly WETH_ADDR: string;
   private readonly MAX_BRIBE_USD: number; // max bribe for direct payment opportunities
 
@@ -85,7 +84,6 @@ export class FlashArbitrageHandler {
     // config
     this.ENABLE_FLASH_ARBITRAGE = true;
     this.USE_FLASHBOTS = this.chainConfig.flashbotsEnabled;
-    this.MIN_PRIORITY_FEE = this.chainConfig.minPriorityFee;
     this.WETH_ADDR = this.chainConfig.wrappedNativeTokenAddress;
     this.MAX_BRIBE_USD = 20;
 
@@ -620,9 +618,10 @@ export class FlashArbitrageHandler {
     const trade = opportunity.trade!;
     // Basic sanity checks on trade structure
     if (trade.swaps.length < 2) throw new Error('Need at least 2 swaps for arbitrage');
-    if (trade.swaps[0].tokenIn !== trade.swaps[trade.swaps.length - 1].tokenOut) throw new Error(`EntryTokenIn != ExitTokenOut`);
+    if (!this.areTokenAddressesEqual(trade.swaps[0].tokenIn, trade.swaps[trade.swaps.length - 1].tokenOut))
+      throw new Error(`EntryTokenIn != ExitTokenOut`);
     for (let i = 0; i < trade.swaps.length - 1; i++) {
-      if (trade.swaps[i].tokenOut !== trade.swaps[i + 1].tokenIn) {
+      if (!this.areTokenAddressesEqual(trade.swaps[i].tokenOut, trade.swaps[i + 1].tokenIn)) {
         throw new Error(`Swap chain broken between swaps ${i} and ${i + 1}`);
       }
     }
@@ -632,6 +631,13 @@ export class FlashArbitrageHandler {
     const staticCallResult = await this.contract!.executeTrade.staticCall(trade);
     this.logger.info(`✅ Pre-execution validation passed for: "${opportunity.id}"`, { staticCallResult });
     return true;
+  }
+
+  // NOTE: take into consideration (ETH = WETH) when comparing token addresses for swap path validation
+  private areTokenAddressesEqual(addrA: string, addrB: string): boolean {
+    if (addrA === ethers.ZeroAddress && addrB === this.WETH_ADDR) return true;
+    if (addrB === ethers.ZeroAddress && addrA === this.WETH_ADDR) return true;
+    return addrA.toLowerCase() === addrB.toLowerCase();
   }
 
   /*
