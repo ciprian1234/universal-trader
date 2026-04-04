@@ -174,7 +174,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // ========================================================================================
   // ENTRY POINT FOR EXECUTING AN ARBITRAGE TRADE
   // ========================================================================================
-  function executeTrade(Trade memory _trade) external payable onlyOwner nonReentrant {
+  function executeTrade(Trade memory trade) external payable onlyOwner nonReentrant {
     // Pay external bribe from msg.value BEFORE flash loan
     // (if arb reverts, entire tx reverts — bribe is always atomic)
     if (msg.value > 0) {
@@ -183,15 +183,50 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     }
 
     // Encode the trade struct to pass it to the flash loan callback
-    bytes memory data = abi.encode(_trade);
+    bytes memory data = abi.encode(trade);
 
     // Flash loan setup
     IERC20[] memory tokens = new IERC20[](1);
     uint256[] memory amounts = new uint256[](1);
+    tokens[0] = IERC20(trade.borrowToken); // The token we will borrow
+    amounts[0] = trade.borrowAmount; // The amount we will borrow
 
-    tokens[0] = IERC20(_trade.borrowToken); // The token we will borrow
-    amounts[0] = _trade.borrowAmount; // The amount we will borrow
+    // Initiate flash loan from Balancer Vault
+    // => this will trigger a callback to receiveFlashLoan() where we execute our arbitrage logic
     vault.flashLoan(this, tokens, amounts, data);
+    _handleProfit(trade); //  profit handled here after flash loan repayment
+  }
+
+  // ========================================================================================
+  // HANDLE PROFIT FUNCTION (EXECUTED AFTER FLASH LOAN REPAYMENT)
+  // ========================================================================================
+  function _handleProfit(Trade memory trade) internal {
+    address lastSwapTokenOut = trade.swaps[trade.swaps.length - 1].tokenOut;
+    uint256 profitBalance = lastSwapTokenOut == address(0)
+      ? address(this).balance
+      : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
+
+    if (lastSwapTokenOut == WETH_ADDRESS || lastSwapTokenOut == address(0)) {
+      if (lastSwapTokenOut == WETH_ADDRESS) IWETH(WETH_ADDRESS).withdraw(profitBalance); // (UNWRAP WETH => ETH)
+
+      // if internalBribeBps its set => pay direct bribe in ETH
+      if (trade.internalBribeBps > 0) {
+        uint256 bribeAmount = (profitBalance * trade.internalBribeBps) / 10000;
+        (bool okBribe, ) = block.coinbase.call{value: bribeAmount}('');
+        if (!okBribe) revert TransferFailed(block.coinbase, address(0), bribeAmount);
+      }
+
+      // transfer remaining ETH to owner
+      uint256 ethRemaining = address(this).balance;
+      if (ethRemaining < trade.minProfitTokenOut) revert MinProfitNotMet(address(0), trade.minProfitTokenOut, ethRemaining);
+      (bool okProfit, ) = owner.call{value: ethRemaining}('');
+      if (!okProfit) revert TransferFailed(owner, address(0), ethRemaining);
+    } else {
+      // CASE 2: profit in ERC20 token => transfer profit to owner only
+      if (profitBalance < trade.minProfitTokenOut)
+        revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, profitBalance);
+      IERC20Z(lastSwapTokenOut).safeTransfer(owner, profitBalance);
+    }
   }
 
   // ========================================================================================
@@ -234,39 +269,10 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     // ######################### REPAY FLASH LOAN #########################
     if (lastSwapTokenOutBalance < requiredRepayment)
       revert LoanRepaymentNotMet(lastSwapTokenOut, requiredRepayment, lastSwapTokenOutBalance);
-    if (lastSwapTokenOut == address(0)) {
-      IWETH(WETH_ADDRESS).deposit{value: requiredRepayment}(); // => WRAP to WETH for repayment (profit in raw ETH)
-    }
+    if (lastSwapTokenOut == address(0)) IWETH(WETH_ADDRESS).deposit{value: requiredRepayment}(); // (WRAP ETH)
 
     // Repay flash loan (borrowToken is always ERC20)
     IERC20Z(borrowToken).safeTransfer(address(vault), requiredRepayment);
-
-    // ######################### HANDLE PROFIT #########################
-    uint256 profitAfterRepayment = lastSwapTokenOutBalance - requiredRepayment;
-
-    if (lastSwapTokenOut == WETH_ADDRESS || lastSwapTokenOut == address(0)) {
-      // CASE 1: profit in ETH/WETH => we can pay bribe directly from profit and transfer remaining ETH to owner
-      if (lastSwapTokenOut == WETH_ADDRESS) IWETH(WETH_ADDRESS).withdraw(profitAfterRepayment); // unwrap WETH => profit in raw ETH
-
-      // we can only pay bribe only in if lastSwapTokenOut its ETH or WETH (at this point => profit sits in RAW ETH)
-      if (trade.internalBribeBps > 0) {
-        uint256 bribeAmount = (profitAfterRepayment * trade.internalBribeBps) / 10000;
-        (bool okBribe, ) = block.coinbase.call{value: bribeAmount}('');
-        if (!okBribe) revert TransferFailed(block.coinbase, address(0), bribeAmount);
-      }
-
-      // transfer remaining ETH profit to owner
-      uint256 ethRemaining = address(this).balance;
-      if (ethRemaining < trade.minProfitTokenOut) revert MinProfitNotMet(address(0), trade.minProfitTokenOut, ethRemaining);
-      (bool okProfit, ) = owner.call{value: ethRemaining}('');
-      if (!okProfit) revert TransferFailed(owner, address(0), ethRemaining);
-    } else {
-      // CASE 2: profit in ERC20 token => transfer profit to owner only
-      uint256 tokenRemaining = IERC20Z(lastSwapTokenOut).balanceOf(address(this));
-      if (tokenRemaining < trade.minProfitTokenOut)
-        revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, tokenRemaining);
-      IERC20Z(lastSwapTokenOut).safeTransfer(owner, tokenRemaining);
-    }
   }
 
   // ========================================================================================
@@ -521,5 +527,33 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   function updateOwner(address _newOwner) external onlyOwner {
     if (_newOwner == address(0)) revert InvalidAddress(_newOwner);
     owner = _newOwner;
+  }
+
+  // ========================================================================================
+  // SIMULATULATION HELPERS (NOT USED IN PRODUCTION, ONLY FOR TESTING AND SIMULATION PURPOSES)
+  // ========================================================================================
+  error SimulationSuccess(uint256 profitOut);
+  error SimulationError(bytes reason);
+
+  function simulateTrade(Trade memory trade) external {
+    // Encode the trade struct to pass it to the flash loan callback
+    bytes memory data = abi.encode(trade);
+
+    // Flash loan setup
+    IERC20[] memory tokens = new IERC20[](1);
+    uint256[] memory amounts = new uint256[](1);
+    tokens[0] = IERC20(trade.borrowToken);
+    amounts[0] = trade.borrowAmount;
+
+    try vault.flashLoan(this, tokens, amounts, data) {
+      // get balance of tokenOut from last swap to return as result of simulation
+      address lastSwapTokenOut = trade.swaps[trade.swaps.length - 1].tokenOut;
+      uint256 profitBalance = lastSwapTokenOut == address(0)
+        ? address(this).balance
+        : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
+      revert SimulationSuccess(profitBalance); // => profit after loan repayment
+    } catch (bytes memory err) {
+      revert SimulationError(err);
+    }
   }
 }
