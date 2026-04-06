@@ -169,7 +169,6 @@ class EVMWorker extends BaseWorker {
     this.gasManager = new GasManager({
       chainConfig: this.chainConfig,
       blockchain: this.blockchain,
-      priceOracle: this.priceOracle,
       walletManager: this.walletManager,
     });
 

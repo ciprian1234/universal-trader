@@ -3,7 +3,6 @@ import { Blockchain } from './blockchain';
 import { createLogger, type Logger } from '@/utils';
 import { WalletManager } from './wallet-manager';
 import type { ChainConfig } from '@/config/models';
-import type { PriceOracle } from './price-oracle';
 import type { DexProtocol } from '@/shared/data-model/layer1';
 import type { BlockEntry } from './block-manager';
 import { formatGwei } from './helpers';
@@ -14,16 +13,13 @@ type GasManagerInput = {
   chainConfig: ChainConfig;
   blockchain: Blockchain;
   walletManager: WalletManager;
-  priceOracle: PriceOracle;
 };
 
 export class GasManager {
   private readonly logger: Logger;
   private readonly chainConfig: ChainConfig;
   private readonly blockchain: Blockchain;
-  private readonly priceOracle: PriceOracle;
 
-  private readonly WRAPPED_NATIVE_TOKEN_ADDRESS: string;
   private readonly MIN_PRIORITY_FEE: bigint;
   private readonly MAX_PRIORITY_FEE: bigint;
 
@@ -57,20 +53,16 @@ export class GasManager {
     this.logger = createLogger(`[${input.chainConfig.name}.GasManager]`); // nice emoji ⛽
     this.chainConfig = input.chainConfig;
     this.blockchain = input.blockchain;
-    this.priceOracle = input.priceOracle;
 
     // get wrapped native token
-    this.WRAPPED_NATIVE_TOKEN_ADDRESS = this.chainConfig.wrappedNativeTokenAddress;
     this.MIN_PRIORITY_FEE = this.chainConfig.minPriorityFee;
     this.MAX_PRIORITY_FEE = this.chainConfig.maxPriorityFee;
 
-    // get native token price
-    this.nativeTokenPriceUSD = this.priceOracle.getPriceUSD(this.WRAPPED_NATIVE_TOKEN_ADDRESS)!;
-    this.logger.info(`Consstructor native token price: $${this.nativeTokenPriceUSD} USD`);
+    // placeholder until we fetch real price from oracle (quickly updated at init)
+    this.nativeTokenPriceUSD = 1000;
   }
 
   setNativeTokenPriceUSD(price: number) {
-    this.logger.info(`Updating native token price: $${price} USD`);
     this.nativeTokenPriceUSD = price;
   }
 

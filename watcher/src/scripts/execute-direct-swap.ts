@@ -18,17 +18,18 @@ import { ethers } from 'ethers';
 
 const chainConfig = appConfig.platforms['ethereum'] as ChainConfig;
 
-// NOTE: when executing swaps in parallet with watcher => deploy the contract from a different wallet so we have acurate balance tracking for the swap results
-const CONTRACT_ADDRESS = ''; // chainConfig.arbitrageContractAddress;
-const WALLET_PRIVATE_KEY = ''; // chainConfig.walletPrivateKey;
+// NOTE: those are safe to commit => from hardhat default accounts(1)
+const CONTRACT_ADDRESS = '0x18945Bd950D4489B8Ec0FA896bd8b52336df954c';
+const WALLET_PRIVATE_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'; // (hardhat[1].privateKey)
 
 if (!CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS not set in config');
 if (!WALLET_PRIVATE_KEY) throw new Error('WALLET_PRIVATE_KEY not set in config');
 
 // input pool from DB
-const DB_POOL_ID = '';
-const ZERO_FOR_ONE = false;
-const amountInFormatted = '0.001'; // human readable amount to swap
+const DB_POOL_ID = '1:0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed181e22d7';
+const ZERO_FOR_ONE = true;
+const amountInFormatted = '0.0001'; // human readable amount to swap
+const amountOutMinFormatted = '0'; // human readable minimum amount to receive
 
 // ========================================================================================
 // INIT COMPONENTS
@@ -180,49 +181,62 @@ async function main() {
   const amountFunded = await fundContract(wallet, ZERO_FOR_ONE ? t0Addr : t1Addr, amountInFormatted);
 
   // Balances before
-  logger.info('📊 Balances BEFORE swap:');
-  const contractEthBalance = await tokenManager.getTokenBalance(ethers.ZeroAddress, CONTRACT_ADDRESS);
-  const token0Before = await tokenManager.getTokenBalance(t0Addr, CONTRACT_ADDRESS);
-  const token1Before = await tokenManager.getTokenBalance(t1Addr, CONTRACT_ADDRESS);
-  logger.info(`Contract: ${formatBalance(ethers.ZeroAddress, contractEthBalance)}`);
-  logger.info(`Contract token0: ${formatBalance(t0Addr, token0Before)}`);
-  logger.info(`Contract token1: ${formatBalance(t1Addr, token1Before)}`);
+  // logger.info('📊 Balances BEFORE swap:');
+  // const contractEthBalance = await tokenManager.getTokenBalance(ethers.ZeroAddress, CONTRACT_ADDRESS);
+  // const token0Before = await tokenManager.getTokenBalance(t0Addr, CONTRACT_ADDRESS);
+  // const token1Before = await tokenManager.getTokenBalance(t1Addr, CONTRACT_ADDRESS);
+  // logger.info(`Contract: ${formatBalance(ethers.ZeroAddress, contractEthBalance)}`);
+  // logger.info(`Contract token0: ${formatBalance(t0Addr, token0Before)}`);
+  // logger.info(`Contract token1: ${formatBalance(t1Addr, token1Before)}`);
 
   // Build the swap step
   const step = buildSwapStep({
     pool,
     zeroForOne: ZERO_FOR_ONE,
     amountIn: amountFunded,
-    amountOutMin: 0n, // set to 0 for testing — we will validate the actual output after the swap
+    // amountOutMin: 0n, // set to 0 for testing — we will validate the actual output after the swap
+    amountOutMin: ethers.parseUnits(amountOutMinFormatted, ZERO_FOR_ONE ? t1.decimals : t0.decimals), // set to human readable minimum amount to receive
   });
 
-  // Execute
-  // logger.info('🔄 Calling executeDirectSwap...', { step });
-  const tx = await arbitrageContract.executeDirectSwap(step);
-  const receipt = await tx.wait();
-  logger.info(`✅ Tx confirmed — block: ${receipt.blockNumber}, gas used: ${receipt.gasUsed}`);
+  try {
+    // Execute
+    // logger.info('🔄 Calling executeDirectSwap...', { step });
+    const staticCallResult = await arbitrageContract.executeDirectSwap.staticCall(step);
+    logger.info('Static call result (amountOut):', { staticCallResult });
+
+    const tx = await arbitrageContract.executeDirectSwap(step);
+    const receipt = await tx.wait();
+    logger.info(`✅ Tx confirmed — block: ${receipt.blockNumber}, gas used: ${receipt.gasUsed}`);
+  } catch (error) {
+    logger.error('Swap error', { error: error });
+
+    // withdraw sent funds back to owner in case of error to avoid locking funds in the contract
+    logger.info('Withdrawing funds back to owner due to error...');
+    await (await arbitrageContract.emergencyWithdraw(ZERO_FOR_ONE ? t0Addr : t1Addr)).wait();
+    process.exit(1);
+  }
 
   // ========================================================================================
   // VALIDATION
   // ========================================================================================
-  logger.info('🔍 Balances AFTER swap:');
-  const contractEthBalanceAfter = await tokenManager.getTokenBalance(ethers.ZeroAddress, CONTRACT_ADDRESS);
-  const token0After = await tokenManager.getTokenBalance(t0Addr, CONTRACT_ADDRESS);
-  const token1After = await tokenManager.getTokenBalance(t1Addr, CONTRACT_ADDRESS);
-  const token0Delta = token0After - token0Before;
-  const token1Delta = token1After - token1Before;
-  logger.info(`Contract: ${formatBalance(ethers.ZeroAddress, contractEthBalanceAfter)}`);
-  logger.info(`Contract token0: ${formatBalance(t0Addr, token0After)}`);
-  logger.info(`Contract token1: ${formatBalance(t1Addr, token1After)}`);
-  logger.info(`Delta: ${formatBalance(ethers.ZeroAddress, contractEthBalanceAfter - contractEthBalance)}`);
-  logger.info(`Delta token0: ${formatBalance(t0Addr, token0Delta)}`);
-  logger.info(`Delta token1: ${formatBalance(t1Addr, token1Delta)}`);
+  // logger.info('🔍 Balances AFTER swap:');
+  // const contractEthBalanceAfter = await tokenManager.getTokenBalance(ethers.ZeroAddress, CONTRACT_ADDRESS);
+  // const token0After = await tokenManager.getTokenBalance(t0Addr, CONTRACT_ADDRESS);
+  // const token1After = await tokenManager.getTokenBalance(t1Addr, CONTRACT_ADDRESS);
+  // const token0Delta = token0After - token0Before;
+  // const token1Delta = token1After - token1Before;
+  // logger.info(`Contract: ${formatBalance(ethers.ZeroAddress, contractEthBalanceAfter)}`);
+  // logger.info(`Contract token0: ${formatBalance(t0Addr, token0After)}`);
+  // logger.info(`Contract token1: ${formatBalance(t1Addr, token1After)}`);
+  // logger.info(`Delta: ${formatBalance(ethers.ZeroAddress, contractEthBalanceAfter - contractEthBalance)}`);
+  // logger.info(`Delta token0: ${formatBalance(t0Addr, token0Delta)}`);
+  // logger.info(`Delta token1: ${formatBalance(t1Addr, token1Delta)}`);
 
   // Withdraw result back to owner
   logger.info(`💸 Withdrawing ${ZERO_FOR_ONE ? t1.symbol : t0.symbol} to owner...`);
   await (await arbitrageContract.emergencyWithdraw(ZERO_FOR_ONE ? t1Addr : t0Addr)).wait();
-  await (await arbitrageContract.emergencyWithdraw(ethers.ZeroAddress)).wait(); // clear any leftover ETH (from unwrapping WETH if tokenOut was WETH)
-  await (await arbitrageContract.emergencyWithdraw(WETH_ADDRESS)).wait(); // clear any leftover WETH (from wrapping ETH if tokenIn was ETH)
+  // await (await arbitrageContract.emergencyWithdraw(ethers.ZeroAddress)).wait(); // clear any leftover ETH (from unwrapping WETH if tokenOut was WETH)
+  // await (await arbitrageContract.emergencyWithdraw(WETH_ADDRESS)).wait(); // clear any leftover WETH (from wrapping ETH if tokenIn was ETH)
   const newWalletToken0Balance = await tokenManager.getTokenBalance(t0Addr, walletAddress);
   const newWalletToken1Balance = await tokenManager.getTokenBalance(t1Addr, walletAddress);
 

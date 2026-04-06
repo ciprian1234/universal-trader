@@ -145,6 +145,12 @@ export class FlashArbitrageHandler {
     opportunities.sort((a, b) => b.grossProfitUSD - a.grossProfitUSD);
     opportunities.forEach((o) => this.logger.info(`PATH "${o.id}" => GrossProfitUSD $${o.grossProfitUSD.toFixed(2)}`));
 
+    // TODOS
+    // 2. pre-validate opportunittis in batch with multicall3
+    // 1. prefer ETH opportunitties
+    // 3. handle pools on which revert occured
+    // 3.1 if pool returned InsufficientAmountOut => mark pool for re-sync => and re-evaluate opportunities
+
     // select best non-overlapping opportunities
     const selectedOpportunities = this.selectNonOverlappingOpportunities(opportunities);
 
@@ -510,9 +516,9 @@ export class FlashArbitrageHandler {
     const tokenOutPriceUSD = this.priceOracle.getPriceUSD(tokenOut.address);
     if (!tokenOutPriceUSD) throw new Error(`Price not available for tokenOut ${tokenOut.symbol} (${tokenOut.address})`);
     const totalCostInTokenOut = totalCostsUSD / tokenOutPriceUSD; // (human readable amount = > we need to convert to raw amount)
-    const totalCostInTokenOutRaw = BigInt(totalCostInTokenOut * 1e18);
+    const totalCostInTokenOutRaw = BigInt(Math.floor(totalCostInTokenOut * 10 ** tokenOut.decimals));
 
-    return {
+    const result = {
       gasCostUSD,
       bribeCostUSD,
       gasCostWEI,
@@ -524,6 +530,9 @@ export class FlashArbitrageHandler {
       totalCostInTokenOut: totalCostInTokenOutRaw,
       netProfitUSD: grossProfitUSD - totalCostsUSD,
     };
+
+    this.logger.info('💰 Calculated costs and profit for opportunity:', { ...result });
+    return result;
   }
 
   /**

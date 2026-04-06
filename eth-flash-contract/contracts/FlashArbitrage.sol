@@ -172,6 +172,13 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   }
 
   // ========================================================================================
+  // DIRECT SWAP EXECUTION (FOR TESTING — REQUIRES CONTRACT TO HOLD tokenIn BEFOREHAND)
+  // ========================================================================================
+  function executeDirectSwap(SwapStep memory step) external onlyOwner nonReentrant returns (uint256) {
+    return _executeSwap(step);
+  }
+
+  // ========================================================================================
   // ENTRY POINT FOR EXECUTING AN ARBITRAGE TRADE
   // ========================================================================================
   function executeTrade(Trade memory trade) external payable onlyOwner nonReentrant {
@@ -195,45 +202,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     // => this will trigger a callback to receiveFlashLoan() where we execute our arbitrage logic
     vault.flashLoan(this, tokens, amounts, data);
     _handleProfit(trade); //  profit handled here after flash loan repayment
-  }
-
-  // ========================================================================================
-  // HANDLE PROFIT FUNCTION (EXECUTED AFTER FLASH LOAN REPAYMENT)
-  // ========================================================================================
-  function _handleProfit(Trade memory trade) internal {
-    address lastSwapTokenOut = trade.swaps[trade.swaps.length - 1].tokenOut;
-    uint256 profitBalance = lastSwapTokenOut == address(0)
-      ? address(this).balance
-      : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
-
-    if (lastSwapTokenOut == WETH_ADDRESS || lastSwapTokenOut == address(0)) {
-      if (lastSwapTokenOut == WETH_ADDRESS) IWETH(WETH_ADDRESS).withdraw(profitBalance); // (UNWRAP WETH => ETH)
-
-      // if internalBribeBps its set => pay direct bribe in ETH
-      if (trade.internalBribeBps > 0) {
-        uint256 bribeAmount = (profitBalance * trade.internalBribeBps) / 10000;
-        (bool okBribe, ) = block.coinbase.call{value: bribeAmount}('');
-        if (!okBribe) revert TransferFailed(block.coinbase, address(0), bribeAmount);
-      }
-
-      // transfer remaining ETH to owner
-      uint256 ethRemaining = address(this).balance;
-      if (ethRemaining < trade.minProfitTokenOut) revert MinProfitNotMet(address(0), trade.minProfitTokenOut, ethRemaining);
-      (bool okProfit, ) = owner.call{value: ethRemaining}('');
-      if (!okProfit) revert TransferFailed(owner, address(0), ethRemaining);
-    } else {
-      // CASE 2: profit in ERC20 token => transfer profit to owner only
-      if (profitBalance < trade.minProfitTokenOut)
-        revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, profitBalance);
-      IERC20Z(lastSwapTokenOut).safeTransfer(owner, profitBalance);
-    }
-  }
-
-  // ========================================================================================
-  // DIRECT SWAP EXECUTION (FOR TESTING — REQUIRES CONTRACT TO HOLD tokenIn BEFOREHAND)
-  // ========================================================================================
-  function executeDirectSwap(SwapStep memory step) external onlyOwner nonReentrant returns (uint256) {
-    return _executeSwap(step);
   }
 
   // ========================================================================================
@@ -273,6 +241,38 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
 
     // Repay flash loan (borrowToken is always ERC20)
     IERC20Z(borrowToken).safeTransfer(address(vault), requiredRepayment);
+  }
+
+  // ========================================================================================
+  // HANDLE PROFIT FUNCTION (EXECUTED AFTER FLASH LOAN REPAYMENT)
+  // ========================================================================================
+  function _handleProfit(Trade memory trade) internal {
+    address lastSwapTokenOut = trade.swaps[trade.swaps.length - 1].tokenOut;
+    uint256 profitBalance = lastSwapTokenOut == address(0)
+      ? address(this).balance
+      : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
+
+    if (lastSwapTokenOut == WETH_ADDRESS || lastSwapTokenOut == address(0)) {
+      if (lastSwapTokenOut == WETH_ADDRESS) IWETH(WETH_ADDRESS).withdraw(profitBalance); // (UNWRAP WETH => ETH)
+
+      // if internalBribeBps its set => pay direct bribe in ETH
+      if (trade.internalBribeBps > 0) {
+        uint256 bribeAmount = (profitBalance * trade.internalBribeBps) / 10000;
+        (bool okBribe, ) = block.coinbase.call{value: bribeAmount}('');
+        if (!okBribe) revert TransferFailed(block.coinbase, address(0), bribeAmount);
+      }
+
+      // transfer remaining ETH to owner
+      uint256 ethRemaining = address(this).balance;
+      if (ethRemaining < trade.minProfitTokenOut) revert MinProfitNotMet(address(0), trade.minProfitTokenOut, ethRemaining);
+      (bool okProfit, ) = owner.call{value: ethRemaining}('');
+      if (!okProfit) revert TransferFailed(owner, address(0), ethRemaining);
+    } else {
+      // CASE 2: profit in ERC20 token => transfer profit to owner only
+      if (profitBalance < trade.minProfitTokenOut)
+        revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, profitBalance);
+      IERC20Z(lastSwapTokenOut).safeTransfer(owner, profitBalance);
+    }
   }
 
   // ========================================================================================
