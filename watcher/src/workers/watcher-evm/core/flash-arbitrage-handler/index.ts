@@ -163,7 +163,9 @@ export class FlashArbitrageHandler {
     // simulate all opportunities in batch with multicall3
     const { validOpportunities, invalidOpportunities, errorOpportunities, blacklistPoolIds } =
       await this.simulateOpportunities(nonOverlappingOpportunities);
-    this.logger.info(`✅ Simulation completed for ${nonOverlappingOpportunities.length} opportunities`);
+
+    const statusMessage = `valid: ${validOpportunities.length}, invalid: ${invalidOpportunities.length}, error: ${errorOpportunities.length}`;
+    this.logger.info(`Opportunities simulation status: ${statusMessage}`);
 
     // handle valid opportunities
     validOpportunities.forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
@@ -645,9 +647,10 @@ export class FlashArbitrageHandler {
     const invalidOpportunities: ArbitrageOpportunity[] = [];
     const errorOpportunities: ArbitrageOpportunity[] = [];
     const blacklistPoolIds = new Set<string>();
-    // const invalidPools
+
     // NOTE: simulateTrade always reverts with SimulationSuccess/SimulationError custom error
-    callResults.forEach((callResult, index) => {
+    for (let index = 0; index < callResults.length; index++) {
+      const callResult = callResults[index];
       const opportunity = opportunities[index];
       const borrowToken = opportunity.borrowToken;
       let parsed;
@@ -655,7 +658,8 @@ export class FlashArbitrageHandler {
         parsed = this.CONTRACT_INTERFACE.parseError(callResult.returnData);
       } catch {
         errorOpportunities.push(opportunity);
-        return this.logger.error(`❌ Unparseable revert for: ${opportunity.id}`, { returnData: callResult.returnData });
+        this.logger.error(`❌ Unparseable revert for: ${opportunity.id}`, { returnData: callResult.returnData });
+        continue;
       }
 
       if (parsed?.name === 'SimulationSuccess') {
@@ -700,10 +704,17 @@ export class FlashArbitrageHandler {
         } catch {
           errorOpportunities.push(opportunity);
           const message = 'Unable to decode inner error, empty revert (require(false) or OOG) from pool/contract';
-          return this.logger.error(`❌ Simulation failed for: ${opportunity.id}, ${message}`, { opportunity });
+          this.logger.error(`❌ Simulation failed for: ${opportunity.id}, ${message}`, { opportunity });
         }
+      } else {
+        errorOpportunities.push(opportunity);
+        this.logger.error(`❌ Simulation for ${opportunity.id} failed, unexpected: ${parsed?.name}`, {
+          parsedName: parsed?.name,
+          parsedArgs: parsed?.args,
+          returnData: callResult.returnData,
+        });
       }
-    });
+    }
 
     return { validOpportunities, invalidOpportunities, errorOpportunities, blacklistPoolIds };
   }

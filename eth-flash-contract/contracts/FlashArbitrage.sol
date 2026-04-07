@@ -223,7 +223,9 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     // Initiate flash loan from Balancer Vault
     // => this will trigger a callback to receiveFlashLoan() where we execute our arbitrage logic
     vault.flashLoan(this, tokens, amounts, data);
-    _handleProfit(trade); //  profit handled here after flash loan repayment
+
+    // we reach here only if loan repayment and min profit check passed in receiveFlashLoan callback
+    _handleProfit(trade);
   }
 
   // ========================================================================================
@@ -262,9 +264,15 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
       ? address(this).balance
       : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
 
-    // ######################### REPAY FLASH LOAN #########################
+    // ######################### ENFORCE LOAN REPAYMENT + MIN PROFIT #########################
     if (lastSwapTokenOutBalance < requiredRepayment)
       revert LoanRepaymentNotMet(lastSwapTokenOut, requiredRepayment, lastSwapTokenOutBalance);
+
+    uint256 remainingProfit = lastSwapTokenOutBalance - requiredRepayment;
+    if (remainingProfit < trade.minProfitTokenOut)
+      revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, remainingProfit);
+
+    // ######################### HANDLE LOAN REPAYMENT #########################
     if (lastSwapTokenOut == address(0)) IWETH(WETH_ADDRESS).deposit{value: requiredRepayment}(); // (WRAP ETH)
 
     // Repay flash loan (borrowToken is always ERC20)
@@ -279,9 +287,6 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     uint256 profitBalance = lastSwapTokenOut == address(0)
       ? address(this).balance
       : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
-
-    // validate that profit meets minimum threshold before proceeding with profit transfer and bribe payment (if applicable)
-    if (profitBalance < trade.minProfitTokenOut) revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, profitBalance);
 
     if (lastSwapTokenOut == WETH_ADDRESS || lastSwapTokenOut == address(0)) {
       if (lastSwapTokenOut == WETH_ADDRESS) IWETH(WETH_ADDRESS).withdraw(profitBalance); // (UNWRAP WETH => ETH)
@@ -576,15 +581,11 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     amounts[0] = trade.borrowAmount;
 
     try vault.flashLoan(this, tokens, amounts, data) {
-      // get balance of tokenOut from last swap to return as result of simulation
       address lastSwapTokenOut = trade.swaps[trade.swaps.length - 1].tokenOut;
       uint256 profitBalance = lastSwapTokenOut == address(0)
         ? address(this).balance
         : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
 
-      if (profitBalance < trade.minProfitTokenOut) {
-        revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, profitBalance);
-      }
       revert SimulationSuccess(profitBalance); // => profit after loan repayment
     } catch (bytes memory err) {
       revert SimulationError(err);
