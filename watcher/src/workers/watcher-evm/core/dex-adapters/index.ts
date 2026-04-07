@@ -89,8 +89,17 @@ export class DexAdapter {
   }
 
   async loadPoolsFromStorageCache(): Promise<DexPoolState[]> {
+    // const poolIdsOnDevelopment: string[] = [
+    //   '1:0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc', //uniswap-v2 USDC-WETH
+    //   '1:0x2cbe14bd5598bd30ee769cad3ef42a280501955b', // uniswap-v3 USDC-WETH 0.3% fee tier
+    //   '1:0x397ff1542f962076d0bfe58ea045ffa2d347aca0', // sushiswap-v2 USDC-WETH
+    //   '1:0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7',
+    // ];
+
     const pools: DexPoolState[] = [];
     for (const pool of this.storedPools.values()) {
+      // if (!poolIdsOnDevelopment.find((id) => id === pool.id)) continue; // TESTING ONLY - filter only specific pools for development
+
       // if (pool.protocol !== 'v2') continue; // TESTING ONLY
       // TODO: filter only pools which  are active/reserves are not zero, no errors, etc..
       const initializedPool = this.initPoolFromStorage(pool, undefined);
@@ -178,6 +187,12 @@ export class DexAdapter {
         event: poolEvent as V4SwapEvent | undefined,
       });
     } else throw new Error(`Unsupported init operation for pool: ${safeStringify(storedPool)}`);
+
+    if (storedPool.isBlacklisted) {
+      initializedPool.isBlacklisted = true; // preserve blacklisted status from storage
+      this.logger.warn(`⚠️ Initializing pool from storage that is marked as blacklisted: ${printPool(storedPool)}`);
+    }
+
     return initializedPool;
   }
 
@@ -227,8 +242,6 @@ export class DexAdapter {
 
     // 2. execute multicall3
     const callResults = await this.blockchain.executeMulticall3(calls);
-    if (!callResults || callResults.length !== calls.length)
-      throw new Error(`Invalid multicall3 response, expected ${calls.length} results but got ${callResults?.length}`);
 
     // 3. Collect decoded results per pool
     // For v3/v4 we need both slot0 and liquidity before we can update, so collect first

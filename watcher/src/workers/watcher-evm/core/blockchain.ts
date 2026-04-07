@@ -282,6 +282,7 @@ export class Blockchain {
       results.push(...chunkResults);
     }
 
+    if (results?.length !== calls.length) throw new Error(`Multicall3 returned ${results?.length}/${calls.length}`);
     return results;
   }
 

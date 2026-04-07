@@ -67,6 +67,7 @@ export interface DexPoolStateBase extends VenueState {
 
   // Metadata of the latest event that caused a state update
   latestEventMeta?: EventMetadata;
+  isBlacklisted?: boolean; // flag to indicate pools that should be ignored for pathfinding and trading due to simulation errors or other issues
 }
 
 interface ConcentratedLiquidityFields {

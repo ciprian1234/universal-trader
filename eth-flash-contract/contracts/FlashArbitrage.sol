@@ -139,9 +139,10 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   error InvalidDexProtocol(uint256 protocol);
   error InvalidDeltasV3(int256 delta0, int256 delta1);
   error InsufficientLiquidity(uint256 reserve, uint256 amount);
-  error InsufficientAmountOut(uint256 minimum, uint256 actual);
+  error InsufficientAmountOut(address token, uint256 minimum, uint256 actual);
   error LoanRepaymentNotMet(address token, uint256 amount, uint256 actualBalance);
   error MinProfitNotMet(address token, uint256 minProfit, uint256 actualBalance);
+  error SwapStepFailed(uint256 stepIndex, bytes reason); // used only for simulation to identify which swap step failed
 
   constructor() {
     owner = msg.sender;
@@ -157,7 +158,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   // TRANSIENT STORAGE MANAGEMENT
   // ========================================================================================
 
-  // storage slot for allowed callback caller (used to guard against malicious calls to callbacks)
+  // SLOT 0: allowed callback caller (used to guard against malicious calls to callbacks)
   int256 private constant ALLOWED_CALLER_ADDRESS_SLOT = 0; // first slot in transient storage
 
   function _setAllowedCallerAddress(address allowedCallerAddress) private {
@@ -171,6 +172,20 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     }
   }
 
+  // SLOT 1: simulation mode flag
+  int256 private constant SIMULATION_MODE_SLOT = 1; // slot 0 is already taken by ALLOWED_CALLER_ADDRESS_SLOT
+
+  function _setSimulationMode(bool enabled) private {
+    assembly {
+      tstore(SIMULATION_MODE_SLOT, enabled)
+    }
+  }
+  function _isSimulationMode() private view returns (bool enabled) {
+    assembly {
+      enabled := tload(SIMULATION_MODE_SLOT)
+    }
+  }
+
   // ========================================================================================
   // DIRECT SWAP EXECUTION (FOR TESTING — REQUIRES CONTRACT TO HOLD tokenIn BEFOREHAND)
   // ========================================================================================
@@ -178,11 +193,18 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     return _executeSwap(step);
   }
 
+  /// @notice Public wrapper around _executeSwap, callable only via self-call (this._executeSwapInSimulation)
+  /// @dev Enables try/catch on swap steps during simulation
+  function _executeSwapInSimulation(SwapStep memory step) public returns (uint256) {
+    if (msg.sender != address(this)) revert InvalidCaller(msg.sender);
+    return _executeSwap(step);
+  }
+
   // ========================================================================================
   // ENTRY POINT FOR EXECUTING AN ARBITRAGE TRADE
   // ========================================================================================
   function executeTrade(Trade memory trade) external payable onlyOwner nonReentrant {
-    // Pay external bribe from msg.value BEFORE flash loan
+    // if ETH sent => pay external bribe from msg.value BEFORE flash loan
     // (if arb reverts, entire tx reverts — bribe is always atomic)
     if (msg.value > 0) {
       (bool okBribe, ) = block.coinbase.call{value: msg.value}('');
@@ -221,9 +243,15 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
     uint256 lastIndex = trade.swaps.length - 1;
 
     // execute each swap in sequence, using the output of the previous swap as the input for the next
+    bool isSimulation = _isSimulationMode();
     for (uint256 i = 0; i <= lastIndex; i++) {
-      SwapStep memory step = trade.swaps[i];
-      _executeSwap(step); // Execute the swap
+      if (isSimulation) {
+        try this._executeSwapInSimulation(trade.swaps[i]) {} catch (bytes memory reason) {
+          revert SwapStepFailed(i, reason);
+        }
+      } else {
+        _executeSwap(trade.swaps[i]); // Execute the swap
+      }
     }
 
     // NOTE: at this point we can have profit in either ETH, WETH or some ERC20 token
@@ -252,6 +280,9 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
       ? address(this).balance
       : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
 
+    // validate that profit meets minimum threshold before proceeding with profit transfer and bribe payment (if applicable)
+    if (profitBalance < trade.minProfitTokenOut) revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, profitBalance);
+
     if (lastSwapTokenOut == WETH_ADDRESS || lastSwapTokenOut == address(0)) {
       if (lastSwapTokenOut == WETH_ADDRESS) IWETH(WETH_ADDRESS).withdraw(profitBalance); // (UNWRAP WETH => ETH)
 
@@ -264,13 +295,10 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
 
       // transfer remaining ETH to owner
       uint256 ethRemaining = address(this).balance;
-      if (ethRemaining < trade.minProfitTokenOut) revert MinProfitNotMet(address(0), trade.minProfitTokenOut, ethRemaining);
       (bool okProfit, ) = owner.call{value: ethRemaining}('');
       if (!okProfit) revert TransferFailed(owner, address(0), ethRemaining);
     } else {
-      // CASE 2: profit in ERC20 token => transfer profit to owner only
-      if (profitBalance < trade.minProfitTokenOut)
-        revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, profitBalance);
+      // CASE 2: profit in ERC20 token => transfer profit to owner
       IERC20Z(lastSwapTokenOut).safeTransfer(owner, profitBalance);
     }
   }
@@ -312,7 +340,7 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
       amountOut = _swapOnV4(step);
     } else revert InvalidDexProtocol(uint256(step.dexProtocol));
 
-    if (amountOut < step.amountOutMin) revert InsufficientAmountOut(step.amountOutMin, amountOut);
+    if (amountOut < step.amountOutMin) revert InsufficientAmountOut(step.tokenOut, step.amountOutMin, amountOut);
     return amountOut;
   }
 
@@ -536,6 +564,8 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
   error SimulationError(bytes reason);
 
   function simulateTrade(Trade memory trade) external {
+    _setSimulationMode(true); // enable step-level try/catch in receiveFlashLoan
+
     // Encode the trade struct to pass it to the flash loan callback
     bytes memory data = abi.encode(trade);
 
@@ -551,6 +581,10 @@ contract FlashArbitrage is IFlashLoanRecipient, ReentrancyGuard {
       uint256 profitBalance = lastSwapTokenOut == address(0)
         ? address(this).balance
         : IERC20Z(lastSwapTokenOut).balanceOf(address(this));
+
+      if (profitBalance < trade.minProfitTokenOut) {
+        revert MinProfitNotMet(lastSwapTokenOut, trade.minProfitTokenOut, profitBalance);
+      }
       revert SimulationSuccess(profitBalance); // => profit after loan repayment
     } catch (bytes memory err) {
       revert SimulationError(err);

@@ -42,6 +42,7 @@ export type ApplicationEvent = InitializedApplicationEvent | ReorgDetectedApplic
 export interface PoolsUpsertBatchPayload {
   pools: DexPoolState[];
   block: BlockEntry;
+  silent?: boolean; // If true, skip opportunity searching after applying the batch
 }
 
 // ================================================================================================

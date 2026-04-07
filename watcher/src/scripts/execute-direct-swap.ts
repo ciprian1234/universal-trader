@@ -1,25 +1,18 @@
-import { appConfig } from '@/config';
-import type { ChainConfig } from '@/config/models';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import { logger } from '@/utils';
-import { CacheService } from '@/utils/cache-service';
-import { Blockchain } from '@/workers/watcher-evm/core/blockchain';
-import { EventBus } from '@/workers/watcher-evm/core/event-bus';
 import { FlashArbitrageHandler } from '@/workers/watcher-evm/core/flash-arbitrage-handler';
 import { type SwapStepOnContract } from '@/workers/watcher-evm/core/flash-arbitrage-handler/flash-arbitrage-config';
 import { FLASH_ARBITRAGE_ABI } from '@/workers/watcher-evm/core/flash-arbitrage-handler/flash-arbitrage-contract-abi';
-import { TokenManager } from '@/workers/watcher-evm/core/token-manager';
-import { WorkerDb } from '@/workers/watcher-evm/db';
 import { ethers } from 'ethers';
+import { blockchain, db, tokenManager, WETH_ADDRESS } from './helpers/initialize';
+import { formatBalance, fundContract } from './helpers';
 
 // ========================================================================================
 // CONFIG — edit these for the swap you want to test
 // ========================================================================================
 
-const chainConfig = appConfig.platforms['ethereum'] as ChainConfig;
-
-// NOTE: those are safe to commit => from hardhat default accounts(1)
-const CONTRACT_ADDRESS = '0x18945Bd950D4489B8Ec0FA896bd8b52336df954c';
+// NOTE: those are safe to commit => from hardhat default hardhat.accounts(1)
+const CONTRACT_ADDRESS = '0x8b4D4A6fFebDd4028cF0E59d43a3423f7F8d7CC1';
 const WALLET_PRIVATE_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'; // (hardhat[1].privateKey)
 
 if (!CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS not set in config');
@@ -30,28 +23,6 @@ const DB_POOL_ID = '1:0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed
 const ZERO_FOR_ONE = true;
 const amountInFormatted = '0.0001'; // human readable amount to swap
 const amountOutMinFormatted = '0'; // human readable minimum amount to receive
-
-// ========================================================================================
-// INIT COMPONENTS
-// ========================================================================================
-
-const cache = new CacheService(chainConfig.chainId);
-const db = new WorkerDb(chainConfig.databaseUrl, chainConfig.chainId);
-const eventBus = new EventBus();
-
-// Core app services
-const blockchain = new Blockchain({ chainConfig, cache });
-const tokenManager = new TokenManager({ chainConfig, blockchain, eventBus, db });
-
-const ERC20_ABI = [
-  'function balanceOf(address) view returns (uint256)',
-  'function transfer(address to, uint256 amount) returns (bool)',
-  'function decimals() view returns (uint8)',
-  'function symbol() view returns (string)',
-];
-
-const WETH_ABI = [...ERC20_ABI, 'function deposit() payable'];
-const WETH_ADDRESS = chainConfig.wrappedNativeTokenAddress;
 
 // ========================================================================================
 // SWAP STEP BUILDER HELPERS
@@ -82,60 +53,6 @@ function buildSwapStep(params: {
     poolFee: pool.feeBps,
     extraData: pool.protocol === 'v4' ? abiCoder.encode(['address', 'int24'], [token0.address, pool.tickSpacing]) : '0x',
   };
-}
-
-// ========================================================================================
-// HELPERS
-// ========================================================================================
-
-function formatBalance(tokenAddress: string, rawBalance: bigint) {
-  const { symbol, decimals } = tokenManager.getToken(tokenAddress)!;
-  return `${symbol}: ${ethers.formatUnits(rawBalance, decimals)}`;
-}
-
-async function fundContract(signer: any, tokenAddr: string, amountInString: string): Promise<bigint> {
-  let tx: any;
-
-  // ETH
-  if (tokenAddr === ethers.ZeroAddress) {
-    const amount = ethers.parseEther(amountInString);
-    tx = await signer.sendTransaction({ to: CONTRACT_ADDRESS, value: amount }); // do not send ETH anymore
-    await tx.wait();
-    logger.info(`📤 Contract funded with ${ethers.formatEther(amount)} ETH`);
-    return amount;
-  } else {
-    // if WETH => WRAP
-    if (tokenAddr === WETH_ADDRESS) await wrapETH(signer, ethers.parseEther(amountInString));
-
-    // transfer ERC20 token to contract
-    const token = await tokenManager.ensureTokenRegistered(tokenAddr, 'address');
-    const amount = ethers.parseUnits(amountInString, token.decimals);
-    const tokenContract = new ethers.Contract(tokenAddr, WETH_ABI, signer);
-    tx = await tokenContract.transfer(CONTRACT_ADDRESS, amount);
-
-    await tx.wait();
-    logger.info(`📤 Contract funded with ${ethers.formatUnits(amount, token.decimals)} ${token.symbol}`);
-    return amount;
-  }
-}
-
-// WRAP/UNWRAP helpers
-async function wrapETH(signer: any, amount: bigint) {
-  const wethAddress = tokenManager.getTokenBySymbol('WETH')?.address;
-  if (!wethAddress) throw new Error('WETH token not found in token manager');
-  const wethContract = new ethers.Contract(wethAddress, WETH_ABI, signer);
-  logger.info(`\n💰 Wrapping ${ethers.formatEther(amount)} ETH to WETH...`);
-  await (await wethContract.deposit({ value: amount })).wait();
-  logger.info(`✅ Wrapped ${ethers.formatEther(amount)} WETH`);
-}
-
-async function unwrapWETH(signer: any, amount: bigint) {
-  const wethAddress = tokenManager.getTokenBySymbol('WETH')?.address;
-  if (!wethAddress) throw new Error('WETH token not found in token manager');
-  const wethContract = new ethers.Contract(wethAddress, WETH_ABI, signer);
-  logger.info(`\n💰 Unwrapping ${ethers.formatEther(amount)} WETH to ETH...`);
-  await (await wethContract.withdraw(amount)).wait();
-  logger.info(`✅ Unwrapped ${ethers.formatEther(amount)} ETH`);
 }
 
 // ========================================================================================
@@ -178,7 +95,7 @@ async function main() {
   logger.info(`🚀 Executing direct swap on ${pool.venue.name} ${swapMsg}`);
 
   // Fund the contract with token0 or token1 (WETH in this case)
-  const amountFunded = await fundContract(wallet, ZERO_FOR_ONE ? t0Addr : t1Addr, amountInFormatted);
+  const amountFunded = await fundContract(CONTRACT_ADDRESS, wallet, ZERO_FOR_ONE ? t0Addr : t1Addr, amountInFormatted);
 
   // Balances before
   // logger.info('📊 Balances BEFORE swap:');

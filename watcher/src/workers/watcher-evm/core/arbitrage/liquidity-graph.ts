@@ -30,6 +30,12 @@ export class LiquidityGraph {
   private readonly config: LiquidityGraphConfig;
   private readonly WETH_ADDRESS: string;
 
+  //
+  // private readonly TOKEN_BLACKLIST = new Set<string>([
+  //   '0x518b63da813d46556fea041a88b52e3caa8c16a8',
+  //   '0x673d1713a325e619b9f3fb1ba06c1253df697601',
+  // ]);
+
   // Adjacency list: tokenAddress -> outgoing edges
   private readonly edges = new Map<string, WeightedEdge[]>();
   // NOTE: list of tokens can be derived from edges keys
@@ -85,7 +91,6 @@ export class LiquidityGraph {
    */
   updatePools(updatedPools: DexPoolState[]): Set<string> {
     const affectedTokens = new Set<string>();
-    const wethAddr = this.config.wrappedNativeTokenAddress;
 
     for (const pool of updatedPools) {
       this.removePoolFromGraph(pool);
@@ -104,6 +109,9 @@ export class LiquidityGraph {
    * ➕ Add single pool as bidirectional edges
    */
   private addPoolToGraph(pool: DexPoolState): boolean {
+    // skip blacklisted pools
+    if (pool.isBlacklisted) return false;
+
     // 1. check for invalid prices
     if (pool.spotPrice0to1 <= 0 || isNaN(pool.spotPrice0to1) || pool.spotPrice1to0 <= 0 || isNaN(pool.spotPrice1to0)) {
       return false;
@@ -116,10 +124,6 @@ export class LiquidityGraph {
       this.logger.debug(`Skipping pool with hooks: ${pool.hooks} (ID: ${pool.id}) - simulation accuracy not guaranteed`);
       return false;
     }
-
-    // 4. temp blacklist
-    // if ([pool.tokenPair.token0.address, pool.tokenPair.token1.address].includes('0x518b63da813d46556fea041a88b52e3caa8c16a8'))
-    //   return false;
 
     // Normalize native ETH (address(0)) to WETH for graph node identity
     const graphToken0 = normalizeToGraphToken(pool.tokenPair.token0, this.WETH_ADDRESS);

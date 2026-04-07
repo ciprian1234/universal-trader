@@ -213,6 +213,12 @@ export class WorkerDb {
   // ================================================================================================
   // ARBITRAGE OPPORTUNITIES
   // ================================================================================================
+  async getArbitrageOpportunityById(id: string): Promise<ArbitrageOpportunity> {
+    const row = await this.sql`SELECT * FROM arbitrage_opportunities WHERE "id" = ${id}`;
+    if (row.length === 0) throw new Error(`Arbitrage opportunity with id ${id} not found`);
+    return deserializeObject<ArbitrageOpportunity>(row[0].state);
+  }
+
   async upsertArbitrageOpportunity(opportunity: ArbitrageOpportunity): Promise<void> {
     await this.sql`
       INSERT INTO arbitrage_opportunities ("id", "status", "grossProfitUSD", "state")

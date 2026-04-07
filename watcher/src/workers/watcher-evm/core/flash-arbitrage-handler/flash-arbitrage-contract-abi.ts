@@ -7,6 +7,11 @@ export const FLASH_ARBITRAGE_ABI = [
   {
     inputs: [
       {
+        internalType: 'address',
+        name: 'token',
+        type: 'address',
+      },
+      {
         internalType: 'uint256',
         name: 'minimum',
         type: 'uint256',
@@ -195,6 +200,22 @@ export const FLASH_ARBITRAGE_ABI = [
   {
     inputs: [
       {
+        internalType: 'uint256',
+        name: 'stepIndex',
+        type: 'uint256',
+      },
+      {
+        internalType: 'bytes',
+        name: 'reason',
+        type: 'bytes',
+      },
+    ],
+    name: 'SwapStepFailed',
+    type: 'error',
+  },
+  {
+    inputs: [
+      {
         internalType: 'address',
         name: 'to',
         type: 'address',
@@ -212,6 +233,72 @@ export const FLASH_ARBITRAGE_ABI = [
     ],
     name: 'TransferFailed',
     type: 'error',
+  },
+  {
+    inputs: [
+      {
+        components: [
+          {
+            internalType: 'enum FlashArbitrage.DexProtocol',
+            name: 'dexProtocol',
+            type: 'uint8',
+          },
+          {
+            internalType: 'address',
+            name: 'poolAddress',
+            type: 'address',
+          },
+          {
+            internalType: 'address[]',
+            name: 'poolTokens',
+            type: 'address[]',
+          },
+          {
+            internalType: 'address',
+            name: 'tokenIn',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'tokenOut',
+            type: 'address',
+          },
+          {
+            internalType: 'int256',
+            name: 'amountSpecified',
+            type: 'int256',
+          },
+          {
+            internalType: 'uint256',
+            name: 'amountOutMin',
+            type: 'uint256',
+          },
+          {
+            internalType: 'uint24',
+            name: 'poolFee',
+            type: 'uint24',
+          },
+          {
+            internalType: 'bytes',
+            name: 'extraData',
+            type: 'bytes',
+          },
+        ],
+        internalType: 'struct FlashArbitrage.SwapStep',
+        name: 'step',
+        type: 'tuple',
+      },
+    ],
+    name: '_executeSwapInSimulation',
+    outputs: [
+      {
+        internalType: 'uint256',
+        name: '',
+        type: 'uint256',
+      },
+    ],
+    stateMutability: 'nonpayable',
+    type: 'function',
   },
   {
     inputs: [

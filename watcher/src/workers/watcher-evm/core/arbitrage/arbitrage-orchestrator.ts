@@ -135,6 +135,7 @@ export class ArbitrageOrchestrator {
       const startTokens = this.graph.updatePools(payload.pools);
 
       if (!this.enabled) return this.logger.warn('⚠️ Service not enabled yet, skipping opportunity search');
+      if (payload.silent) return this.logger.info('🔕 Silent batch applied, skipping opportunity search');
       const opportunities = await this.findOpportunities(startTokens, payload.block);
       if (opportunities.length > 0) await this.eventBus.emitNewArbitrageOpportunitiesBatch(opportunities);
     } catch (error) {
