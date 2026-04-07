@@ -71,7 +71,7 @@ export class WalletManager {
     this.logger.info(`🔍 Validating wallet`);
     const address = await this.signer.getAddress();
     const nativeTokenBalance = await this.blockchain.getBalance(address);
-    const nonce = await this.signer.getNonce(address);
+    const nonce = await this.signer.getNonce();
     this.walletState = { address, nativeTokenBalance, lastUpdated: Date.now(), nonce }; // Update wallet state
 
     // Check if wallet has min NATIVE TOKEN for transaction
@@ -107,7 +107,7 @@ export class WalletManager {
   async refreshWalletState(): Promise<void> {
     const [nativeTokenBalance, nonce] = await Promise.all([
       this.blockchain.getBalance(this.walletState.address),
-      this.signer.getNonce(this.walletState.address),
+      this.signer.getNonce(),
     ]);
     this.walletState.nativeTokenBalance = nativeTokenBalance;
     this.walletState.nonce = nonce;

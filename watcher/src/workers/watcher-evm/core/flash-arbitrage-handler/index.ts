@@ -155,25 +155,25 @@ export class FlashArbitrageHandler {
     // TODO: prefer ETH opportunitties
 
     // select best non-overlapping opportunities
-    let nonOverlappingOpportunities = this.selectNonOverlappingOpportunities(opportunities);
+    // let selectedOpportunities = this.selectNonOverlappingOpportunities(opportunities);
     // let nonOverlappingOpportunities = opportunities; // NOTE: since using flashbot submit all
-    nonOverlappingOpportunities.forEach((o) => {
+    opportunities.forEach((o) => {
       o.foundAtBlock = currentBlock;
       this.fillOpportunityTradeStruct(o);
     });
 
     // basic sanity validation
-    nonOverlappingOpportunities = nonOverlappingOpportunities.filter((o) => this.validatePreExecution(o));
+    opportunities = opportunities.filter((o) => this.validatePreExecution(o));
 
     // simulate all opportunities in batch with multicall3
     const { validOpportunities, invalidOpportunities, errorOpportunities, blacklistPoolIds } =
-      await this.simulateOpportunities(nonOverlappingOpportunities);
+      await this.simulateOpportunities(opportunities);
 
     const statusMessage = `valid: ${validOpportunities.length}, invalid: ${invalidOpportunities.length}, error: ${errorOpportunities.length}`;
     this.logger.info(`Opportunities simulation status: ${statusMessage}`);
 
-    // handle valid opportunities
-    validOpportunities.forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
+    // handle (first 10) valid opportunities
+    validOpportunities.slice(0, 10).forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
 
     // handle blacklisted pools (if any)
     if (blacklistPoolIds.size > 0) this.dexManager.blacklistPools(blacklistPoolIds);
@@ -205,6 +205,7 @@ export class FlashArbitrageHandler {
 
     // evaluate again invalid opportunities
     let reEvaluatedOpportunities = await this.arbitrageOrchestrator.evaluatePathsConcurrently(opportunities, 30);
+    if (reEvaluatedOpportunities.length === 0) return this.logger.info('No opportunities left after re-evaluation');
     reEvaluatedOpportunities.forEach((o) => {
       o.foundAtBlock = currentBlock;
       this.fillOpportunityTradeStruct(o);
@@ -220,7 +221,7 @@ export class FlashArbitrageHandler {
     this.logger.info(`Opportunities simulation status: ${statusMessage}`);
 
     // handle any valid opportunities
-    validOpportunities.forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
+    validOpportunities.slice(0, 10).forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
 
     // NOTE: DISCARD THE REST
     invalidOpportunities.forEach((o) =>
