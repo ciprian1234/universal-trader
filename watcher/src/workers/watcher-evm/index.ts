@@ -240,6 +240,7 @@ class EVMWorker extends BaseWorker {
     const startTokenAddresses = new Set(this.tokenManager.anchorTokens.map((token) => token.address));
     let opportunities = await this.arbitrageOrchestrator.findOpportunities(startTokenAddresses, currentBlock);
     this.logger.info(`💰 (#1) Found initial ${opportunities.length} initial opportunities (without ticks data)`);
+    if (opportunities.length === 0) return;
 
     // go through all found opportunities and extract pool ids
     const poolIds = new Set<string>();
