@@ -446,7 +446,7 @@ export class FlashArbitrageHandler {
 
     // Build transaction
     const signer = this.walletManager.getSigner();
-    const nonce = await signer.getNonce();
+    const nonce = this.walletManager.getWalletState().nonce;
     const tx = await this.contract!.executeTrade.populateTransaction(opportunity.trade!);
 
     // Step 1: Define gas parameters
@@ -564,7 +564,6 @@ export class FlashArbitrageHandler {
       netProfitUSD: grossProfitUSD - totalCostsUSD,
     };
 
-    // this.logger.info('💰 Calculated costs and profit for opportunity:', { ...result });
     return result;
   }
 

@@ -51,12 +51,15 @@ export class TokenManager {
     'function balanceOf(address) view returns (uint256)',
   ];
 
+  public readonly WETH_ADDRESS: string;
+
   constructor(input: TokenManagerInput) {
     this.logger = createLogger(`[${input.chainConfig.name}.TokenManager]`);
     this.db = input.db;
     this.chainConfig = input.chainConfig;
     this.blockchain = input.blockchain;
     this.eventBus = input.eventBus;
+    this.WETH_ADDRESS = this.chainConfig.wrappedNativeTokenAddress;
   }
 
   // ================================================================================================

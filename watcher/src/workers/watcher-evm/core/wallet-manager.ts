@@ -7,6 +7,7 @@ import type { PriceOracle } from './price-oracle';
 
 export interface WalletState {
   address: string;
+  nonce: number;
   nativeTokenBalance: bigint;
   lastUpdated: number;
 }
@@ -60,7 +61,7 @@ export class WalletManager {
     this.NATIVE_TOKEN = this.chainConfig.nativeToken;
 
     // init walletState with default values
-    this.walletState = { address: '', nativeTokenBalance: 0n, lastUpdated: Date.now() };
+    this.walletState = { address: '', nativeTokenBalance: 0n, lastUpdated: Date.now(), nonce: 0 };
   }
 
   /**
@@ -70,7 +71,8 @@ export class WalletManager {
     this.logger.info(`🔍 Validating wallet`);
     const address = await this.signer.getAddress();
     const nativeTokenBalance = await this.blockchain.getBalance(address);
-    this.walletState = { address, nativeTokenBalance, lastUpdated: Date.now() }; // Update wallet state
+    const nonce = await this.signer.getNonce(address);
+    this.walletState = { address, nativeTokenBalance, lastUpdated: Date.now(), nonce }; // Update wallet state
 
     // Check if wallet has min NATIVE TOKEN for transaction
     const minNativeTokenRequired = ethers.parseEther('0.01'); // 0.01 NATIVE TOKEN minimum
@@ -100,11 +102,15 @@ export class WalletManager {
   }
 
   /**
-   * 🔄 REFRESH NATIVE TOKEN BALANCE: Update native token balance only
+   * 🔄 REFRESH WALLET STATE: Update native token balance and nonce
    */
-  async refreshNativeTokenBalance(): Promise<void> {
-    const nativeTokenBalance = await this.blockchain.getBalance(this.walletState.address);
+  async refreshWalletState(): Promise<void> {
+    const [nativeTokenBalance, nonce] = await Promise.all([
+      this.blockchain.getBalance(this.walletState.address),
+      this.signer.getNonce(this.walletState.address),
+    ]);
     this.walletState.nativeTokenBalance = nativeTokenBalance;
+    this.walletState.nonce = nonce;
     this.walletState.lastUpdated = Date.now();
   }
 
@@ -135,7 +141,7 @@ export class WalletManager {
 
     // refresh native and ERC20 token balances
     const refreshPromises = involvedTokens.map((addr) => this.loadTokenBalance(addr)); // Refresh involved token balances
-    await Promise.all([this.refreshNativeTokenBalance(), ...refreshPromises]);
+    await Promise.all([this.refreshWalletState(), ...refreshPromises]);
 
     // get new balances after refresh
     const newNativeTokenBalance = this.walletState.nativeTokenBalance;
@@ -231,11 +237,8 @@ export class WalletManager {
     return this.signer;
   }
 
-  /**
-   * 🪙 GET NATIVE TOKEN BALANCE
-   */
-  getNativeTokenBalance() {
-    return this.walletState.nativeTokenBalance;
+  getWalletState() {
+    return this.walletState;
   }
 
   /**
