@@ -177,7 +177,7 @@ export class ArbitrageOrchestrator {
     return pools;
   }
 
-  private async evaluatePathsConcurrently(paths: ArbitragePath[], batchSize: number): Promise<ArbitrageOpportunity[]> {
+  async evaluatePathsConcurrently(paths: ArbitragePath[], batchSize: number): Promise<ArbitrageOpportunity[]> {
     const results: ArbitrageOpportunity[] = [];
 
     for (let i = 0; i < paths.length; i += batchSize) {

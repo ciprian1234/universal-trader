@@ -190,6 +190,7 @@ class EVMWorker extends BaseWorker {
       dexManager: this.dexManager,
       walletManager: this.walletManager,
       priceOracle: this.priceOracle,
+      arbitrageOrchestrator: this.arbitrageOrchestrator,
     });
 
     // init

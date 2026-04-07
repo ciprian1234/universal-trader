@@ -1,6 +1,5 @@
 # TODOS
 
-- pre-validate all opportunities into a single RPC call
 - fetch nonce at init
 - revisit gasUsage estimation
 - batch pools introspection into a single call
@@ -15,8 +14,6 @@
 ## POST_MVP
 
 ### BATCH_1
-
-- simulate all found opportunities in a single call
 
 - check how much we can borrow from vault for each anchor token in a single call
 - batch wallet balances into a single call

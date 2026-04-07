@@ -14,6 +14,7 @@ import type { DexManager } from '../dex-manager';
 import { FLASH_ARBITRAGE_ABI } from './flash-arbitrage-contract-abi';
 import { denormalizeTokenAddr } from '../helpers';
 import type { PriceOracle } from '../price-oracle';
+import type { ArbitrageOrchestrator } from '../arbitrage/arbitrage-orchestrator';
 
 export type FlashArbitrageHandlerInput = {
   chainConfig: ChainConfig;
@@ -23,6 +24,7 @@ export type FlashArbitrageHandlerInput = {
   dexManager: DexManager;
   walletManager: WalletManager;
   priceOracle: PriceOracle;
+  arbitrageOrchestrator: ArbitrageOrchestrator; // to call notifyOpportunityUpdate for updating opportunity status and logs in orchestrator after execution and on pending execution updates
 };
 
 interface ExecuteTransactionResponse {
@@ -55,6 +57,7 @@ export class FlashArbitrageHandler {
   private readonly walletManager: WalletManager;
   private readonly flashbotsService?: FlashbotsService; // OPTIONAL Flashbots service
   private readonly priceOracle: PriceOracle;
+  private readonly arbitrageOrchestrator: ArbitrageOrchestrator;
 
   private readonly abiCoder = new ethers.AbiCoder();
   private readonly CONTRACT_INTERFACE = new ethers.Interface(FLASH_ARBITRAGE_ABI);
@@ -81,6 +84,7 @@ export class FlashArbitrageHandler {
     this.walletManager = input.walletManager;
     this.dexManager = input.dexManager;
     this.priceOracle = input.priceOracle;
+    this.arbitrageOrchestrator = input.arbitrageOrchestrator;
 
     // config
     this.ENABLE_FLASH_ARBITRAGE = true;
@@ -152,6 +156,7 @@ export class FlashArbitrageHandler {
 
     // select best non-overlapping opportunities
     let nonOverlappingOpportunities = this.selectNonOverlappingOpportunities(opportunities);
+    // let nonOverlappingOpportunities = opportunities; // NOTE: since using flashbot submit all
     nonOverlappingOpportunities.forEach((o) => {
       o.foundAtBlock = currentBlock;
       this.fillOpportunityTradeStruct(o);
@@ -188,21 +193,41 @@ export class FlashArbitrageHandler {
     else this.handleSequentialExecution(opportunity);
   }
 
-  private async handleInvalidArbitrageOpportunities(invalidOpportunities: ArbitrageOpportunity[]) {
+  private async handleInvalidArbitrageOpportunities(opportunities: ArbitrageOpportunity[]) {
+    const currentBlock = this.blockManager.getCurrentBlockNumber();
     // go through all found opportunities and extract pool ids
     const poolIds = new Set<string>();
-    invalidOpportunities.forEach((o) => o.steps.forEach((s) => poolIds.add(s.pool.id)));
+    opportunities.forEach((o) => o.steps.forEach((s) => poolIds.add(s.pool.id)));
 
     // sync all involved pools from found opportunities with fresh data including ticks
     const updatedPools = await this.dexManager.updatePoolsByIds(poolIds, 16); // update pools with ticks data
-    this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block: this.blockManager.getCurrentBlock() });
-    // EMITED: pool-state-upsert-batch for updated pools => if valid opportunities will be detected after upload
+    this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block: this.blockManager.getCurrentBlock(), silent: true }); // SILENT => no trigger of opportunities search
 
-    // TODO: DECIDE HERE WHAT TO DO
-    // OPTION 1: re-evaluate failed opportunities (import arbitrageOrchestrator.evaluator.evaluate)
-    // TODO: UPDATE graph
-    // TODO: re-evaluate opportunities after update
-    // NOTE: do not emit event becaue it may cause infinite loop if same invalid opportunity its detected again
+    // evaluate again invalid opportunities
+    let reEvaluatedOpportunities = await this.arbitrageOrchestrator.evaluatePathsConcurrently(opportunities, 30);
+    reEvaluatedOpportunities.forEach((o) => {
+      o.foundAtBlock = currentBlock;
+      this.fillOpportunityTradeStruct(o);
+    });
+
+    // basic sanity validation
+    reEvaluatedOpportunities = reEvaluatedOpportunities.filter((o) => this.validatePreExecution(o));
+
+    // simulate all opportunities in batch with multicall3
+    const { validOpportunities, invalidOpportunities, errorOpportunities, blacklistPoolIds } =
+      await this.simulateOpportunities(reEvaluatedOpportunities);
+    const statusMessage = `valid: ${validOpportunities.length}, invalid: ${invalidOpportunities.length}, error: ${errorOpportunities.length}`;
+    this.logger.info(`Opportunities simulation status: ${statusMessage}`);
+
+    // handle any valid opportunities
+    validOpportunities.forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
+
+    // NOTE: DISCARD THE REST
+    invalidOpportunities.forEach((o) =>
+      this.logger.error(`❌ Opportunity ${o.id} still invalid after pools update, discarding...`),
+    );
+    errorOpportunities.forEach((o) => this.logger.error(`❌ Opportunity ${o.id} has errors after pools update, discarding...`));
+    if (blacklistPoolIds.size > 0) this.dexManager.blacklistPools(blacklistPoolIds);
   }
 
   /**
@@ -627,93 +652,96 @@ export class FlashArbitrageHandler {
    */
   private async simulateOpportunities(opportunities: ArbitrageOpportunity[]) {
     this.logger.info(`🔍 Simulating ${opportunities.length} opportunities via static multicall3...`);
-
-    // 1. build multicall3 input from valid opportunities
-    const calls: Multical3Input[] = [];
-    for (const opportunity of opportunities) {
-      const callData = this.CONTRACT_INTERFACE.encodeFunctionData('simulateTrade', [opportunity.trade!]);
-      calls.push({
-        target: this.chainConfig.arbitrageContractAddress,
-        allowFailure: true,
-        callData,
-      });
-    }
-
-    // 2. execute multicall3
-    const callResults = await this.blockchain.executeMulticall3(calls);
-
-    // 3. Collect decoded results per opportunity
     const validOpportunities: ArbitrageOpportunity[] = [];
     const invalidOpportunities: ArbitrageOpportunity[] = [];
     const errorOpportunities: ArbitrageOpportunity[] = [];
     const blacklistPoolIds = new Set<string>();
 
-    // NOTE: simulateTrade always reverts with SimulationSuccess/SimulationError custom error
-    for (let index = 0; index < callResults.length; index++) {
-      const callResult = callResults[index];
-      const opportunity = opportunities[index];
-      const borrowToken = opportunity.borrowToken;
-      let parsed;
-      try {
-        parsed = this.CONTRACT_INTERFACE.parseError(callResult.returnData);
-      } catch {
-        errorOpportunities.push(opportunity);
-        this.logger.error(`❌ Unparseable revert for: ${opportunity.id}`, { returnData: callResult.returnData });
-        continue;
-      }
-
-      if (parsed?.name === 'SimulationSuccess') {
-        const expectedProfit = ethers.formatUnits(opportunity.grossProfitToken, borrowToken.decimals);
-        const profitOut = ethers.formatUnits(parsed.args[0] as bigint, borrowToken.decimals); // NOTE: this its profit after loan repayment
-        this.logger.info(`✅ Simulation succesful for ${opportunity.id}, expected: ${expectedProfit}, profitOut: ${profitOut}`);
-        validOpportunities.push(opportunity); // THE ONLY VALID CASE
-      } else if (parsed?.name === 'SimulationError') {
-        try {
-          const innerErrBytes = parsed.args[0] as string;
-          const innerError = this.CONTRACT_INTERFACE.parseError(innerErrBytes);
-
-          if (innerError?.name === 'SwapStepFailed') {
-            const stepIndex = Number(innerError.args[0] as bigint);
-            const stepReasonBytes = innerError.args[1] as string;
-
-            // Optionally decode the inner-inner reason (pool's actual error)
-            // if (stepReasonBytes && stepReasonBytes !== '0x') {
-            //   try {
-            //     const poolParsed = this.CONTRACT_INTERFACE.parseError(stepReasonBytes);
-            //     poolError = poolParsed?.name ?? `selector: ${stepReasonBytes.slice(0, 10)}`;
-            //   } catch {
-            //     poolError = `raw: ${stepReasonBytes.slice(0, 100)}`;
-            //   }
-            // }
-
-            const failedStep = opportunity.steps[stepIndex];
-            errorOpportunities.push(opportunity);
-            blacklistPoolIds.add(failedStep.pool.id);
-            this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}`, { failedStep, stepReasonBytes });
-          } else if (innerError?.name === 'LoanRepaymentNotMet' || innerError?.name === 'MinProfitNotMet') {
-            const formattedExpected = ethers.formatUnits(innerError.args[1] as bigint, borrowToken.decimals);
-            const formattedActual = ethers.formatUnits(innerError.args[2] as bigint, borrowToken.decimals);
-            const errorMsg = `${innerError?.name}: expected: ${formattedExpected}, actual: ${formattedActual}`;
-            this.logger.warn(`Simulation for ${opportunity.id} failed with ${errorMsg}`);
-            invalidOpportunities.push(opportunity); // can't repay loan or min profit not met
-          } else {
-            // NOTE: other types of errors aren't expected in simulation
-            errorOpportunities.push(opportunity);
-            this.logger.error(`❌ Simulation for ${opportunity.id} failed with error`, { innerError });
-          }
-        } catch {
-          errorOpportunities.push(opportunity);
-          const message = 'Unable to decode inner error, empty revert (require(false) or OOG) from pool/contract';
-          this.logger.error(`❌ Simulation failed for: ${opportunity.id}, ${message}`, { opportunity });
-        }
-      } else {
-        errorOpportunities.push(opportunity);
-        this.logger.error(`❌ Simulation for ${opportunity.id} failed, unexpected: ${parsed?.name}`, {
-          parsedName: parsed?.name,
-          parsedArgs: parsed?.args,
-          returnData: callResult.returnData,
+    try {
+      // 1. build multicall3 input from valid opportunities
+      const calls: Multical3Input[] = [];
+      for (const opportunity of opportunities) {
+        const callData = this.CONTRACT_INTERFACE.encodeFunctionData('simulateTrade', [opportunity.trade!]);
+        calls.push({
+          target: this.chainConfig.arbitrageContractAddress,
+          allowFailure: true,
+          callData,
         });
       }
+
+      // 2. execute multicall3
+      const callResults = await this.blockchain.executeMulticall3(calls);
+
+      // 3. Collect decoded results per opportunity
+      // NOTE: simulateTrade always reverts with SimulationSuccess/SimulationError custom error
+      for (let index = 0; index < callResults.length; index++) {
+        const callResult = callResults[index];
+        const opportunity = opportunities[index];
+        const borrowToken = opportunity.borrowToken;
+        let parsed;
+        try {
+          parsed = this.CONTRACT_INTERFACE.parseError(callResult.returnData);
+        } catch {
+          errorOpportunities.push(opportunity);
+          this.logger.error(`❌ Unparseable revert for: ${opportunity.id}`, { returnData: callResult.returnData });
+          continue;
+        }
+
+        if (parsed?.name === 'SimulationSuccess') {
+          const expectedProfit = ethers.formatUnits(opportunity.grossProfitToken, borrowToken.decimals);
+          const profitOut = ethers.formatUnits(parsed.args[0] as bigint, borrowToken.decimals); // NOTE: this its profit after loan repayment
+          this.logger.info(`✅ Simulation succesful for ${opportunity.id}, expected: ${expectedProfit}, profitOut: ${profitOut}`);
+          validOpportunities.push(opportunity); // THE ONLY VALID CASE
+        } else if (parsed?.name === 'SimulationError') {
+          try {
+            const innerErrBytes = parsed.args[0] as string;
+            const innerError = this.CONTRACT_INTERFACE.parseError(innerErrBytes);
+
+            if (innerError?.name === 'SwapStepFailed') {
+              const stepIndex = Number(innerError.args[0] as bigint);
+              const stepReasonBytes = innerError.args[1] as string;
+
+              // Optionally decode the inner-inner reason (pool's actual error)
+              // if (stepReasonBytes && stepReasonBytes !== '0x') {
+              //   try {
+              //     const poolParsed = this.CONTRACT_INTERFACE.parseError(stepReasonBytes);
+              //     poolError = poolParsed?.name ?? `selector: ${stepReasonBytes.slice(0, 10)}`;
+              //   } catch {
+              //     poolError = `raw: ${stepReasonBytes.slice(0, 100)}`;
+              //   }
+              // }
+
+              const failedStep = opportunity.steps[stepIndex];
+              errorOpportunities.push(opportunity);
+              blacklistPoolIds.add(failedStep.pool.id);
+              this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}`, { failedStep, stepReasonBytes });
+            } else if (innerError?.name === 'LoanRepaymentNotMet' || innerError?.name === 'MinProfitNotMet') {
+              const formattedExpected = ethers.formatUnits(innerError.args[1] as bigint, borrowToken.decimals);
+              const formattedActual = ethers.formatUnits(innerError.args[2] as bigint, borrowToken.decimals);
+              const errorMsg = `${innerError?.name}: expected: ${formattedExpected}, actual: ${formattedActual}`;
+              this.logger.warn(`Simulation for ${opportunity.id} failed with ${errorMsg}`);
+              invalidOpportunities.push(opportunity); // can't repay loan or min profit not met
+            } else {
+              // NOTE: other types of errors aren't expected in simulation
+              errorOpportunities.push(opportunity);
+              this.logger.error(`❌ Simulation for ${opportunity.id} failed with error`, { innerError });
+            }
+          } catch {
+            errorOpportunities.push(opportunity);
+            const message = 'Unable to decode inner error, empty revert (require(false) or OOG) from pool/contract';
+            this.logger.error(`❌ Simulation failed for: ${opportunity.id}, ${message}`, { opportunity });
+          }
+        } else {
+          errorOpportunities.push(opportunity);
+          this.logger.error(`❌ Simulation for ${opportunity.id} failed, unexpected: ${parsed?.name}`, {
+            parsedName: parsed?.name,
+            parsedArgs: parsed?.args,
+            returnData: callResult.returnData,
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error(`❌ Unexpected error during simulation`, { error, opportunities });
     }
 
     return { validOpportunities, invalidOpportunities, errorOpportunities, blacklistPoolIds };
