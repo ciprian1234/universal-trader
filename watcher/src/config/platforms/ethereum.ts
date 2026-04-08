@@ -101,7 +101,7 @@ const ethereum: ChainConfig = {
   ],
 
   arbitrage: {
-    minGrossProfitUSD: 1,
+    minGrossProfitUSD: 5,
     maxSlippageBps: 500, // 5%
     minLiquidityUSD: 10_000,
     maxHops: 3,

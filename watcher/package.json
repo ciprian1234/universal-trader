@@ -13,7 +13,8 @@
     "debug-opportunity": "bun run ./src/scripts/debug-opportunity.ts",
     "identify-venues": "bun run ./src/scripts/identify-venues.ts",
     "exec-price-oracle": "bun run ./src/scripts/exec-price-oracle.ts",
-    "compute-init-code-hash": "bun run ./src/scripts/compute-init-code-hash.ts"
+    "compute-init-code-hash": "bun run ./src/scripts/compute-init-code-hash.ts",
+    "create-wallet": "bun run ./src/scripts/create-wallet.ts"
   },
   "dependencies": {
     "@flashbots/ethers-provider-bundle": "^1.0.0",

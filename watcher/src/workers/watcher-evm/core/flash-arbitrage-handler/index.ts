@@ -200,7 +200,7 @@ export class FlashArbitrageHandler {
     opportunities.forEach((o) => o.steps.forEach((s) => poolIds.add(s.pool.id)));
 
     // sync all involved pools from found opportunities with fresh data including ticks
-    const updatedPools = await this.dexManager.updatePoolsByIds(poolIds, 16); // update pools with ticks data
+    const updatedPools = await this.dexManager.updatePoolsByIds(poolIds, 32); // update pools with ticks data
     this.eventBus.emitPoolsUpsertBatch({ pools: updatedPools, block: this.blockManager.getCurrentBlock(), silent: true }); // SILENT => no trigger of opportunities search
 
     // evaluate again invalid opportunities

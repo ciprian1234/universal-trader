@@ -227,17 +227,19 @@ export class PathFinder implements IPathFinder {
   private getStartTokens(affectedTokens: Set<string>): Set<string> {
     // Return intersection of affectedTokens and preferredBorrowTokens
     const result = new Set<string>();
+    result.add(this.tokenManager.WETH_ADDRESS);
+    return result; // temp
 
-    for (const addr of affectedTokens) {
-      const token = this.tokenManager.getToken(addr);
-      if (token && this.config.preferredBorrowTokens.includes(token.symbol)) {
-        // if (token.symbol === 'USDC') {
-        // this.logger.debug(`TEMP Only adding USDC as start token: ${token.symbol} (${addr})`);
-        result.add(addr);
-        // }
-      }
-    }
+    // for (const addr of affectedTokens) {
+    //   const token = this.tokenManager.getToken(addr);
+    //   if (token && this.config.preferredBorrowTokens.includes(token.symbol)) {
+    //     // if (token.symbol === 'USDC') {
+    //     // this.logger.debug(`TEMP Only adding USDC as start token: ${token.symbol} (${addr})`);
+    //     result.add(addr);
+    //     // }
+    //   }
+    // }
 
-    return result;
+    // return result;
   }
 }

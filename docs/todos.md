@@ -1,8 +1,12 @@
 # TODOS
 
-- fetch nonce at init
 - revisit gasUsage estimation
+- revisit pathFinding condition (rates product, to many found candidate paths)
+- introspect invalidated opportunities => check on next block pools events and tx how pools were used
+
 - batch pools introspection into a single call
+- if opportunity its still valid => use standardTx in pendingOpportunities check
+- if flashbots 50X => fallback to standardTx
 
 ## MVP
 
@@ -18,7 +22,6 @@
 - check how much we can borrow from vault for each anchor token in a single call
 - batch wallet balances into a single call
 - batch pool discovery into a single call
-- implement blacklist of tokens
 
 ### BATCH_2
 
