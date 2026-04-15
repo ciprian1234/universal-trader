@@ -7,7 +7,7 @@ const enabledPlatforms = process.env.APP_CONFIG_ENABLED_PLATFORMS.split(',').map
 
 export const appConfig: AppConfig = {
   apiServerPort: parseInt(process.env.APP_CONFIG_API_SERVER_PORT ?? '4040', 10),
-  logLevel: process.env.APP_CONFIG_LOG_LEVEL ?? 'info',
+  logLevel: process.env.LOG_LEVEL ?? 'info',
   enabledPlatforms,
   platforms: loadConfigs(enabledPlatforms),
 };

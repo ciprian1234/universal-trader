@@ -1,0 +1,25 @@
+[Unit]
+Description=Universal Trader - DEX Watcher
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=ciprian
+WorkingDirectory=/home/ciprian/workspace/projects/universal-trader/watcher
+
+# ── Environment ──────────────────────────────────────────────────────────────
+Environment=NODE_ENV=production
+
+# ── Process ───────────────────────────────────────────────────────────────────
+ExecStart=/home/ciprian/.bun/bin/bun start
+Restart=on-failure
+RestartSec=5
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+StandardOutput=append:/home/ciprian/workspace/projects/universal-trader/watcher/data/logs/out.log
+StandardError=append:/home/ciprian/workspace/projects/universal-trader/watcher/data/logs/err.log
+SyslogIdentifier=universal-trader
+
+[Install]
+WantedBy=multi-user.target
