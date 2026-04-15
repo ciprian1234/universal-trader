@@ -595,11 +595,11 @@ export class FlashArbitrageHandler {
       });
     }
 
-    const BRIBE_BPS = this.USE_FLASHBOTS ? 9000n : 0n; // if using Flashbots, allocate 90% of profit for bribe
-    const result = this.calculateSpendingsAndProfit(opportunity, BRIBE_BPS); // if using Flashbots, allocate up to 90% of profit for bribe
+    const result = this.calculateSpendingsAndProfit(opportunity, 8000n); // if direct payment allocate only 80% of leftover profit for bribe
+    // NOTE: if borrowToken its in ETH we can afford to pay higher bribe set 100% bribe
 
     opportunity.bribe = { internalBribeBps: 0n, bribeWEI: 0n, result };
-    if (opportunity.borrowToken.symbol === 'WETH') opportunity.bribe.internalBribeBps = BRIBE_BPS;
+    if (opportunity.borrowToken.symbol === 'WETH') opportunity.bribe.internalBribeBps = 9500n;
     else opportunity.bribe.bribeWEI = result.bribeCostWEI; // CASE 2: Direct ETH transfer
 
     // fill opportunity trade execution struct
