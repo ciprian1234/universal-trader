@@ -3,10 +3,12 @@ import { createLogger, type Logger } from '@/utils';
 import type { CacheService } from '@/utils/cache-service';
 import { ethers } from 'ethers';
 import { MULTICALL3_ABI, MULTICALL3_ADDRESS } from './chain/abi';
+import type { EventBus } from './event-bus';
 
 type BlockchainInput = {
   chainConfig: ChainConfig;
   cache: CacheService;
+  eventBus: EventBus;
 };
 
 export interface Multical3Input {
@@ -28,6 +30,7 @@ export class Blockchain {
   readonly multicall3: ethers.Contract;
 
   private readonly cache: CacheService;
+  private readonly eventBus: EventBus;
   private readonly contracts: Map<string, ethers.Contract> = new Map();
 
   // Connection health monitoring
@@ -53,6 +56,7 @@ export class Blockchain {
     this.chainConfig = input.chainConfig;
     this.chainId = input.chainConfig.chainId;
     this.cache = input.cache;
+    this.eventBus = input.eventBus;
 
     // init blockchain provider either WS or HTTP
     const providerURL = this.chainConfig.providerRpcUrl;
@@ -118,8 +122,14 @@ export class Blockchain {
 
         // if connection its lost for more than 1 minute, exit process to allow restart
         if (timeSinceLastBlock > 60000) {
-          this.logger.error('💀 Connection dead for 1 minute - exiting for restart');
-          process.exit(1); // Let systemd/PM2 restart the app
+          this.logger.error('💀 Connection dead for 1 minute');
+
+          // clear interval before emiting connection-lost event
+          if (this.healthCheckInterval) {
+            clearInterval(this.healthCheckInterval);
+            this.healthCheckInterval = null;
+          }
+          this.eventBus.emit('connection-lost', { blockNumber: this.lastBlockTime });
         }
       }
     }, this.HEALTH_CHECK_INTERVAL);

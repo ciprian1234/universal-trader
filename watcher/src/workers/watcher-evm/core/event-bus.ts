@@ -11,7 +11,7 @@ import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 // EVENT TYPES
 // ================================================================================================
 
-export type ApplicationEventName = 'initialized' | 'reorg-detected' | 'reorg-recovered';
+export type ApplicationEventName = 'initialized' | 'connection-lost' | 'reorg-detected' | 'reorg-recovered';
 
 export interface ApplicationEventBase {
   name: ApplicationEventName;
@@ -19,6 +19,13 @@ export interface ApplicationEventBase {
 
 export interface InitializedApplicationEvent extends ApplicationEventBase {
   name: 'initialized';
+}
+
+export interface ConnectionLostApplicationEvent extends ApplicationEventBase {
+  name: 'connection-lost';
+  data: {
+    blockNumber: number;
+  };
 }
 
 export interface ReorgDetectedApplicationEvent extends ApplicationEventBase {
@@ -37,7 +44,11 @@ export interface ReorgRecoveredApplicationEvent extends ApplicationEventBase {
   };
 }
 
-export type ApplicationEvent = InitializedApplicationEvent | ReorgDetectedApplicationEvent | ReorgRecoveredApplicationEvent;
+export type ApplicationEvent =
+  | InitializedApplicationEvent
+  | ConnectionLostApplicationEvent
+  | ReorgDetectedApplicationEvent
+  | ReorgRecoveredApplicationEvent;
 
 export interface PoolsUpsertBatchPayload {
   pools: DexPoolState[];

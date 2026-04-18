@@ -48,8 +48,15 @@ class EVMWorker extends BaseWorker {
 
   setupEventPipeline() {
     // "application-event" routing
-    this.eventBus.onApplicationEvent((payload) => {
-      this.arbitrageOrchestrator.handleApplicationEvent(payload);
+    this.eventBus.onApplicationEvent(async (payload) => {
+      if (payload.name === 'connection-lost') {
+        const msg = `Connection lost at block ${payload.data.blockNumber}`;
+        this.logger.error(`${msg} - stopping worker gracefully before exit...`);
+        await this.stop();
+        this.sendEventMessage('fatal-error', { reason: msg }); // notify main thread about connection loss
+      } else {
+        this.arbitrageOrchestrator.handleApplicationEvent(payload);
+      }
     });
 
     // "new-block" routing => update GasManager
@@ -113,7 +120,7 @@ class EVMWorker extends BaseWorker {
     await this.db.createTables();
 
     this.eventBus = new EventBus(); // create event bus
-    this.blockchain = new Blockchain({ chainConfig: this.chainConfig, cache: this.cache }); // create blockchain provider
+    this.blockchain = new Blockchain({ chainConfig: this.chainConfig, cache: this.cache, eventBus: this.eventBus }); // create blockchain provider
 
     // create token manager
     this.tokenManager = new TokenManager({

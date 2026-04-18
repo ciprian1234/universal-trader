@@ -128,6 +128,11 @@ export class WorkerManager {
   private handleEvent(message: EventMessage): void {
     logger.info(`Received event from worker "${message.sender}": ${message.name}`);
 
+    if (message.name === 'fatal-error') {
+      logger.error(`💀 Worker "${message.sender}" reported a fatal error: ${(message.data as any)?.reason}. Exiting.`);
+      process.exit(1); // Main thread exits → systemd restarts the whole app
+    }
+
     if (message.name === 'venue-state-batch') {
       // message.data.
     }
@@ -162,7 +167,13 @@ export class WorkerManager {
    * Terminate all workers
    */
   async terminateAll(): Promise<void> {
-    for (const [id] of this.workers) await this.terminateWorker(id);
+    for (const [id] of this.workers) {
+      try {
+        await this.terminateWorker(id);
+      } catch (err) {
+        logger.error(`Error terminating worker "${id}":`, { err });
+      }
+    }
   }
 
   getWorkerIds(): string[] {
