@@ -1,5 +1,7 @@
 # TODOS
 
+- investigate unknown(397) pool why not expected amountOut => custom fee
+- review blacklisted pools
 - revisit gasUsage estimation
 - revisit pathFinding condition (rates product, to many found candidate paths)
 - introspect invalidated opportunities => check on next block pools events and tx how pools were used
@@ -14,6 +16,8 @@
 
 - investigate why tokenPairs are not set at init
 - if running with localhost provider do not sync pools!!!
+- move arbitrage stats in flashArbitrageHandler
+- revisit non-overlapping opportunities selection
 
 ## POST_MVP
 
@@ -32,6 +36,8 @@
 - it may happen that relay its on network spikes => fallback to old TX if relay its down
 
 ### Integrate with COW Protocol for resolving swaps using best routes
+
+### Implement arbitrage back-running
 
 ### Simulate swap v3/v4
 

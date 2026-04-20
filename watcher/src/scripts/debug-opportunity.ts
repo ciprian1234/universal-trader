@@ -63,7 +63,7 @@ async function main() {
     if (SPAWN_HARDHAT_NODE) await startHardhatFork(foundAtBlock);
 
     // init core app services
-    blockchain = new Blockchain({ chainConfig, cache });
+    blockchain = new Blockchain({ chainConfig, cache, eventBus });
     tokenManager = new TokenManager({ chainConfig, blockchain, eventBus, db });
     await tokenManager.init(); // load tokens from DB and trusted tokens from coingecho
     const ethToken = tokenManager.getToken(ethers.ZeroAddress)!;

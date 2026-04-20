@@ -519,53 +519,71 @@ export class FlashArbitrageHandler {
    * NOTE: bribe can exceed wallet balance only if borrowToken is WETH!!!
    * otherwise cap bribe to wallet balance (or set to 0 if balance is too low) to avoid failed transactions due to insufficient funds
    */
-  private calculateSpendingsAndProfit(opportunity: ArbitrageOpportunity, bribeBps: bigint = 0n) {
-    const tokenOut = opportunity.borrowToken; // tokenOut is the same as borrowToken because its a cyclic swap (first token in = last token out)
-    const nativeTokenPriceUSD = this.priceOracle.getPriceUSD(this.WETH_ADDR)!;
-    const usdPriceInNativeToken = 1 / nativeTokenPriceUSD;
+  private calculateSpendingsAndProfit(opportunity: ArbitrageOpportunity) {
+    // const tokenOut = opportunity.borrowToken; // tokenOut is the same as borrowToken because its a cyclic swap (first token in = last token out)
+    // const nativeTokenPriceUSD = this.priceOracle.getPriceUSD(this.WETH_ADDR)!;
+    // const usdPriceInNativeToken = 1 / nativeTokenPriceUSD;
 
-    const grossProfitUSD = opportunity.grossProfitUSD;
+    // const grossProfitUSD = opportunity.grossProfitUSD;
     const { gasCostWEI } = opportunity.gasAnalysis;
 
-    // calculate bribe from leftover profit after gas costs
-    const gasCostUSD = this.priceOracle.calculateUSDValue(this.WETH_ADDR, gasCostWEI);
-    const leftoverProfitUSD = grossProfitUSD - gasCostUSD;
-    if (leftoverProfitUSD <= 0) {
-      this.logger.warn(`Leftover profit for ${opportunity.id} is negative after gas costs`, { grossProfitUSD, gasCostUSD });
-      throw new Error(`Leftover profit negative for: ${opportunity.id}`);
+    // NOTE: for now internal bribe only with WETH
+    // figure how how much bribe we can pay based on gross profit - gas cost
+    // REASONING:
+    // GrossProfit -> 10_000BPS
+    // GrossProfit - GasCost -> ? BPS => calculate bribeBPS based on leftover profit
+    const grossProfitTokenOut = opportunity.grossProfitToken; // for NOW only ETH
+    const profitAfterGasCost = grossProfitTokenOut - gasCostWEI;
+    let profitBpsAfterGasCost = (profitAfterGasCost * 10000n) / grossProfitTokenOut;
+    let gasCostBps = (gasCostWEI * 10000n) / grossProfitTokenOut;
+    if (profitBpsAfterGasCost > 10000n) {
+      this.logger.warn(`Calculated profitBpsAfterGasCost > 10000 for opportunity ${opportunity.id}, capping to 9000`, {
+        profitBpsAfterGasCost,
+      });
+      profitBpsAfterGasCost = 9000n;
     }
+    const minProfitTokenOut = (grossProfitTokenOut * 8n) / 10n; // expect set min profit to 80% of caluclated gross profit
+    return { minProfitTokenOut, grossProfitTokenOut, profitAfterGasCost, gasCostWEI, profitBpsAfterGasCost, gasCostBps };
 
-    let bribeCostUSD = (leftoverProfitUSD * Number(bribeBps)) / 10000;
-    if (tokenOut.symbol !== 'WETH' && bribeCostUSD > this.MAX_BRIBE_USD) {
-      const msg = `calculated bribe $${bribeCostUSD.toFixed(2)} > $${this.MAX_BRIBE_USD}, capping to max`;
-      this.logger.warn(`Opportunity ${opportunity.id} has tokenOut: ${tokenOut.symbol}, ${msg}`);
-      bribeCostUSD = this.MAX_BRIBE_USD;
-    }
-    const bribeCostETH = bribeCostUSD * usdPriceInNativeToken;
-    const bribeCostWEI = BigInt(Math.floor(bribeCostETH * 1e18));
+    // // calculate bribe from leftover profit after gas costs
+    // const gasCostUSD = this.priceOracle.calculateUSDValue(this.WETH_ADDR, gasCostWEI);
+    // const leftoverProfitUSD = grossProfitUSD - gasCostUSD;
+    // if (leftoverProfitUSD <= 0) {
+    //   this.logger.warn(`Leftover profit for ${opportunity.id} is negative after gas costs`, { grossProfitUSD, gasCostUSD });
+    //   throw new Error(`Leftover profit negative for: ${opportunity.id}`);
+    // }
 
-    const totalCostsWEI = gasCostWEI + bribeCostWEI;
-    const totalCostsUSD = this.priceOracle.calculateUSDValue(this.WETH_ADDR, totalCostsWEI);
+    // let bribeCostUSD = (leftoverProfitUSD * Number(bribeBps)) / 10000;
+    // if (tokenOut.symbol !== 'WETH' && bribeCostUSD > this.MAX_BRIBE_USD) {
+    //   const msg = `calculated bribe $${bribeCostUSD.toFixed(2)} > $${this.MAX_BRIBE_USD}, capping to max`;
+    //   this.logger.warn(`Opportunity ${opportunity.id} has tokenOut: ${tokenOut.symbol}, ${msg}`);
+    //   bribeCostUSD = this.MAX_BRIBE_USD;
+    // }
+    // const bribeCostETH = bribeCostUSD * usdPriceInNativeToken;
+    // const bribeCostWEI = BigInt(Math.floor(bribeCostETH * 1e18));
 
-    const tokenOutPriceUSD = this.priceOracle.getPriceUSD(tokenOut.address);
-    if (!tokenOutPriceUSD) throw new Error(`Price not available for tokenOut ${tokenOut.symbol} (${tokenOut.address})`);
-    const totalCostInTokenOut = totalCostsUSD / tokenOutPriceUSD; // (human readable amount = > we need to convert to raw amount)
-    const totalCostInTokenOutRaw = BigInt(Math.floor(totalCostInTokenOut * 10 ** tokenOut.decimals));
+    // const totalCostsWEI = gasCostWEI + bribeCostWEI;
+    // const totalCostsUSD = this.priceOracle.calculateUSDValue(this.WETH_ADDR, totalCostsWEI);
 
-    const result = {
-      gasCostUSD,
-      bribeCostUSD,
-      gasCostWEI,
-      bribeCostWEI,
-      bribeCostETH,
+    // const tokenOutPriceUSD = this.priceOracle.getPriceUSD(tokenOut.address);
+    // if (!tokenOutPriceUSD) throw new Error(`Price not available for tokenOut ${tokenOut.symbol} (${tokenOut.address})`);
+    // const totalCostInTokenOut = totalCostsUSD / tokenOutPriceUSD; // (human readable amount = > we need to convert to raw amount)
+    // const totalCostInTokenOutRaw = BigInt(Math.floor(totalCostInTokenOut * 10 ** tokenOut.decimals));
 
-      totalCostWEI: totalCostsWEI,
-      totalCostUSD: totalCostsUSD,
-      totalCostInTokenOut: totalCostInTokenOutRaw,
-      netProfitUSD: grossProfitUSD - totalCostsUSD,
-    };
+    // const result = {
+    //   gasCostUSD,
+    //   bribeCostUSD,
+    //   gasCostWEI,
+    //   bribeCostWEI,
+    //   bribeCostETH,
 
-    return result;
+    //   totalCostWEI: totalCostsWEI,
+    //   totalCostUSD: totalCostsUSD,
+    //   totalCostInTokenOut: totalCostInTokenOutRaw,
+    //   netProfitUSD: grossProfitUSD - totalCostsUSD,
+    // };
+
+    // return result;
   }
 
   /**
@@ -595,12 +613,14 @@ export class FlashArbitrageHandler {
       });
     }
 
-    const result = this.calculateSpendingsAndProfit(opportunity, 8000n); // if direct payment allocate only 80% of leftover profit for bribe
+    const result = this.calculateSpendingsAndProfit(opportunity); // if direct payment allocate only 80% of leftover profit for bribe
     // NOTE: if borrowToken its in ETH we can afford to pay higher bribe set 100% bribe
 
     opportunity.bribe = { internalBribeBps: 0n, bribeWEI: 0n, result };
-    if (opportunity.borrowToken.symbol === 'WETH') opportunity.bribe.internalBribeBps = 9500n;
-    else opportunity.bribe.bribeWEI = result.bribeCostWEI; // CASE 2: Direct ETH transfer
+    if (opportunity.borrowToken.symbol === 'WETH') {
+      opportunity.bribe.internalBribeBps = result.profitBpsAfterGasCost;
+    }
+    // else opportunity.bribe.bribeWEI = result.bribeCostWEI; // CASE 2: Direct ETH transfer
 
     // fill opportunity trade execution struct
     opportunity.trade = {
@@ -608,7 +628,7 @@ export class FlashArbitrageHandler {
       borrowToken: opportunity.borrowToken.address,
       borrowAmount: opportunity.borrowAmount,
       internalBribeBps: opportunity.bribe.internalBribeBps,
-      minProfitTokenOut: result.totalCostInTokenOut,
+      minProfitTokenOut: result.minProfitTokenOut,
     };
   }
 

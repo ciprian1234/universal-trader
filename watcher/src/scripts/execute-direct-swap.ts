@@ -4,7 +4,7 @@ import { FlashArbitrageHandler } from '@/workers/watcher-evm/core/flash-arbitrag
 import { type SwapStepOnContract } from '@/workers/watcher-evm/core/flash-arbitrage-handler/flash-arbitrage-config';
 import { FLASH_ARBITRAGE_ABI } from '@/workers/watcher-evm/core/flash-arbitrage-handler/flash-arbitrage-contract-abi';
 import { ethers } from 'ethers';
-import { chainConfig, balanceStrWithSymbol, balanceStr, fundContract, WETH_ADDRESS, balanceDeltaStr } from './helpers';
+import { chainConfig, balanceStrWithSymbol, fundContract, WETH_ADDRESS, balanceDeltaStr } from './helpers';
 import { CacheService } from '@/utils/cache-service';
 import { WorkerDb } from '@/workers/watcher-evm/db';
 import { EventBus } from '@/workers/watcher-evm/core/event-bus';
@@ -37,7 +37,7 @@ const db = new WorkerDb(chainConfig.databaseUrl, chainConfig.chainId);
 const eventBus = new EventBus();
 
 // Core app services
-const blockchain = new Blockchain({ chainConfig, cache });
+const blockchain = new Blockchain({ chainConfig, cache, eventBus });
 const tokenManager = new TokenManager({ chainConfig, blockchain, eventBus, db });
 
 // ========================================================================================
