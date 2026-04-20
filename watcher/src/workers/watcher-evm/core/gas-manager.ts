@@ -76,6 +76,7 @@ export class GasManager {
   async handleNewBlockEvent({ number, receivedTimestamp }: BlockEntry) {
     if (this.blockCounter++ % this.chainConfig.gasDataFetchInterval !== 0) return; // Fetch Block data every X blocks
     const data = await this.blockchain.getBlock(number); // only fetch once per x events TBD
+    if (!data?.baseFeePerGas) return; // block data unavailable, skip silently
     this.baseFeePerGas = data!.baseFeePerGas!;
     const baseFeePerGasFormatted = formatGwei(data!.baseFeePerGas!);
     const gasUsagePercent = ((Number(data!.gasUsed) / Number(data!.gasLimit)) * 100).toFixed(2);

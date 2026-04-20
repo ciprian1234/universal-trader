@@ -61,10 +61,35 @@ export interface PoolsUpsertBatchPayload {
 // ================================================================================================
 
 export class EventBus extends EventEmitter {
+  // private readonly logger = createLogger('[EventBus]');
+
   constructor() {
     super();
     this.setMaxListeners(1024); // Allow many subscribers
   }
+
+  /**
+   * Wraps a listener so that async errors don't become unhandled rejections.
+   * Node EventEmitter ignores Promises returned by listeners — this fills that gap.
+   */
+  // private safeOn<T>(event: string, callback: (payload: T) => void | Promise<void>): () => void {
+  //   const safeCallback = (payload: T) => {
+  //     try {
+  //       const result = callback(payload);
+  //       if (result instanceof Promise) {
+  //         result.catch((err: unknown) => {
+  //           const msg = err instanceof Error ? err.message : String(err);
+  //           this.logger.error(`Async error in "${event}" listener: ${msg}`);
+  //         });
+  //       }
+  //     } catch (err: unknown) {
+  //       const msg = err instanceof Error ? err.message : String(err);
+  //       this.logger.error(`Sync error in "${event}" listener: ${msg}`);
+  //     }
+  //   };
+  //   this.on(event, safeCallback);
+  //   return () => this.off(event, safeCallback);
+  // }
 
   // ================================================================================================
   // EVENT EMISSION
@@ -110,6 +135,7 @@ export class EventBus extends EventEmitter {
   onApplicationEvent(callback: (payload: ApplicationEvent) => void): () => void {
     this.on('application-event', callback);
     return () => this.off('application-event', callback); // Return unsubscribe function
+    // return this.safeOn('application-event', callback);
   }
 
   onNewBlock(callback: (payload: BlockEntry) => void): () => void {

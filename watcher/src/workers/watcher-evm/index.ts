@@ -60,9 +60,7 @@ class EVMWorker extends BaseWorker {
     });
 
     // "new-block" routing => update GasManager
-    this.eventBus.onNewBlock((payload) => {
-      this.gasManager.handleNewBlockEvent(payload);
-    });
+    this.eventBus.onNewBlock((payload) => this.gasManager.handleNewBlockEvent(payload));
 
     // "token-registered" routing
     // For each new token: create trading pairs with DISCOVERY tokens and emit "token-pair-registered" events for those pairs

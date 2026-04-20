@@ -35,6 +35,7 @@ export class Blockchain {
 
   // Connection health monitoring
   private lastBlockTime = Date.now();
+  private lastBlockNumber = 0;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly HEALTH_CHECK_INTERVAL = 15000; // Check every 15 seconds
   private readonly CONNECTION_TIMEOUT = 30000; // Alert after 30 seconds without blocks
@@ -69,10 +70,6 @@ export class Blockchain {
       this.provider = new ethers.WebSocketProvider(providerURL, this.chainId, { staticNetwork: true });
     } else throw new Error(`Unsupported provider URL: ${providerURL}`);
 
-    this.provider = new ethers.WebSocketProvider(providerURL, this.chainId, {
-      staticNetwork: true,
-    });
-
     // Log low-level WebSocket events
     this.provider.on('error', (error: Error) => {
       this.logger.error(`❌ WebSocket error`, error);
@@ -95,6 +92,7 @@ export class Blockchain {
       const now = Date.now();
       const timeSinceLastBlock = now - this.lastBlockTime;
       this.lastBlockTime = now;
+      this.lastBlockNumber = blockNumber;
 
       // Log connection status changes
       if (!this.isConnected) {
@@ -112,24 +110,23 @@ export class Blockchain {
       const timeSinceLastBlock = Date.now() - this.lastBlockTime;
 
       if (timeSinceLastBlock > this.CONNECTION_TIMEOUT) {
+        this.logger.warn(`⚠️  No blocks received for ${timeSinceLastBlock}ms`);
+
         if (this.isConnected) {
           this.logger.error('❌ WebSocket connection lost!');
           this.isConnected = false;
         }
 
-        // Log warning every health check while disconnected
-        this.logger.warn(`⚠️  No blocks received for ${timeSinceLastBlock}ms`);
-
-        // if connection its lost for more than 1 minute, exit process to allow restart
-        if (timeSinceLastBlock > 60000) {
-          this.logger.error('💀 Connection dead for 1 minute');
+        // if connection its lost for more than 40 seconds, exit process to allow restart
+        if (timeSinceLastBlock > 40000) {
+          this.logger.error('💀 Connection dead for 40 seconds');
 
           // clear interval before emiting connection-lost event
           if (this.healthCheckInterval) {
             clearInterval(this.healthCheckInterval);
             this.healthCheckInterval = null;
           }
-          this.eventBus.emit('connection-lost', { blockNumber: this.lastBlockTime });
+          this.eventBus.emitApplicationEvent({ name: 'connection-lost', data: { blockNumber: this.lastBlockNumber } });
         }
       }
     }, this.HEALTH_CHECK_INTERVAL);

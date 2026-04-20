@@ -141,36 +141,35 @@ export class BlockManager {
    */
   listenBlockEvents(): void {
     this.logger.info('🎧 Subscribed to block events');
-    this.blockchain.on('block', async (newBlockNumber: number) => {
-      try {
-        const prevBlockNumber = this.currentBlock.number;
-        this.currentBlock = { number: newBlockNumber, receivedTimestamp: Date.now() };
-        this.logger.info(`🔗 New block event: ${newBlockNumber}`);
-
-        if (newBlockNumber <= prevBlockNumber) {
-          this.logger.warn(
-            `⚠️ Received out-of-order blockNumber ${newBlockNumber} while current is ${prevBlockNumber}, (possible reorg)`,
-          );
-          return this.handleReorg(newBlockNumber);
-        }
-
-        // NOTE: if we reach here it means that this new block its mined in sequence
-        this.eventBus.emitNewBlock(this.currentBlock);
-
-        // fetch events for current block
-        const poolEvents = await this.fetchLogsByBlock(newBlockNumber);
-        this.logger.info(
-          `🔄 Fetched ${poolEvents.length} events (${newBlockNumber}) ${deltaMs(this.currentBlock.receivedTimestamp)}`,
-        );
-
-        poolEvents.forEach((event) => this.latestPoolEventsMeta.set(event.poolId, event.meta));
-        this.dexManager.handlePoolEventsBatch(poolEvents, this.currentBlock);
-      } catch (error) {
-        this.logger.error(`❌ Error processing new block ${newBlockNumber}:`, error);
-        // Curenltly only gas manager listens to block events => not a big isssue if block processing fails
-        // => Gas manager will just miss one block update on next block it will get latest data again
-      }
+    this.blockchain.on('block', (newBlockNumber: number) => {
+      this.handleNewBlock(newBlockNumber).catch((error) => {
+        this.logger.error(`❌ Error processing new block ${newBlockNumber}:`, { error });
+      });
     });
+  }
+
+  private async handleNewBlock(newBlockNumber: number): Promise<void> {
+    const prevBlockNumber = this.currentBlock.number;
+    this.currentBlock = { number: newBlockNumber, receivedTimestamp: Date.now() };
+    this.logger.info(`🔗 New block event: ${newBlockNumber}`);
+
+    if (newBlockNumber <= prevBlockNumber) {
+      this.logger.warn(
+        `⚠️ Received out-of-order blockNumber ${newBlockNumber} while current is ${prevBlockNumber}, (possible reorg)`,
+      );
+      return this.handleReorg(newBlockNumber);
+    }
+
+    // if we reach here it means that this new block its mined in sequence
+    this.eventBus.emitNewBlock(this.currentBlock);
+
+    const poolEvents = await this.fetchLogsByBlock(newBlockNumber);
+    this.logger.info(
+      `🔄 Fetched ${poolEvents.length} events (${newBlockNumber}) ${deltaMs(this.currentBlock.receivedTimestamp)}`,
+    );
+
+    poolEvents.forEach((event) => this.latestPoolEventsMeta.set(event.poolId, event.meta));
+    await this.dexManager.handlePoolEventsBatch(poolEvents, this.currentBlock);
   }
 
   /**
