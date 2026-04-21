@@ -27,13 +27,12 @@ let hardhatProcess: any = null;
 let hardhatOutput = '';
 
 // NOTE: those are safe to commit => from hardhat default accounts(0)
-const CONTRACT_ADDRESS = '0x8e12f47e258A991185aa517EA8d09398E5215618';
+const CONTRACT_ADDRESS = '0xeB6032426EA61f65321A95C21432f4E19fC961B6';
 const WALLET_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'; // (hardhat[0].privateKey)
 if (!WALLET_PRIVATE_KEY) throw new Error('WALLET_PRIVATE_KEY not set in config');
 
 // input pool from DB
-const DB_OPPORTUNITY_ID =
-  '1775604037258@uniswap-v3(500)[WETH->WBTC]___uniswap-v3(3000)[WBTC->USDC]___uniswap-v3(500)[USDC->WETH]';
+const DB_OPPORTUNITY_ID = '1776733825017@uniswap-v2(30)[WETH->PUNK]___uniswap-v4(30000)[PUNK->ETH]';
 
 // chain config (note: we override the RPC URL if we're spawning a hardhat node)
 const chainConfig = appConfig.platforms['ethereum'] as ChainConfig;
@@ -41,8 +40,9 @@ const WETH_ADDRESS = chainConfig.wrappedNativeTokenAddress;
 if (SPAWN_HARDHAT_NODE) chainConfig.providerRpcUrl = HARDHAT_RPC_URL;
 
 // Core app services
+if (!process.env.SCRIPTS_DATABASE_URL) throw new Error('SCRIPTS_DATABASE_URL not set in environment variables');
 const cache = new CacheService(chainConfig.chainId);
-const db = new WorkerDb(chainConfig.databaseUrl, chainConfig.chainId);
+const db = new WorkerDb(process.env.SCRIPTS_DATABASE_URL, chainConfig.chainId);
 const eventBus = new EventBus();
 let blockchain: Blockchain;
 let tokenManager: TokenManager;

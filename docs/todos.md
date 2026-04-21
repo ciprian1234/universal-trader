@@ -12,8 +12,6 @@
 
 ## MVP
 
-- if updatingPools and in meantime new block arrived => updatePools overwrites with stale date => check if new block arrived by using block manager if currentBlock > startBlock => fetch logs and apply again
-
 - investigate why tokenPairs are not set at init
 - if running with localhost provider do not sync pools!!!
 - move arbitrage stats in flashArbitrageHandler
@@ -34,6 +32,7 @@
 - handle fw ERC20 tokens (see how to bridge from WETH to fwWETH for example and others like fwUSDC, fwWBTC, etc..)
 - log general errors to DB identified by logId: 'timestamp_from', (things like event parsing failuire, async callbacks issues, etc.)
 - it may happen that relay its on network spikes => fallback to old TX if relay its down
+- if updatingPools and in meantime new block arrived => updatePools overwrites with stale date => check if new block arrived by using block manager if currentBlock > startBlock => fetch logs and apply again
 
 ### Integrate with COW Protocol for resolving swaps using best routes
 

@@ -19,7 +19,7 @@ const config: HardhatUserConfig = {
       forking: {
         url: process.env.ETHEREUM_RPC_URL as string,
         // blockNumber: undefined,
-        blockNumber: 24831060,
+        blockNumber: 24924911,
       },
       mining: {
         auto: false,

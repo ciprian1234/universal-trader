@@ -10,14 +10,13 @@ import { EventBus } from '@/workers/watcher-evm/core/event-bus';
 import { logger, safeStringify } from '@/utils';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;
-// const DB_URL = 'postgresql://root:root@localhost:5432/universal-trader';
-const DB_URL = 'postgresql://trader:andromeda2537@192.168.1.167:5432/ethereum';
-
 const cache = new CacheService(platformConfig.chainId);
-const db = new WorkerDb(DB_URL, platformConfig.chainId);
-const eventBus = new EventBus();
+
+if (!process.env.SCRIPTS_DATABASE_URL) throw new Error('SCRIPTS_DATABASE_URL not set in environment variables');
+const db = new WorkerDb(process.env.SCRIPTS_DATABASE_URL, platformConfig.chainId);
 
 // Core app services
+const eventBus = new EventBus();
 const blockchain = new Blockchain({ chainConfig: platformConfig, cache: cache, eventBus });
 
 // ================================================================================================
