@@ -23,7 +23,6 @@ echo "Pulling latest code from git repository..."
 git pull origin main
 
 # 3. Build the application
-cd ./watcher
 echo "Bun app does not need to be built, skipping build step."
 
 # 4. Start services
