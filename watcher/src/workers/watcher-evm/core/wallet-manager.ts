@@ -134,6 +134,11 @@ export class WalletManager {
   async updateBalancesAfterTransaction(involvedTokens: string[]) {
     this.logger.info('🔄 Updating balances after transaction...');
 
+    // get new wallet nonce
+    const nonce = await this.signer.getNonce();
+    this.walletState.nonce = nonce;
+    this.logger.info(`Updated wallet nonce: ${nonce}`);
+
     // Store old balances for comparison
     const oldNativeTokenBalance = this.walletState.nativeTokenBalance;
     const oldTokenBalances = new Map<string, bigint>();
