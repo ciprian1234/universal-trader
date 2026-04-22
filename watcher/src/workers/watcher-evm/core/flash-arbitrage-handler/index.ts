@@ -153,10 +153,7 @@ export class FlashArbitrageHandler {
     opportunities.forEach((o) => this.logger.info(`PATH "${o.id}" => GrossProfitUSD $${o.grossProfitUSD.toFixed(2)}`));
 
     // TODO: prefer ETH opportunitties
-
-    // select best non-overlapping opportunities
-    // let selectedOpportunities = this.selectNonOverlappingOpportunities(opportunities);
-    // let nonOverlappingOpportunities = opportunities; // NOTE: since using flashbot submit all
+    // fill trade struct for all opportunities (required for simulation and execution)
     opportunities.forEach((o) => {
       o.foundAtBlock = currentBlock;
       this.fillOpportunityTradeStruct(o);
@@ -172,8 +169,9 @@ export class FlashArbitrageHandler {
     const statusMessage = `valid: ${validOpportunities.length}, invalid: ${invalidOpportunities.length}, error: ${errorOpportunities.length}`;
     this.logger.info(`Opportunities simulation status: ${statusMessage}`);
 
-    // handle (first 10) valid opportunities
-    validOpportunities.slice(0, 10).forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
+    // handle non-overlapping valid opportunities
+    const validNonOverlappingOpportunities = this.selectNonOverlappingOpportunities(validOpportunities);
+    validNonOverlappingOpportunities.forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
 
     // handle blacklisted pools (if any)
     if (blacklistPoolIds.size > 0) this.dexManager.blacklistPools(blacklistPoolIds);
@@ -221,7 +219,8 @@ export class FlashArbitrageHandler {
     this.logger.info(`Opportunities simulation status: ${statusMessage}`);
 
     // handle any valid opportunities
-    validOpportunities.slice(0, 10).forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
+    const validNonOverlappingOpportunities = this.selectNonOverlappingOpportunities(validOpportunities);
+    validNonOverlappingOpportunities.forEach((o) => this.handleNewArbitrageOpportunityEvent(o));
 
     // NOTE: DISCARD THE REST
     invalidOpportunities.forEach((o) =>

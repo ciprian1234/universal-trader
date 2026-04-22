@@ -44,7 +44,6 @@ export class WorkerDb {
   constructor(databaseUrl: string, chainId: number) {
     this.sql = new SQL(databaseUrl);
     this.chainId = chainId;
-    console.log(`Initializing WorkerDb with databaseUrl: ${databaseUrl}, chainId: ${chainId}`);
   }
 
   // for testing/dev purposes only, drops all tables and data
