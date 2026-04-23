@@ -98,6 +98,13 @@ export class PathFinder implements IPathFinder {
 
       // 🔁 Found cycle back to start
       if (state.depth >= 2 && state.currentToken.address === startKey) {
+        const hasWethMidPath = state.path.slice(0, -1).some((e) => e.tokenOut.address === startKey);
+        if (hasWethMidPath) {
+          /* these are the extra paths */
+          this.logger.info(
+            `   🔁 Found extra path (${state.depth}): ${state.path.map((e) => `${e.tokenIn.symbol}->${e.tokenOut.symbol}`).join(' -> ')}`,
+          );
+        }
         // Quick profitability check using spot prices
         if (state.estimatedProfit > this.config.profitThreshold) {
           // 0.6% profit threshold

@@ -4,6 +4,7 @@ import type { ArbitragePath, IPathFinder } from './interfaces';
 import { EventBus, type ApplicationEvent, type PoolsUpsertBatchPayload } from '../event-bus';
 import { LiquidityGraph } from './liquidity-graph';
 import { PathEvaluator } from './path-evaluator';
+import { PathFinderBacktrackingDFS } from './path-finder-backtracking-dfs';
 import { TokenManager } from '../token-manager';
 import { GasManager } from '../gas-manager';
 import { DexManager } from '../dex-manager';
@@ -12,8 +13,6 @@ import type { PriceOracle } from '../price-oracle';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import { deltaMs } from '../helpers';
 import type { BlockEntry } from '../block-manager';
-import { PathFinderBacktrackingDFS } from './path-finder-backtracking-dfs';
-import { PathFinder } from './path-finder';
 
 // ============================================
 // CONFIGURATION
@@ -51,7 +50,6 @@ export class ArbitrageOrchestrator {
   // Sub-services
   private readonly graph: LiquidityGraph;
   private readonly pathFinder: IPathFinder;
-  private readonly pathFinderBacktrackingDFS: IPathFinder;
   private readonly pathEvaluator: PathEvaluator;
 
   // Statistics
@@ -78,20 +76,8 @@ export class ArbitrageOrchestrator {
     });
 
     // Initialize path finder (PathFinder or BellmanFordPathFinder)
-    this.pathFinder = new PathFinder({
+    this.pathFinder = new PathFinderBacktrackingDFS({
       logger: createLogger(`[${input.chainConfig.name}.PathFinder]`),
-      graph: this.graph,
-      tokenManager: this.tokenManager,
-      config: {
-        profitThreshold: 1.001, // 0.1% profit threshold (TODO: review this)
-        maxHops: input.chainConfig.arbitrage.maxHops,
-        maxPathsPerToken: 10000,
-        preferredBorrowTokens: this.chainConfig.priceAnchorTokens, // WE CONSIDER DISCOVERY TOKENS AS PREFFERRED BORROW TOKENS
-      },
-    });
-
-    this.pathFinderBacktrackingDFS = new PathFinderBacktrackingDFS({
-      logger: createLogger(`[${input.chainConfig.name}.PathFinderBacktrackingDFS]`),
       graph: this.graph,
       tokenManager: this.tokenManager,
       config: {
@@ -162,16 +148,8 @@ export class ArbitrageOrchestrator {
     const blockTime = blockEntry.receivedTimestamp;
 
     // 3. Discover candidate paths
-
-    const time1 = Date.now();
     const candidatePaths = this.pathFinder.findCycles(startTokens);
-    this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths ${blockStr} ${deltaMs(time1)}`);
-
-    const time2 = Date.now();
-    const candidatePathsBacktrackingDFS = this.pathFinderBacktrackingDFS.findCycles(startTokens);
-    this.logger.info(
-      `🔍 Found ${candidatePathsBacktrackingDFS.length} candidate paths (Backtracking DFS) ${blockStr} ${deltaMs(time2)}`,
-    );
+    this.logger.info(`🔍 Found ${candidatePaths.length} candidate paths ${blockStr} ${deltaMs(blockTime)}`);
 
     if (candidatePaths.length === 0) return [];
 
