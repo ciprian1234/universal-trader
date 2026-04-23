@@ -107,7 +107,7 @@ export class GasManager {
       nativeTokenPriceUSD: this.nativeTokenPriceUSD,
       gasTxSettings: {
         gasLimit: (gasEstimate * 130n) / 100n, // add 30% buffer
-        maxFeePerGas: gasPricePerUnit * 2n, // safe ceiling: base fee can never double in one block
+        maxFeePerGas: gasPricePerUnit, // safe ceiling: base fee can never double in one block
         maxPriorityFeePerGas: this.MIN_PRIORITY_FEE,
       },
     };
