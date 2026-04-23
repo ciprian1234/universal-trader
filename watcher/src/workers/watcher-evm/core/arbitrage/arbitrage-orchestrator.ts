@@ -3,18 +3,16 @@ import type { ArbitrageOpportunity } from '../interfaces';
 import type { ArbitragePath, IPathFinder } from './interfaces';
 import { EventBus, type ApplicationEvent, type PoolsUpsertBatchPayload } from '../event-bus';
 import { LiquidityGraph } from './liquidity-graph';
-import { PathFinder } from './path-finder';
 import { PathEvaluator } from './path-evaluator';
-import { formatUnits } from 'ethers';
 import { TokenManager } from '../token-manager';
 import { GasManager } from '../gas-manager';
 import { DexManager } from '../dex-manager';
-import { BellmanFordPathFinder } from './bellman-ford-path-finder';
 import type { ChainConfig } from '@/config/models';
 import type { PriceOracle } from '../price-oracle';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import { deltaMs } from '../helpers';
 import type { BlockEntry } from '../block-manager';
+import { PathFinderBacktrackingDFS } from './path-finder-backtracking-dfs';
 
 // ============================================
 // CONFIGURATION
@@ -78,7 +76,7 @@ export class ArbitrageOrchestrator {
     });
 
     // Initialize path finder (PathFinder or BellmanFordPathFinder)
-    this.pathFinder = new PathFinder({
+    this.pathFinder = new PathFinderBacktrackingDFS({
       logger: createLogger(`[${input.chainConfig.name}.PathFinder]`),
       graph: this.graph,
       tokenManager: this.tokenManager,

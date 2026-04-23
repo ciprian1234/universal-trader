@@ -11,6 +11,7 @@
     "format": "bunx biome format --write src/",
     "execute-direct-swap": "bun run ./src/scripts/execute-direct-swap.ts",
     "debug-opportunity": "bun run ./src/scripts/debug-opportunity.ts",
+    "debug-opportunity-competition": "bun run ./src/scripts/debug-opportunity-competition.ts",
     "identify-venues": "bun run ./src/scripts/identify-venues.ts",
     "exec-price-oracle": "bun run ./src/scripts/exec-price-oracle.ts",
     "compute-init-code-hash": "bun run ./src/scripts/compute-init-code-hash.ts",
