@@ -1,0 +1,192 @@
+// import { globalStore } from './global-store';
+import type { BunMessageEvent } from 'bun';
+import { createLogger } from '@/utils';
+import type { EventMessage, Message, RequestMessage, ResponseMessage } from './types.ts';
+import { broadcastEventToWebsocketClients } from '@/api-server/index..ts';
+import type { EventBus } from '../event-bus.ts';
+
+const logger = createLogger('[main.WorkerManager]');
+
+let requestIdCounter = 0;
+
+interface ManagedWorker {
+  name: string;
+  worker: Worker;
+  scriptPath: string;
+}
+
+type WorkerManagerInput = {
+  eventBus: EventBus;
+};
+
+export class WorkerManager {
+  private eventBus: EventBus;
+  private workers: Map<string, ManagedWorker> = new Map();
+  private pendingRequests: Map<
+    string,
+    {
+      resolve: (value: any) => void;
+      reject: (reason?: any) => void;
+      timer: ReturnType<typeof setTimeout>;
+      ctx: { requestName: string; requestData: any };
+    }
+  > = new Map();
+  DEFAULT_TIMEOUT_MS = 300_000;
+
+  constructor(input: WorkerManagerInput) {
+    this.eventBus = input.eventBus;
+  }
+
+  /**
+   * Spawn a new worker from a script file
+   */
+  spawnWorker(name: string, scriptPath: string): void {
+    if (this.workers.has(name)) {
+      return logger.error(`Worker "${name}" already exists. Terminate it first.`);
+    }
+
+    const worker = new Worker(scriptPath, { name });
+
+    // Listen for messages FROM the worker
+    worker.onmessage = (msg: BunMessageEvent<Message>) => {
+      const message = msg.data; // actual message sent by the worker
+      if (message.type === 'response') this.handleResponse(message as ResponseMessage);
+      else if (message.type === 'event') this.handleEvent(message as EventMessage);
+      else logger.warn(`Unknown message type from worker "${name}":`, message);
+    };
+
+    // Listen for errors
+    worker.onerror = (event) => {
+      logger.error(`Error in worker "${name}":`, { event });
+      // Reject ALL pending requests for this worker
+      for (const [correlationId, pending] of this.pendingRequests) {
+        if (correlationId.startsWith(`${name}-`)) {
+          clearTimeout(pending.timer);
+          pending.reject(new Error(`Worker "${name}" error: ${event.message}`));
+          this.pendingRequests.delete(correlationId);
+        }
+      }
+    };
+
+    this.workers.set(name, { name, worker, scriptPath });
+    logger.info(`Spawned worker "${name}" from ${scriptPath}`);
+  }
+
+  /**
+   * Send a request to a specific worker and wait for the response
+   * Returns a Promise that resolves with the response data or rejects on error/timeout
+   */
+  sendRequest<T = unknown>(workerId: string, requestName: string, requestData: any): Promise<T> {
+    const managed = this.workers.get(workerId);
+    if (!managed) throw new Error(`Worker "${workerId}" not found`);
+    const correlationId = `${workerId}-${requestIdCounter++}`;
+
+    // logger.info(`Sending request "${requestName}" to workerId: "${workerId}"`);
+
+    return new Promise<T>((resolve, reject) => {
+      // Set up timeout
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(correlationId);
+        const errorMsg = `Request "${requestName}" to worker "${workerId}" timed out after ${this.DEFAULT_TIMEOUT_MS}ms`;
+        reject(new Error(errorMsg));
+      }, this.DEFAULT_TIMEOUT_MS);
+
+      // Store the pending request
+      this.pendingRequests.set(correlationId, { resolve, reject, timer, ctx: { requestName, requestData } });
+
+      // Send the request to the worker
+      const request: RequestMessage = {
+        correlationId,
+        type: 'request',
+        name: requestName,
+        data: requestData,
+      };
+      managed.worker.postMessage(request);
+    });
+  }
+
+  // /**
+  //  * Broadcast a command to ALL workers
+  //  */
+  broadcast(data: any): void {
+    for (const [name] of this.workers) {
+      this.sendRequest(name, data.name, data.data);
+    }
+  }
+
+  private handleResponse(message: ResponseMessage): void {
+    const pending = this.pendingRequests.get(message.correlationId);
+    if (!pending) return logger.warn(`No pending request for correlationId: ${message.correlationId}`);
+
+    clearTimeout(pending.timer);
+    this.pendingRequests.delete(message.correlationId);
+
+    if (message.error) pending.reject(message.error);
+    else pending.resolve(message.data);
+  }
+
+  private handleEvent(message: EventMessage): void {
+    logger.info(`Received event from worker "${message.sender}": ${message.name}`);
+
+    if (message.name === 'fatal-error') {
+      logger.error(`💀 Worker "${message.sender}" reported a fatal error: ${(message.data as any)?.reason}. Exiting.`);
+      process.exit(1); // Main thread exits → systemd restarts the whole app
+    }
+
+    if (message.name === 'venue-state-batch') {
+      // message.data.
+    }
+    // else console.error(`Unhandled event from worker ${message.}: ${message.name}`);
+  }
+
+  /**
+   * Terminate a specific worker
+   */
+  async terminateWorker(workerId: string): Promise<void> {
+    const managed = this.workers.get(workerId);
+    if (!managed) return logger.warn(`Worker "${workerId}" not found for termination`);
+
+    // clear pending requests for this worker
+    for (const [correlationId, pending] of this.pendingRequests) {
+      // if (pending.ctx.requestName === 'stop') continue; // skip rejecting pending stop requests since we're already terminating the worker
+      if (correlationId.startsWith(`${workerId}-`)) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error(`Worker "${workerId}" terminated, id: ${correlationId} (ctx: ${JSON.stringify(pending.ctx)})`));
+        this.pendingRequests.delete(correlationId);
+      }
+    }
+
+    // send stop command to allow graceful cleanup in the worker
+    await this.sendRequest(workerId, 'stop', null);
+    managed.worker.terminate(); // Terminate the worker
+    this.workers.delete(workerId);
+    logger.info(`Terminated worker "${workerId}"`);
+  }
+
+  /**
+   * Terminate all workers
+   */
+  async terminateAll(): Promise<void> {
+    for (const [id] of this.workers) {
+      try {
+        await this.terminateWorker(id);
+      } catch (err) {
+        logger.error(`Error terminating worker "${id}":`, { err });
+      }
+    }
+  }
+
+  getWorkerIds(): string[] {
+    return [...this.workers.keys()];
+  }
+
+  /**
+   * Listen for unsolicited events from the worker
+   */
+  // onEvent(handler: (event: WorkerEvent) => void): () => void {
+  //   this.eventHandlers.push(handler);
+  //   return () => {
+  //     this.eventHandlers = this.eventHandlers.filter((h) => h !== handler);
+  //   };
+  // }
+}

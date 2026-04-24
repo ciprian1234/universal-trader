@@ -13,7 +13,6 @@ import path from 'path';
 import { appConfig } from './config/index.ts';
 import { EventBus } from './core/event-bus.ts';
 import { WorkerManager } from './core/communication/worker-manager.ts';
-// import { CrossChainDetector } from './orchestrator/cross-chain-detector.ts';
 import { startApiServer } from './api-server/index..ts';
 import { GlobalDataStore } from './core/global-data-store.ts';
 import { logger } from './utils';
@@ -22,12 +21,6 @@ async function main(): Promise<void> {
   const store = new GlobalDataStore();
   const eventBus = new EventBus();
   const workerManager = new WorkerManager({ eventBus });
-  // const crossChainDetector = new CrossChainDetector(store, {
-  //   minSpreadBps: 20,
-  //   estimatedCostBps: 10,
-  //   scanIntervalMs: 2000,
-  //   freshnessMs: 30_000,
-  // });
 
   // === 3. Start API Server ===
   const { server } = startApiServer(appConfig.apiServerPort, {

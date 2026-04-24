@@ -1,0 +1,433 @@
+/**
+ * 🦄 UNISWAP V4 ADAPTER: Support for V4 Singleton Architecture and Hooks
+ */
+import { ethers, AbiCoder } from 'ethers';
+import type { TradeQuote, V4ModifyLiquidityEvent, V4SwapEvent } from '../interfaces';
+import * as SqrtMath from './lib/sqrtPriceMath';
+import { dexPoolId, type DexV4PoolState, type DexVenue, type DexVenueName } from '@/shared/data-model/layer1';
+import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
+import { createLogger } from '@/utils';
+import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
+import type { Blockchain } from '../blockchain';
+import type { DexV4Config } from '@/config/models';
+import { applyLiquidityDelta } from './lib/ticks';
+
+// ================================================================================================
+// Types specific to Uniswap V4
+// ================================================================================================
+export type PoolKeyData = {
+  currency0: string;
+  currency1: string;
+  fee: number;
+  tickSpacing: number;
+  hooks: string;
+};
+
+// ================================================================================================
+// UNISWAP V4 ADAPTER
+// ================================================================================================
+
+const logger = createLogger('DexV4Adapter');
+
+// Standard fee tier / tick spacing combos often used as defaults
+// Fee is uint24, TickSpacing is int24
+const POOL_COMBINATIONS = [
+  { fee: 100, tickSpacing: 2 }, // 0.01%
+  { fee: 500, tickSpacing: 10 }, // 0.05%
+  { fee: 3000, tickSpacing: 60 }, // 0.30%
+  { fee: 10000, tickSpacing: 200 }, // 1.00%
+];
+
+// ABI definitions
+export const POOL_MANAGER_ABI = [
+  // extsload for advanced queries
+  'function extsload(bytes32 slot) external view returns (bytes32)',
+
+  // Events
+  'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks)',
+  'event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)',
+  'event ModifyLiquidity(bytes32 indexed id, address indexed sender, int24 tickLower, int24 tickUpper, int256 liquidityDelta)',
+];
+
+export const QUOTER_ABI = [
+  'function quoteExactInputSingle(tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks, bytes hookData) params, uint128 amountIn) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
+  'function quoteExactOutputSingle(tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks, bytes hookData) params, uint128 amountOut) external returns (uint256 amountIn, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
+];
+
+// ✅ ABI for the StateView / Lens contract
+export const STATE_VIEW_ABI = [
+  'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
+  'function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity)',
+  'function getTickBitmap(bytes32 poolId, int16 wordPos) external view returns (uint256)',
+  'function getTickLiquidity(bytes32 poolId, int24 tick) external view returns (uint128 liquidityGross, int128 liquidityNet)',
+];
+
+export const POSITION_MANAGER_ABI = [
+  'function poolKeys(bytes25 poolId) external view returns (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)',
+];
+
+// Initialize pool interface
+export const STATE_VIEW_INTERFACE = new ethers.Interface(STATE_VIEW_ABI);
+
+function isWETH(address: string): boolean {
+  const WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'; // Ethereum mainnet
+  return address.toLowerCase() === WETH_ADDRESS.toLowerCase();
+}
+
+// ================================================================================================
+// POOL DISCOVERY AND STATE MANAGEMENT
+// ================================================================================================
+
+/**
+ * 🔍 FIND POOLS: Find initialized V4 pools for a token pair
+ * Note: V4 pools are defined by a PoolKey (Tokens + Fee + TickSpacing + Hooks).
+ * This logic assumes standard no-hook pools.
+ */
+export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPairOnChain): Promise<DexV4PoolState[]> {
+  if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 pool initialization');
+  const stateViewContract = ctx.blockchain.getContract(ctx.config.stateViewAddress);
+  if (!stateViewContract) throw new Error(`StateView contract not found at address: ${ctx.config.stateViewAddress}`);
+  const symbol0 = tokenPair.token0.address;
+  const symbol1 = tokenPair.token1.address;
+  const pools: DexV4PoolState[] = [];
+
+  // // Convert WETH to address(0) if needed
+  // const currency0 = this.isWETH(token0) ? ethers.ZeroAddress : token0;
+  // const currency1 = this.isWETH(token1) ? ethers.ZeroAddress : token1;
+
+  // Check standard combinations
+  for (const combo of POOL_COMBINATIONS) {
+    try {
+      // 1. Generate Pool Key
+      const poolKeyData = {
+        currency0: tokenPair.token0.address,
+        currency1: tokenPair.token1.address,
+        fee: combo.fee,
+        tickSpacing: combo.tickSpacing,
+        hooks: ethers.ZeroAddress, // standard pools without hooks
+      };
+
+      // 2. Calculate Pool ID (Hash of Key)
+      const poolKeyHash = getPoolId(poolKeyData); // previous version for testing
+
+      // 3. Check if initialized via Slot0 => If sqrtPriceX96 is 0, pool is not initialized
+      // console.log(
+      //   `Checking V4 pool for ${symbol0}/${symbol1} (Fee: ${combo.fee}, TickSpacing: ${combo.tickSpacing}) at ID: ${poolKeyHash}`,
+      // );
+      // Use raw storage reader
+      const slot0 = await stateViewContract.getSlot0(poolKeyHash);
+      if (!slot0.sqrtPriceX96 || slot0.sqrtPriceX96 === 0n) {
+        logger.warn(`No V4 pool found for ${symbol0}/${symbol1} (Fee: ${combo.fee})`);
+        continue; // Pool not initialized
+      }
+
+      // Found a pool!
+      const poolState = initPool(ctx.blockchain, {
+        poolKeyHash,
+        poolManagerAddress: ctx.config.poolManagerAddress,
+        tokenPair,
+        venue: { name: 'uniswap-v4', type: 'dex', chainId: ctx.blockchain.chainId },
+        feeBps: combo.fee,
+        tickSpacing: combo.tickSpacing,
+        hooks: ethers.ZeroAddress, // standard pools without hooks
+      });
+      pools.push(poolState);
+    } catch (error) {
+      // Pool check failed
+      logger.debug(`Trace check failed for V4 pool ${symbol0}/${symbol1} (Fee: ${combo.fee}): ${(error as Error).message}\n\n`);
+    }
+  }
+
+  return pools;
+}
+
+// =====================================================================================================================
+// Introspect pool from event - also apply event data to pool state (for faster updates)
+// =====================================================================================================================
+export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event: V4SwapEvent): Promise<DexV4PoolState> {
+  const cfg = ctx.configs.find((config) => config.name === 'uniswap-v4') as DexV4Config;
+  if (!cfg) throw new Error('Uniswap V4 config not found for introspection');
+  let positionManagerContract = ctx.blockchain.getContract(cfg.positionManagerAddress)!;
+
+  const bytes25PoolId = event.poolKeyHash.slice(0, 52) as `0x${string}`;
+  const poolKeyData = await positionManagerContract.poolKeys(bytes25PoolId);
+
+  const token0 = await ctx.tokenManager.ensureTokenRegistered(poolKeyData.currency0, 'address');
+  const token1 = await ctx.tokenManager.ensureTokenRegistered(poolKeyData.currency1, 'address');
+  const tokenPair = { token0, token1, key: `${token0.symbol}-${token1.symbol}` };
+
+  const poolState = initPool(ctx.blockchain, {
+    poolKeyHash: event.poolKeyHash,
+    poolManagerAddress: event.sourceAddress, // In V4, the event is emitted by the PoolManager for the specific pool ID
+    tokenPair,
+    venue: { name: 'uniswap-v4' as const, type: 'dex' as const, chainId: ctx.blockchain.chainId },
+    feeBps: Number(poolKeyData.fee),
+    tickSpacing: Number(poolKeyData.tickSpacing),
+    hooks: poolKeyData.hooks,
+    event,
+  });
+  return poolState;
+}
+
+// identify venue for pool given a list of V4 configs (used for introspection)
+export function identifyVenueForPool(pool: DexV4PoolState, dexV4Configs: DexV4Config[]): DexVenueName {
+  for (const config of dexV4Configs) {
+    if (config.poolManagerAddress.toLowerCase() === pool.address.toLowerCase()) return config.name;
+  }
+  throw new Error(`Venue not found for V4 pool with manager address: ${pool.address}`);
+  // return 'unknown';
+}
+
+/**
+ * 🏗 INIT POOL: Initialize V4 pool state
+ */
+export function initPool(
+  blockchain: Blockchain,
+  input: {
+    poolKeyHash: string;
+    poolManagerAddress: string;
+    tokenPair: TokenPairOnChain;
+    venue: DexVenue;
+    feeBps: number;
+    tickSpacing: number;
+    hooks: string;
+    event?: V4SwapEvent;
+  },
+): DexV4PoolState {
+  // if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 pool initialization');
+  // Use provided key or basic recovery (Tokens must be known contextually or passed in)
+
+  const newPool: DexV4PoolState = {
+    id: dexPoolId(blockchain.chainId, input.poolKeyHash), // TODO: ensure its correct
+    error: null,
+    poolKeyHash: input.poolKeyHash, // TODO: ensure its correct
+    address: input.poolManagerAddress, // all V4 pools share the same poolManagerAddress
+    venue: { name: input.venue.name, type: input.venue.type, chainId: blockchain.chainId },
+    protocol: 'v4',
+    pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),
+    tokenPair: input.tokenPair,
+
+    feeBps: Number(input.feeBps),
+    tickSpacing: Number(input.tickSpacing),
+    hooks: input.hooks,
+
+    sqrtPriceX96: 0n,
+    tick: 0,
+    liquidity: 0n,
+    reserve0: 0n,
+    reserve1: 0n,
+    spotPrice0to1: 0,
+    spotPrice1to0: 0,
+    totalLiquidityUSD: 0, // added later after we have dynamic data
+  };
+
+  if (input.event) updatePoolFromEvent(newPool, input.event);
+  return newPool;
+}
+
+/**
+ * Update pool state via Singleton PoolManager
+ */
+export function updatePool(pool: DexV4PoolState, data: { sqrtPriceX96: bigint; tick: number; liquidity: bigint }): void {
+  const { token0, token1 } = pool.tokenPair;
+  const { sqrtPriceX96, tick, liquidity } = data;
+  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(sqrtPriceX96, liquidity);
+
+  pool.reserve0 = reserve0;
+  pool.reserve1 = reserve1;
+  pool.sqrtPriceX96 = sqrtPriceX96;
+  pool.tick = Number(tick); // Convert BigInt to number for tick
+  pool.liquidity = liquidity;
+
+  pool.spotPrice0to1 = calculateSpotPrice(sqrtPriceX96, token0, token1, true);
+  pool.spotPrice1to0 = calculateSpotPrice(sqrtPriceX96, token0, token1, false);
+}
+
+// ================================================================================================
+// TRADING AND QUOTES
+// ================================================================================================
+
+/**
+ * 💰 GET SPOT PRICE: Get current spot price from sqrtPriceX96
+ */
+function calculateSpotPrice(sqrtPriceX96: bigint, token0: TokenOnChain, token1: TokenOnChain, zeroForOne: boolean): number {
+  const price = SqrtMath.sqrtPriceX96ToPrice(sqrtPriceX96, token0.decimals, token1.decimals);
+  if (zeroForOne)
+    return price; // Price of token0 in token1
+  else return 1 / price; // Price of token1 in token0
+}
+
+/**
+ * 💰 GET TRADE QUOTE: Calculate V4 trade quote
+ */
+export async function getTradeQuote(
+  ctx: DexAdapterContext,
+  pool: DexV4PoolState,
+  amountIn: bigint,
+  zeroForOne: boolean,
+): Promise<TradeQuote> {
+  if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 trade quote');
+  const quoterContract = ctx.blockchain.getContract(ctx.config.quoterAddress);
+  if (!quoterContract) throw new Error(`Quoter contract not found at address: ${ctx.config.quoterAddress}`);
+  const { token0, token1 } = pool.tokenPair;
+
+  // Ensure Key logic matches discovery
+  const [currency0, currency1] =
+    token0.address.toLowerCase() < token1.address.toLowerCase()
+      ? [token0.address, token1.address]
+      : [token1.address, token0.address];
+
+  // Reconstruct Key Parameter
+  const params = {
+    currency0: currency0,
+    currency1: currency1,
+    fee: pool.feeBps,
+    tickSpacing: pool.tickSpacing || 60,
+    hooks: pool.hooks || ethers.ZeroAddress,
+    hookData: '0x', // Empty bytes
+  };
+
+  try {
+    // V4 Quoter returns a tuple
+    // quoteExactInputSingle(params, amountIn) returns (amountOut, ...)
+    const result = await quoterContract.quoteExactInputSingle.staticCall(params, amountIn);
+
+    const amountOut = result[0]; // first return value
+
+    // Calculate execution metrics
+    const spotPrice = pool.spotPrice0to1!; // Base assumption
+    const normalizedIn = parseFloat(ethers.formatUnits(amountIn, zeroForOne ? token0.decimals : token1.decimals));
+    const normalizedOut = parseFloat(ethers.formatUnits(amountOut, zeroForOne ? token1.decimals : token0.decimals));
+
+    const executionPrice = normalizedOut / normalizedIn;
+
+    return {
+      poolState: pool,
+      amountIn,
+      amountOut,
+      executionPrice,
+      priceImpact: 0, // Simplified
+      slippage: 0,
+      confidence: 0.9,
+    };
+  } catch (e: any) {
+    throw new Error(`V4 Quote failed: ${e.message}`);
+  }
+}
+
+/**
+ * 🧮 SIMULATE SWAP (Reusing V3 Math)
+ * V4 calculation logic for standard pools is identical to V3's concentrated liquidity math.
+ * However, hooks can alter this behavior. This assumes NO hooks affecting swap logic.
+ */
+export function simulateSwap(pool: DexV4PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+  return SqrtMath.simulateSwap(pool, amountIn, zeroForOne);
+}
+
+// ================================================================================================
+// EVENT HANDLING
+// ================================================================================================
+
+/**
+ * 🔄 UPDATE POOL STATE FROM V4 EVENTS
+ */
+export function updatePoolFromEvent(pool: DexV4PoolState, event: V4SwapEvent | V4ModifyLiquidityEvent): void {
+  if (event.name === 'swap') {
+    const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
+
+    // Update V4 specific state if available
+    pool.reserve0 = reserve0;
+    pool.reserve1 = reserve1;
+    pool.sqrtPriceX96 = event.sqrtPriceX96;
+    pool.tick = Number(event.tick);
+    pool.liquidity = event.liquidity;
+
+    // Update derived fields
+    const { token0, token1 } = pool.tokenPair;
+    pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
+    pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
+  } else if (event.name === 'modify-liquidity') {
+    applyLiquidityDelta(pool, event.tickLower, event.tickUpper, event.liquidityDelta);
+  }
+
+  // Update pool with latest event metadata
+  pool.latestEventMeta = event.meta;
+}
+
+// ================================================================================================
+// V4 SPECIFIC HELPERS
+// ================================================================================================
+
+/**
+ * Calculate V4 Pool ID from Key
+ * Note: V4 Pool ID is keccak256 hash of the ABI-encoded PoolKey struct
+ */
+function getPoolId(key: PoolKeyData): string {
+  const abiCoder = AbiCoder.defaultAbiCoder();
+  return ethers.keccak256(
+    abiCoder.encode(
+      ['address', 'address', 'uint24', 'int24', 'address'],
+      [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks],
+    ),
+  );
+}
+
+/**
+ * 🕷️ READ POOL STATE: Use extsload to read raw storage
+ * Assumes _pools mapping is at Slot 0 and standard Struct layout
+ */
+export async function getPoolStateFromStorage(
+  ctx: DexAdapterContext,
+  poolId: string,
+): Promise<{ sqrtPriceX96: bigint; tick: number; liquidity: bigint }> {
+  if (ctx.config.protocol !== 'v4') throw new Error('Invalid protocol for V4 tick bitmap');
+  const poolManagerContract = ctx.blockchain.getContract(ctx.config.poolManagerAddress);
+  if (!poolManagerContract) throw new Error(`PoolManager contract not found at address: ${ctx.config.poolManagerAddress}`);
+  // 1. Calculate the base storage slot for this pool's struct in the mapping
+  // mapping slot for key k is keccak256(abi.encode(k, padding_slot))
+  // Assuming _pools is at slot 0
+  const MAPPING_SLOT = 0;
+  const abiCoder = AbiCoder.defaultAbiCoder();
+
+  const baseSlotHash = ethers.keccak256(abiCoder.encode(['bytes32', 'uint256'], [poolId, MAPPING_SLOT]));
+  const baseSlot = BigInt(baseSlotHash);
+
+  // 2. Read Slot 0 (State.slot0)
+  // Layout:
+  // - sqrtPriceX96: bits 0-159 (160 bits)
+  // - tick:         bits 160-183 (24 bits)
+  // - protocolFee:  bits 184-207 (24 bits)
+  // - lpFee:        bits 208-231 (24 bits)
+  const slot0Bytes = await poolManagerContract.extsload(baseSlotHash);
+  const slot0Val = BigInt(slot0Bytes);
+  console.log(`Slot0 Raw Value: ${slot0Bytes.toString('hex')}`);
+
+  const sqrtPriceX96 = slot0Val & ((1n << 160n) - 1n);
+
+  // Extract Tick (24 bits signed)
+  let tickVal = (slot0Val >> 160n) & 0xffffffn;
+  // Handle int24 sign extension
+  if (tickVal & 0x800000n) {
+    tickVal = tickVal - 0x1000000n;
+  }
+  const tick = Number(tickVal);
+
+  // 3. Read Slot 3 (State.liquidity)
+  // Offset 0: slot0
+  // Offset 1: feeGrowth0
+  // Offset 2: feeGrowth1
+  // Offset 3: liquidity
+  const liquiditySlot = baseSlot + 3n;
+  // Format as hex bytes32 for extsload
+  const liquiditySlotHex = '0x' + liquiditySlot.toString(16).padStart(64, '0');
+
+  const liquidityBytes = await poolManagerContract.extsload(liquiditySlotHex);
+  const liquidityVal = BigInt(liquidityBytes);
+  const liquidity = liquidityVal & ((1n << 128n) - 1n); // Mask 128 bits just in case
+
+  return {
+    sqrtPriceX96,
+    tick,
+    liquidity,
+  };
+}

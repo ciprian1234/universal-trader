@@ -1,0 +1,345 @@
+/**
+ * 🦄 DEX V3 ADAPTER: High-performance V3 DEX adapter with concentrated liquidity
+ */
+import { ethers } from 'ethers';
+import type { TradeQuote, V3SwapEvent, V3MintEvent, V3BurnEvent } from '../interfaces';
+import * as SqrtMath from './lib/sqrtPriceMath';
+import { dexPoolId, type DexPoolState, type DexV3PoolState, type DexVenue, type DexVenueName } from '@/shared/data-model/layer1';
+import { getCanonicalPairId, type TokenOnChain, type TokenPairOnChain } from '@/shared/data-model/token';
+import { calculatePriceImpact } from './lib/math';
+import { createLogger } from '@/utils';
+import type { DexAdapterContext, PoolIntrospectContext } from './interfaces';
+import type { Blockchain } from '../blockchain';
+import { AbiCoder } from 'ethers';
+import type { DexV3Config } from '@/config/models';
+import { applyLiquidityDelta } from './lib/ticks';
+
+// ================================================================================================
+// DEX V3 ADAPTER
+// ================================================================================================
+
+const logger = createLogger('DexV3Adapter');
+
+// Standard fee tiers in V3
+const FEE_TIERS = [100, 500, 3000, 10000]; // 0.01%, 0.05%, 0.3%, 1% (in v3 basis points are denominated by 1,000,000)
+
+// ABI definitions
+export const FACTORY_ABI = [
+  'function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool)',
+  'event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)',
+];
+
+export const POOL_ABI = [
+  'function factory() external view returns (address)',
+  'function token0() external view returns (address)',
+  'function token1() external view returns (address)',
+  'function fee() external view returns (uint24)',
+  'function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)',
+  'function liquidity() external view returns (uint128)',
+  'function tickSpacing() external view returns (int24)',
+  'function tickBitmap(int16 wordPos) external view returns (uint256)',
+  'function ticks(int24 tick) external view returns (uint128 liquidityGross, int128 liquidityNet, uint256 feeGrowthOutside0X128, uint256 feeGrowthOutside1X128, int56 tickCumulativeOutside, uint160 secondsPerLiquidityOutsideX128, uint32 secondsOutside, bool initialized)',
+  'function feeGrowthGlobal0X128() external view returns (uint256)',
+  'function feeGrowthGlobal1X128() external view returns (uint256)',
+  'event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)',
+  'event Burn(address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1)',
+  'event Mint(address indexed sender, address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1)',
+];
+
+export const QUOTER_ABI = [
+  'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) external returns (uint256 amountOut)',
+  'function quoteExactOutputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountOut, uint160 sqrtPriceLimitX96) external returns (uint256 amountIn)',
+];
+
+export const ROUTER_ABI = [
+  'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)',
+];
+
+// Initialize pool interface
+export const POOL_INTERFACE = new ethers.Interface(POOL_ABI);
+
+// ================================================================================================
+// POOL DISCOVERY AND STATE MANAGEMENT
+// ================================================================================================
+
+/**
+ * 🔍 FIND POOLS: Find all V3 pools for a token pair across all fee tiers
+ */
+export async function discoverPools(ctx: DexAdapterContext, tokenPair: TokenPairOnChain): Promise<DexV3PoolState[]> {
+  if (ctx.config.protocol !== 'v3') throw new Error(`Invalid config protocol for V3 adapter: ${ctx.config.protocol}`);
+  const factoryContract = ctx.blockchain.getContract(ctx.config.factoryAddress);
+  if (!factoryContract) throw new Error(`FactoryV3 contract not found at address: ${ctx.config.factoryAddress}`);
+
+  const symbol0 = tokenPair.token0.symbol;
+  const symbol1 = tokenPair.token1.symbol;
+  const pools: DexV3PoolState[] = [];
+
+  // Check all fee tiers
+  for (const fee of FEE_TIERS) {
+    try {
+      const poolAddress = await factoryContract.getPool(tokenPair.token0.address, tokenPair.token1.address, fee);
+      if (poolAddress === ethers.ZeroAddress) continue;
+
+      // init pool contract
+      const contract = ctx.blockchain.initContract(poolAddress, POOL_ABI);
+
+      const tickSpacing = await contract.tickSpacing();
+      if (!tickSpacing) throw new Error(`Failed to fetch tick spacing for pool ${poolAddress}`);
+
+      const venue = { name: ctx.config.name, type: 'dex' as const, chainId: ctx.blockchain.chainId };
+      const poolState = initPool(ctx.blockchain, {
+        poolAddress,
+        tokenPair,
+        venue,
+        feeBps: fee,
+        tickSpacing: Number(tickSpacing),
+      });
+      pools.push(poolState);
+    } catch (error) {
+      // Pool doesn't exist for this fee tier, continue
+      logger.debug(`No ${fee / 10000}% pool found for ${symbol0}/${symbol1}`);
+    }
+  }
+
+  return pools;
+}
+
+// =====================================================================================================================
+// Introspect pool from event - also apply event data to pool state (for faster updates)
+// =====================================================================================================================
+export async function introspectPoolFromEvent(ctx: PoolIntrospectContext, event: V3SwapEvent): Promise<DexV3PoolState> {
+  const poolAddress = event.sourceAddress.toLowerCase();
+  let poolContract = ctx.blockchain.getContract(poolAddress);
+  if (!poolContract) poolContract = ctx.blockchain.initContract(poolAddress, POOL_ABI);
+
+  const [token0Address, token1Address, fee, tickSpacing] = await Promise.all([
+    poolContract.token0(),
+    poolContract.token1(),
+    poolContract.fee(),
+    poolContract.tickSpacing(),
+  ]);
+  const token0 = await ctx.tokenManager.ensureTokenRegistered(token0Address, 'address');
+  const token1 = await ctx.tokenManager.ensureTokenRegistered(token1Address, 'address');
+  const tokenPair = { token0, token1, key: `${token0.symbol}-${token1.symbol}` };
+
+  // note: venueName its from outer function (DEX_ADAPTER.handleEventForUnknownPool)
+  const venue = { name: 'unknown' as const, type: 'dex' as const, chainId: ctx.blockchain.chainId };
+
+  const poolState = initPool(ctx.blockchain, {
+    poolAddress,
+    tokenPair,
+    venue,
+    feeBps: Number(fee),
+    tickSpacing: Number(tickSpacing),
+    event,
+  });
+  return poolState;
+}
+
+// identify venue for pool given a list of V3 configs (used for introspection)
+export function identifyVenueForPool(pool: DexPoolState, dexV3Configs: DexV3Config[]): DexVenueName {
+  for (const config of dexV3Configs) {
+    const computedAddress = computePoolAddress(pool.tokenPair, pool.feeBps, config.factoryAddress, config.initCodeHash);
+    if (computedAddress.toLowerCase() === pool.address.toLowerCase()) return config.name;
+  }
+  // if we reach here => no venue found from configs => call factory
+  // let poolContract = blockchain.getContract(pool.address);
+  // if (!poolContract) poolContract = blockchain.initContract(pool.address, POOL_ABI);
+  // const factoryAddress = await poolContract.factory();
+  // console.log(`POOL ${pool.id} factory address: ${factoryAddress}`);
+  return 'unknown';
+}
+
+// compute V3 pool address from token addresses
+export function computePoolAddress(
+  tokenPair: TokenPairOnChain,
+  fee: number,
+  factoryAddress: string,
+  initCodeHash: string,
+): string {
+  const abiCoder = AbiCoder.defaultAbiCoder();
+  const salt = ethers.keccak256(
+    abiCoder.encode(['address', 'address', 'uint24'], [tokenPair.token0.address, tokenPair.token1.address, fee]),
+  );
+  return ethers.getCreate2Address(factoryAddress, salt, initCodeHash);
+}
+
+/**
+ * 🏗 INIT POOL: Initialize V3 pool state with static data
+ *
+ */
+export function initPool(
+  blockchain: Blockchain,
+  input: {
+    poolAddress: string;
+    tokenPair: TokenPairOnChain;
+    venue: DexVenue;
+    feeBps: number;
+    tickSpacing: number;
+    event?: V3SwapEvent; // optional event for initializing dynamic fields if available (used when introspecting from event)
+  },
+): DexV3PoolState {
+  // ensure pool contract its initialized
+  blockchain.initContract(input.poolAddress, POOL_ABI);
+
+  // Fetch pool static data
+  // const [feeGrowthGlobal0X128, feeGrowthGlobal1X128] = await Promise.all([
+  //   contract.feeGrowthGlobal0X128(),
+  //   contract.feeGrowthGlobal1X128(),
+  // ]);
+
+  const newPool: DexV3PoolState = {
+    id: dexPoolId(blockchain.chainId, input.poolAddress),
+    error: null,
+    address: input.poolAddress.toLowerCase(),
+    venue: input.venue,
+    protocol: 'v3',
+    pairId: getCanonicalPairId(input.tokenPair.token0, input.tokenPair.token1),
+    tokenPair: input.tokenPair,
+    feeBps: Number(input.feeBps), // Fee in basis points (500, 3000, 10000)
+    tickSpacing: Number(input.tickSpacing), // Tick spacing for the pool
+
+    // init dynamic fields to zero (updated later)
+    sqrtPriceX96: 0n,
+    tick: 0,
+    liquidity: 0n,
+    reserve0: 0n,
+    reserve1: 0n,
+    spotPrice0to1: 0,
+    spotPrice1to0: 0,
+    totalLiquidityUSD: 0, // added later after we have dynamic data
+  };
+
+  if (input.event) updatePoolFromEvent(newPool, input.event);
+  return newPool;
+}
+
+/**
+ * Update pool state with dynamic data
+ */
+export function updatePool(pool: DexV3PoolState, data: { sqrtPriceX96: bigint; tick: number; liquidity: bigint }): void {
+  const { token0, token1 } = pool.tokenPair;
+  const { sqrtPriceX96, tick, liquidity } = data;
+
+  const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(sqrtPriceX96, liquidity);
+  pool.reserve0 = reserve0;
+  pool.reserve1 = reserve1;
+  pool.sqrtPriceX96 = sqrtPriceX96;
+  pool.tick = Number(tick); // Convert BigInt to number for tick
+  pool.liquidity = liquidity;
+  pool.spotPrice0to1 = calculateSpotPrice(sqrtPriceX96, token0, token1, true);
+  pool.spotPrice1to0 = calculateSpotPrice(sqrtPriceX96, token0, token1, false);
+}
+
+/**
+ * 🔄 UPDATE POOL STATE FROM V3 EVENTS
+ */
+export function updatePoolFromEvent(pool: DexV3PoolState, event: V3SwapEvent | V3MintEvent | V3BurnEvent): void {
+  if (event.name === 'swap') {
+    // calculate virtual reserves based on new sqrtPriceX96 and liquidity
+    const { reserve0, reserve1 } = SqrtMath.calculateVirtualReserves(event.sqrtPriceX96, event.liquidity); // virtual reserve0 and reserve1
+
+    // Update V3 specific state if available
+    pool.reserve0 = reserve0;
+    pool.reserve1 = reserve1;
+    pool.sqrtPriceX96 = event.sqrtPriceX96;
+    pool.tick = Number(event.tick);
+    pool.liquidity = event.liquidity!;
+
+    // Update derived fields
+    const { token0, token1 } = pool.tokenPair;
+    pool.spotPrice0to1 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, true);
+    pool.spotPrice1to0 = calculateSpotPrice(event.sqrtPriceX96, token0, token1, false);
+  } else if (event.name === 'mint' || event.name === 'burn') {
+    const liquidityDelta = event.name === 'mint' ? event.amount : -event.amount;
+    applyLiquidityDelta(pool, event.tickLower, event.tickUpper, liquidityDelta);
+  }
+
+  // Update latest event metadata
+  pool.latestEventMeta = event.meta;
+}
+
+// ================================================================================================
+// TRADING AND QUOTES
+// ================================================================================================
+
+/**
+ * 💰 GET SPOT PRICE: Get current spot price from sqrtPriceX96
+ */
+function calculateSpotPrice(sqrtPriceX96: bigint, token0: TokenOnChain, token1: TokenOnChain, zeroForOne: boolean): number {
+  const price = SqrtMath.sqrtPriceX96ToPrice(sqrtPriceX96, token0.decimals, token1.decimals);
+  if (zeroForOne)
+    return price; // Price of token0 in token1
+  else return 1 / price; // Price of token1 in token0
+}
+
+/**
+ * 💰 GET TRADE QUOTE: Calculate V3 trade quote using quoter contract
+ */
+async function getTradeQuote(
+  ctx: DexAdapterContext,
+  poolState: DexV3PoolState,
+  amountIn: bigint,
+  zeroForOne: boolean,
+): Promise<TradeQuote> {
+  if (ctx.config.protocol !== 'v3') throw new Error(`Invalid config protocol for V3 adapter: ${ctx.config.protocol}`);
+  const quoterContract = ctx.blockchain.getContract(ctx.config.quoterAddress);
+  if (!quoterContract) throw new Error(`Quoter contract not found at address: ${ctx.config.quoterAddress}`);
+  if (amountIn <= 0n) throw new Error(`Invalid trade amount: ${amountIn} (must be > 0)`);
+  if (poolState.liquidity! <= 0n) throw new Error(`Insufficient liquidity in pool: ${poolState.id}`);
+  const { token0, token1 } = poolState.tokenPair;
+
+  try {
+    const tokenIn = zeroForOne ? token0.address : token1.address;
+    const tokenOut = zeroForOne ? token1.address : token0.address;
+
+    // Use quoter to get exact output amount
+    // Note: In production, you'd want to use a static call to avoid state changes
+    const amountOut = await quoterContract.quoteExactInputSingle.staticCall(
+      tokenIn,
+      tokenOut,
+      poolState.feeBps,
+      amountIn,
+      0, // No price limit
+    );
+
+    if (amountOut <= 0n) throw new Error(`❌ Quoter contract invalid amountOut: ${amountOut}`);
+
+    // Calculate prices
+    const spotPrice = calculateSpotPrice(
+      poolState.sqrtPriceX96!,
+      poolState.tokenPair.token0,
+      poolState.tokenPair.token1,
+      zeroForOne,
+    );
+
+    const normalizedAmountIn = parseFloat(ethers.formatUnits(amountIn, zeroForOne ? token0.decimals : token1.decimals));
+    const normalizedAmountOut = parseFloat(ethers.formatUnits(amountOut, zeroForOne ? token1.decimals : token0.decimals));
+
+    const executionPrice = normalizedAmountOut / normalizedAmountIn;
+    const priceImpact = calculatePriceImpact(spotPrice, executionPrice);
+
+    // In V3, slippage is generally close to price impact due to concentrated liquidity
+    const slippage = priceImpact;
+
+    return {
+      poolState,
+      amountIn,
+      amountOut,
+      executionPrice,
+      priceImpact,
+      slippage,
+      confidence: 0.95, // V3 quotes are reliable but can have more complexity
+    };
+  } catch (error) {
+    throw new Error(`Failed to get V3 trade quote: ${error}`);
+  }
+}
+
+/**
+ * 🧮 SIMULATE V3 SWAP (Using Uniswap V3 SqrtPriceMath)
+ * Based on: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SqrtPriceMath.sol
+ */
+export function simulateSwap(poolState: DexV3PoolState, amountIn: bigint, zeroForOne: boolean): bigint {
+  return SqrtMath.simulateSwap(poolState, amountIn, zeroForOne);
+}

@@ -1,0 +1,107 @@
+import type { EventMessage, Message, RequestMessage } from '@/core/communication/types';
+import { createLogger } from '@/utils';
+import type { BunMessageEvent } from 'bun';
+import type { PlatformConfig } from '@/config/models.ts';
+
+// Each worker has its own isolated scope. (`self` refers to the worker's global scope)
+declare const self: Worker;
+
+export abstract class BaseWorker {
+  isInitialized = false;
+  workerId = 'unidentified-worker';
+  logger = createLogger(`worker`);
+
+  constructor() {
+    // Listen for messages FROM the main thread
+    self.onmessage = (msg: BunMessageEvent<Message>) => {
+      const message = msg.data; // the actual message its inside BunMessageEvent.data
+      if (message.type === 'request') this.handleRequestMessage(message as RequestMessage);
+      else if (message.type === 'event') this.handleEventMessage(message as EventMessage);
+      else this.logger.warn(`Unknown message type: ${message.type}`);
+    };
+
+    // Handle unhandled rejections at the process level (Bun workers use process, not self)
+    process.on('unhandledRejection', (reason: unknown) => {
+      this.logger.error(`[base-worker] Unhandled rejection: `, { reason });
+    });
+
+    process.on('uncaughtException', (error: Error) => {
+      this.logger.error(`[base-worker] Uncaught exception: `, { error });
+    });
+  }
+
+  /**
+   * Handle incoming RequestMessage commands from main thread
+   */
+  handleRequestMessage(message: RequestMessage): void {
+    const { name, data, correlationId } = message;
+    if (!this.isInitialized && name !== 'init') {
+      this.logger.warn(`Worker not initialized. Ignoring request: ${name}`);
+      this.sendResponseMessage({ correlationId, error: { message: `Worker not initialized` } });
+    } else if (name == 'init') {
+      // base init logic (e.g. set worker name in context, setup logger)
+      const config = data as PlatformConfig;
+      if (!config.name) throw new Error(`Missing field "name" from init config used to identify the worker`);
+      this.workerId = config.name;
+      this.logger = createLogger(`[${config.name}]`); // Update logger with worker name
+
+      // call init from the concrete worker class
+      this.init(data)
+        .then(async () => {
+          this.isInitialized = true;
+          this.sendResponseMessage({ correlationId, data: { success: true } });
+        })
+        .catch((error) => {
+          this.isInitialized = false;
+          this.logger.error(`Error during worker initialization:`, { error }); // note error.message its not logged properly
+          this.sendResponseMessage({ correlationId, error: { message: error.message } });
+        });
+    } else if (name === 'stop') {
+      this.stop()
+        .then(() => {
+          this.sendResponseMessage({ correlationId, data: { success: true } });
+          this.logger.info('✅ Stopped successfully');
+        })
+        .catch((error) => {
+          this.logger.error(`❌ Error during worker termination:`, { error });
+          this.sendResponseMessage({ correlationId, error: { message: error.message } });
+        });
+      // note: we don't call self.termintate() since main thread will call worker.terminate() after receiving the stop response
+    } else {
+      // call the concrete worker's request handler
+      this.handleRequest(message).catch((error) => {
+        this.logger.error(`handleRequest <${name}>:`, error);
+        this.sendResponseMessage({ correlationId, error: { message: error.message } });
+      });
+    }
+  }
+
+  /**
+   * Handle incoming EventMessage from main thread
+   */
+  handleEventMessage(event: EventMessage): void {
+    this.handleEvent(event).catch((error) => {
+      this.logger.error(`handleEvent <${event.name}>:`, error);
+    });
+  }
+
+  /**
+   * Helper to send ResponseMessage to main thread
+   */
+  sendResponseMessage(message: { correlationId: string; data?: unknown; error?: unknown }): void {
+    self.postMessage({ type: 'response', ...message });
+  }
+
+  /**
+   * Helper to send EventMessage to main thread
+   */
+  sendEventMessage(name: string, data: unknown): void {
+    self.postMessage({ type: 'event', sender: this.workerId, name, data });
+  }
+
+  // abstract methods that concrete workers must implement
+  abstract handleRequest(message: RequestMessage): Promise<void>;
+  abstract handleEvent(event: EventMessage): Promise<void>;
+  abstract init(config: unknown): Promise<void>;
+  abstract stop(): Promise<void>;
+}

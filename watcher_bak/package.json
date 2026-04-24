@@ -1,0 +1,35 @@
+{
+  "name": "universal-trader",
+  "module": "src/main.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch ./src/main.ts",
+    "start": "bun run ./src/main.ts",
+    "test": "bun test",
+    "lint": "bunx biome check src/",
+    "format": "bunx biome format --write src/",
+    "execute-direct-swap": "bun run ./src/scripts/execute-direct-swap.ts",
+    "debug-opportunity": "bun run ./src/scripts/debug-opportunity.ts",
+    "debug-opportunity-competition": "bun run ./src/scripts/debug-opportunity-competition.ts",
+    "identify-venues": "bun run ./src/scripts/identify-venues.ts",
+    "exec-price-oracle": "bun run ./src/scripts/exec-price-oracle.ts",
+    "compute-init-code-hash": "bun run ./src/scripts/compute-init-code-hash.ts",
+    "create-wallet": "bun run ./src/scripts/create-wallet.ts",
+    "blacklist": "bun run ./src/scripts/blacklist.ts"
+  },
+  "dependencies": {
+    "@flashbots/ethers-provider-bundle": "^1.0.0",
+    "ethers": "^6.13.0",
+    "hono": "^4.6.0",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
