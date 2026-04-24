@@ -746,6 +746,7 @@ export class FlashArbitrageHandler {
                   poolId: failedStep.pool.id,
                   stepReasonBytes,
                 });
+                blacklistPoolIds.add(failedStep.pool.id); // temp blacklist pool in both cases
               }
             } else if (innerError?.name === 'LoanRepaymentNotMet' || innerError?.name === 'MinProfitNotMet') {
               const formattedExpected = ethers.formatUnits(innerError.args[1] as bigint, borrowToken.decimals);
