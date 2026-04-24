@@ -732,8 +732,21 @@ export class FlashArbitrageHandler {
 
               const failedStep = opportunity.steps[stepIndex];
               errorOpportunities.push(opportunity);
-              blacklistPoolIds.add(failedStep.pool.id);
-              this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}`, { failedStep, stepReasonBytes });
+
+              if (stepReasonBytes === '0x') {
+                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}`, {
+                  pool: failedStep.pool,
+                  stepReasonBytes,
+                });
+                // NOTE: add to blacklist only in this case => otherwise it might be a custom error like invalid amount, or slippage to high, etc...
+                // error code examples: 0xbe8b8507 0x90bfb865
+                blacklistPoolIds.add(failedStep.pool.id);
+              } else {
+                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex} with reason: ${stepReasonBytes}`, {
+                  poolId: failedStep.pool.id,
+                  stepReasonBytes,
+                });
+              }
             } else if (innerError?.name === 'LoanRepaymentNotMet' || innerError?.name === 'MinProfitNotMet') {
               const formattedExpected = ethers.formatUnits(innerError.args[1] as bigint, borrowToken.decimals);
               const formattedActual = ethers.formatUnits(innerError.args[2] as bigint, borrowToken.decimals);
