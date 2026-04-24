@@ -4,7 +4,7 @@ import type { ChainConfig } from '@/config/models';
 import { logger } from '@/utils';
 import { ethers } from 'ethers';
 import { WorkerDb } from '@/workers/watcher-evm/db';
-import type { ArbitrageOpportunity, SwapStep } from '@/workers/watcher-evm/core/interfaces';
+import type { ArbitrageOpportunity, SwapStep } from '@/core/interfaces';
 import type { DexPoolState, DexV4PoolState } from '@/shared/data-model/layer1';
 
 // ========================================================================================

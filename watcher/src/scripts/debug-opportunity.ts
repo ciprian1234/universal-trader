@@ -3,15 +3,15 @@ import { appConfig } from '@/config';
 import type { ChainConfig } from '@/config/models';
 import { logger } from '@/utils';
 import { ethers } from 'ethers';
-import { FLASH_ARBITRAGE_ABI } from '@/workers/watcher-evm/core/flash-arbitrage-handler/flash-arbitrage-contract-abi';
+import { FLASH_ARBITRAGE_ABI } from '@/core/flash-arbitrage-handler/flash-arbitrage-contract-abi';
 import { CacheService } from '@/utils/cache-service';
 import { WorkerDb } from '@/workers/watcher-evm/db';
-import { EventBus } from '@/workers/watcher-evm/core/event-bus';
-import { Blockchain } from '@/workers/watcher-evm/core/blockchain';
-import { TokenManager } from '@/workers/watcher-evm/core/token-manager';
+import { EventBus } from '@/core/event-bus';
+import { Blockchain } from '@/core/blockchain';
+import { TokenManager } from '@/core/token-manager';
 import path from 'path/win32';
 import { balanceStrWithSymbol } from './helpers';
-import type { ArbitrageOpportunity } from '@/workers/watcher-evm/core/interfaces';
+import type { ArbitrageOpportunity } from '@/core/interfaces';
 
 // ========================================================================================
 // CONFIG — edit these for the swap you want to test

@@ -1,5 +1,5 @@
 import type { DexPoolState } from '@/shared/data-model/layer1';
-import type { ArbitrageOpportunity, PoolEvent } from '@/workers/watcher-evm/core/interfaces';
+import type { ArbitrageOpportunity, PoolEvent } from '@/core/interfaces';
 import type { Logger } from '@/utils';
 import { formatUnits } from 'node_modules/ethers/lib.commonjs/utils/units';
 

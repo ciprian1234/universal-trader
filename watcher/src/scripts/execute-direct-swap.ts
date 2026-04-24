@@ -1,15 +1,15 @@
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import { logger } from '@/utils';
-import { FlashArbitrageHandler } from '@/workers/watcher-evm/core/flash-arbitrage-handler';
-import { type SwapStepOnContract } from '@/workers/watcher-evm/core/flash-arbitrage-handler/flash-arbitrage-config';
-import { FLASH_ARBITRAGE_ABI } from '@/workers/watcher-evm/core/flash-arbitrage-handler/flash-arbitrage-contract-abi';
+import { FlashArbitrageHandler } from '@/core/flash-arbitrage-handler';
+import { type SwapStepOnContract } from '@/core/flash-arbitrage-handler/flash-arbitrage-config';
+import { FLASH_ARBITRAGE_ABI } from '@/core/flash-arbitrage-handler/flash-arbitrage-contract-abi';
 import { ethers } from 'ethers';
 import { chainConfig, balanceStrWithSymbol, fundContract, WETH_ADDRESS, balanceDeltaStr } from './helpers';
 import { CacheService } from '@/utils/cache-service';
 import { WorkerDb } from '@/workers/watcher-evm/db';
-import { EventBus } from '@/workers/watcher-evm/core/event-bus';
-import { Blockchain } from '@/workers/watcher-evm/core/blockchain';
-import { TokenManager } from '@/workers/watcher-evm/core/token-manager';
+import { EventBus } from '@/core/event-bus';
+import { Blockchain } from '@/core/blockchain';
+import { TokenManager } from '@/core/token-manager';
 
 // ========================================================================================
 // CONFIG — edit these for the swap you want to test

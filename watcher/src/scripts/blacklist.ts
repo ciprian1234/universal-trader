@@ -4,9 +4,9 @@
 import { WorkerDb } from '@/workers/watcher-evm/db';
 import { appConfig } from '../config';
 import type { ChainConfig } from '@/config/models';
-import { Blockchain } from '@/workers/watcher-evm/core/blockchain';
+import { Blockchain } from '@/core/blockchain';
 import { CacheService } from '@/utils/cache-service';
-import { EventBus } from '@/workers/watcher-evm/core/event-bus';
+import { EventBus } from '@/core/event-bus';
 import { logger, safeStringify } from '@/utils';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;

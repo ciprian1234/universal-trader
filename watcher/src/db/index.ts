@@ -2,7 +2,7 @@ import { SQL } from 'bun';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenOnChain } from '@/shared/data-model/token';
 import { createLogger } from '@/utils';
-import type { ArbitrageOpportunity } from '../core/interfaces';
+import type { ArbitrageOpportunity } from '../../../core/interfaces';
 
 // ════════════════════════════════════════════════════════════
 // DB TYPES — static data only, no dynamic fields

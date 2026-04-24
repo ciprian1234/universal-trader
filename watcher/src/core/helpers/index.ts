@@ -1,5 +1,4 @@
 import { ethers } from 'ethers';
-import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenOnChain, TokenPairOnChain } from '@/shared/data-model/token';
 
 /**

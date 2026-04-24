@@ -4,12 +4,12 @@
 import { WorkerDb } from '@/workers/watcher-evm/db';
 import { appConfig } from '../config';
 import type { ChainConfig } from '@/config/models';
-import { Blockchain } from '@/workers/watcher-evm/core/blockchain';
+import { Blockchain } from '@/core/blockchain';
 import { createLogger } from '@/utils';
 import { CacheService } from '@/utils/cache-service';
-import { TokenManager } from '@/workers/watcher-evm/core/token-manager';
-import { EventBus } from '@/workers/watcher-evm/core/event-bus';
-import { DexManager } from '@/workers/watcher-evm/core/dex-manager';
+import { TokenManager } from '@/core/token-manager';
+import { EventBus } from '@/core/event-bus';
+import { DexManager } from '@/core/dex-manager';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;
 
