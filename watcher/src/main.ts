@@ -2,10 +2,23 @@
 // UNIVERSAL TRADER — Entry Point
 // ================================================================================================
 import { appConfig } from './config/index.ts';
-import { WorkerManager } from './core/communication/worker-manager.ts';
 import { startApiServer } from './api-server/index..ts';
 import { logger } from './utils';
 import type { ChainConfig } from './config/models.ts';
+import { WorkerDb } from './db';
+import { CacheService } from './utils/cache-service.ts';
+import { EventBus } from './core/event-bus.ts';
+import { Blockchain } from './core/blockchain.ts';
+import { TokenManager } from './core/token-manager.ts';
+import { PriceOracle } from './core/price-oracle.ts';
+import { DexManager } from './core/dex-manager.ts';
+import { TokenPairManager } from './core/token-pair-manager.ts';
+import { BlockManager } from './core/block-manager.ts';
+import { WalletManager } from './core/wallet-manager.ts';
+import { GasManager } from './core/gas-manager.ts';
+import { ArbitrageOrchestrator } from './core/arbitrage/arbitrage-orchestrator.ts';
+import { FlashArbitrageHandler } from './core/flash-arbitrage-handler/index.ts';
+import { formatGwei } from './core/helpers';
 
 // ================================================================================================
 // MAIN ENTRY POINT
@@ -49,27 +62,28 @@ main().catch((error) => {
 // MAIN APPLICATION CLASS
 // ================================================================================================
 export class DexArbitrageApp {
-  private readonly chainConfig!: ChainConfig;
-  private readonly db!: WorkerDb;
-  private readonly cache!: CacheService;
-  private readonly eventBus!: EventBus;
+  private readonly chainConfig: ChainConfig;
+  private readonly db: WorkerDb;
+  private readonly cache: CacheService;
+  private readonly eventBus: EventBus;
 
-  private readonly blockchain!: Blockchain;
-  private readonly tokenManager!: TokenManager;
-  private readonly tokenPairManager!: TokenPairManager;
-  private readonly priceOracle!: PriceOracle;
-  private readonly dexManager!: DexManager;
-  private readonly blockManager!: BlockManager;
-  private readonly gasManager!: GasManager;
-  private readonly walletManager!: WalletManager;
-  private readonly arbitrageOrchestrator!: ArbitrageOrchestrator;
-  private readonly flashArbitrageHandler!: FlashArbitrageHandler;
+  private readonly blockchain: Blockchain;
+  private readonly tokenManager: TokenManager;
+  private readonly tokenPairManager: TokenPairManager;
+  private readonly priceOracle: PriceOracle;
+  private readonly dexManager: DexManager;
+  private readonly blockManager: BlockManager;
+  private readonly gasManager: GasManager;
+  private readonly walletManager: WalletManager;
+  private readonly arbitrageOrchestrator: ArbitrageOrchestrator;
+  private readonly flashArbitrageHandler: FlashArbitrageHandler;
 
   private displayStatsIntervalId?: NodeJS.Timeout;
 
   constructor() {
-    logger.info(`🌐 Initializing DEX Arbitrage App on chain ${chainId}`);
-    this.chainConfig = chainConfig;
+    this.chainConfig = appConfig.platforms['ethereum'] as ChainConfig;
+    if (!this.chainConfig) throw new Error('Chain configuration for "ethereum" not found in appConfig');
+    logger.info(`🌐 Initializing DEX Arbitrage App on chain ${this.chainConfig.name}`);
 
     // init cache
     this.cache = new CacheService(this.chainConfig.chainId);

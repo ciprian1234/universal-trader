@@ -1,7 +1,7 @@
 // ================================================================================================
 // CONFIGURATION
 // ================================================================================================
-import { WorkerDb } from '@/workers/watcher-evm/db';
+import { WorkerDb } from '@/db';
 import { appConfig } from '../config';
 import type { ChainConfig } from '@/config/models';
 import { Blockchain } from '@/core/blockchain';

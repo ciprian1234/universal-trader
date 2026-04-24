@@ -6,7 +6,7 @@ import { FLASH_ARBITRAGE_ABI } from '@/core/flash-arbitrage-handler/flash-arbitr
 import { ethers } from 'ethers';
 import { chainConfig, balanceStrWithSymbol, fundContract, WETH_ADDRESS, balanceDeltaStr } from './helpers';
 import { CacheService } from '@/utils/cache-service';
-import { WorkerDb } from '@/workers/watcher-evm/db';
+import { WorkerDb } from '@/db';
 import { EventBus } from '@/core/event-bus';
 import { Blockchain } from '@/core/blockchain';
 import { TokenManager } from '@/core/token-manager';
