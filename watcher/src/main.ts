@@ -38,7 +38,6 @@ async function main() {
     const shutdown = async () => {
       if (isShuttingDown) return;
       isShuttingDown = true;
-      logger.info('🛑 Shutting down application...');
       await app.stop();
       logger.info('👋 Goodbye!');
       process.exit(0);
@@ -52,11 +51,6 @@ async function main() {
     process.exit(1);
   }
 }
-
-main().catch((error) => {
-  logger.error('Fatal error:', { error });
-  process.exit(1);
-});
 
 // ================================================================================================
 // MAIN APPLICATION CLASS
@@ -386,8 +380,3 @@ export class DexArbitrageApp {
 //   // log.info(`   Pools: ${store.size}`);
 //   // log.info('═══════════════════════════════════════════════');
 // }
-
-// main().catch((err) => {
-//   logger.error('Fatal error:', err);
-//   process.exit(1);
-// });

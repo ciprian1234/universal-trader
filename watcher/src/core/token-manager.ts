@@ -110,7 +110,7 @@ export class TokenManager {
    * uniswap source: https://tokens.uniswap.org
    */
   async loadTrustedTokens(source: 'coingecko' | 'uniswap'): Promise<void> {
-    const cache = await import(`../../../../data/cache/${source}-token-list.json`);
+    const cache = await import(`../../data/cache/${source}-token-list.json`);
     if (!cache || !cache.tokens) throw new Error(`No trusted tokens found in ${source} cache`);
     this.trustedTokens = cache.tokens.map((token: any) => ({
       chainId: token.chainId,
