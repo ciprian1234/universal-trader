@@ -689,7 +689,7 @@ export class FlashArbitrageHandler {
       }
 
       // 2. execute multicall3
-      const callResults = await this.blockchain.executeMulticall3(calls);
+      const callResults = await this.blockchain.executeMulticall3(calls, 50);
 
       // 3. Collect decoded results per opportunity
       // NOTE: simulateTrade always reverts with SimulationSuccess/SimulationError custom error
@@ -774,7 +774,7 @@ export class FlashArbitrageHandler {
         }
       }
     } catch (error) {
-      this.logger.error(`❌ Unexpected error during simulation`, { error, opportunities });
+      this.logger.error(`❌ Unexpected error during simulation`, { error });
     }
 
     return { validOpportunities, invalidOpportunities, errorOpportunities, blacklistPoolIds };
