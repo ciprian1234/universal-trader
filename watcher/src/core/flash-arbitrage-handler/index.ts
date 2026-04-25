@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { createLogger, displayOpportunity, type Logger } from '@/utils';
+import { createLogger, displayOpportunity, printPool, type Logger } from '@/utils';
 import type { ArbitrageOpportunity } from '../interfaces';
 import { DexProtocolEnum, type SwapStepOnContract } from './flash-arbitrage-config';
 import { EventBus } from '../event-bus';
@@ -217,6 +217,20 @@ export class FlashArbitrageHandler {
       await this.simulateOpportunities(reEvaluatedOpportunities);
     const statusMessage = `valid: ${validOpportunities.length}, invalid: ${invalidOpportunities.length}, error: ${errorOpportunities.length}`;
     this.logger.info(`Opportunities simulation status: ${statusMessage}`);
+
+    // extract unique pools full pool data from invalid opportunities and print
+    const invalidPools = new Map<string, any>(); // poolId -> poolData
+    invalidOpportunities.forEach((o) =>
+      o.steps.forEach((s) => {
+        if (!invalidPools.has(s.pool.id)) {
+          invalidPools.set(s.pool.id, s.pool);
+        }
+      }),
+    );
+
+    // print invalid pools data
+    this.logger.error(`Invalid opportunities involve the following pools:`);
+    invalidPools.forEach((pool) => this.logger.error(`❌ ${printPool(pool)}`));
 
     // handle any valid opportunities
     const validNonOverlappingOpportunities = this.selectNonOverlappingOpportunities(validOpportunities);
@@ -731,21 +745,21 @@ export class FlashArbitrageHandler {
               // }
 
               const failedStep = opportunity.steps[stepIndex];
-              errorOpportunities.push(opportunity);
+              const ctx = {
+                opportunityId: opportunity.id,
+                stepIndex,
+                poolId: failedStep.pool.id,
+                stepReasonBytes,
+              };
 
               if (stepReasonBytes === '0x') {
-                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}`, {
-                  pool: failedStep.pool,
-                  stepReasonBytes,
-                });
+                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}`, { ...ctx });
+                errorOpportunities.push(opportunity);
+                blacklistPoolIds.add(failedStep.pool.id);
                 // NOTE: add to blacklist only in this case => otherwise it might be a custom error like invalid amount, or slippage to high, etc...
                 // error code examples: 0xbe8b8507 0x90bfb865
-                blacklistPoolIds.add(failedStep.pool.id);
               } else {
-                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex} with reason: ${stepReasonBytes}`, {
-                  poolId: failedStep.pool.id,
-                  stepReasonBytes,
-                });
+                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex} with reason`, { ...ctx });
                 invalidOpportunities.push(opportunity); // mark as invalid to sync pools data and re-evaluate
               }
             } else if (innerError?.name === 'LoanRepaymentNotMet' || innerError?.name === 'MinProfitNotMet') {
