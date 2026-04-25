@@ -746,7 +746,7 @@ export class FlashArbitrageHandler {
                   poolId: failedStep.pool.id,
                   stepReasonBytes,
                 });
-                blacklistPoolIds.add(failedStep.pool.id); // temp blacklist pool in both cases
+                invalidOpportunities.push(opportunity); // mark as invalid to sync pools data and re-evaluate
               }
             } else if (innerError?.name === 'LoanRepaymentNotMet' || innerError?.name === 'MinProfitNotMet') {
               const formattedExpected = ethers.formatUnits(innerError.args[1] as bigint, borrowToken.decimals);
