@@ -792,6 +792,7 @@ export class FlashArbitrageHandler {
   // These errors mean the OPPORTUNITY is bad, not the pool
   // Pool is healthy — amounts just didn't work out this time
   private readonly TRANSIENT_ERROR_STRINGS = [
+    'AS', // Uniswap V3 amountSpecified==0 check; upstream step produced 0 tokens
     'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT',
     'INSUFFICIENT_OUTPUT_AMOUNT',
     'Too little received', // Curve/Balancer slippage
@@ -803,6 +804,7 @@ export class FlashArbitrageHandler {
   // Custom error selectors for permanent incompatibilities
   TRANSIENT_CUSTOM_SELECTORS = new Set([
     '0xbe8b8507', // swap amount out too low (UniswapV3)
+    '0x79db9840', // zeroAmountRequired() — same as "AS" but in V3 forks
   ]);
 
   /**
@@ -819,13 +821,15 @@ export class FlashArbitrageHandler {
       let message: string;
       try {
         message = this.abiCoder.decode(['string'], '0x' + stepReasonBytes.slice(10))[0] as string;
-        if (this.TRANSIENT_ERROR_STRINGS.some((p) => message.includes(p))) return { blacklist: false, message };
+        if (this.TRANSIENT_ERROR_STRINGS.some((p) => message.toLowerCase() === p.toLowerCase())) {
+          return { blacklist: false, message };
+        }
       } catch {
         // can't decode => unknown, blacklist to be safe
         return { blacklist: true, message: `unable to decode: ${stepReasonBytes}` };
       }
       // Unknown string error (tax token, access control, etc.) => blacklist
-      return { blacklist: true, message: `unknown string error: ${message}` };
+      return { blacklist: true, message: `unknown string error: "${message}"` };
     }
 
     // Custom error: check selector
@@ -833,7 +837,7 @@ export class FlashArbitrageHandler {
     if (this.TRANSIENT_CUSTOM_SELECTORS.has(selector))
       return { blacklist: false, message: `transient custom error: ${stepReasonBytes}` };
 
-    // All other custom errors (0xbe8b8507, 0x03fff018, etc.) — treat as blacklisted to be safe, but log reason for analysis
+    // All other custom errors => treat as blacklisted to be safe, but log reason for analysis
     return { blacklist: true, message: `unknown custom error: ${stepReasonBytes}` };
   }
 

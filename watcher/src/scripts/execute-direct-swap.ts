@@ -16,7 +16,7 @@ import { TokenManager } from '@/core/token-manager';
 // ========================================================================================
 
 // NOTE: those are safe to commit => from hardhat default hardhat.accounts(1)
-const CONTRACT_ADDRESS = '0x147f6149c42481Ec43CF893DA581ACBCeBB89068';
+const CONTRACT_ADDRESS = '0x2997F869dc88591E1c008F387D4c25D9D5A4c640';
 const WALLET_PRIVATE_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'; // (hardhat[1].privateKey)
 
 if (!CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS not set in config');
@@ -24,14 +24,14 @@ if (!WALLET_PRIVATE_KEY) throw new Error('WALLET_PRIVATE_KEY not set in config')
 
 // ========================================================================================
 // Some common pools to test with (uncomment the one you want to test)
-const DB_POOL_ID = '1:0xe0554a476a092703abdb3ef35c80e0d76d32939f'; // uniswap v3 USDC:WETH(100bps)
+// const DB_POOL_ID = '1:0xe0554a476a092703abdb3ef35c80e0d76d32939f'; // uniswap v3 USDC:WETH(100bps)
 // const DB_POOL_ID = '1:0xc7bbec68d12a0d1830360f8ec58fa599ba1b0e9b'; // uniswap v3 WETH:USDT(100bps)
 // ========================================================================================
 
 // input pool from DB
-// const DB_POOL_ID = '1:0x00b9edc1583bf6ef09ff3a09f6c23ecb57fd7d0bb75625717ec81eed181e22d7';
+const DB_POOL_ID = '1:0x1445f32d1a74872ba41f3d8cf4022e9996120b31';
 const ZERO_FOR_ONE = false;
-const amountInFormatted = '1'; // human readable amount to swap
+const amountInFormatted = '0.001'; // human readable amount to swap
 const amountOutMinFormatted = '0'; // human readable minimum amount to receive
 
 // ========================================================================================
