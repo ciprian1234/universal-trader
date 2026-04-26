@@ -793,6 +793,7 @@ export class FlashArbitrageHandler {
   // Pool is healthy — amounts just didn't work out this time
   private readonly TRANSIENT_ERROR_STRINGS = [
     'AS', // Uniswap V3 amountSpecified==0 check; upstream step produced 0 tokens
+    'Transfer amount must be greater than zero',
     'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT',
     'INSUFFICIENT_OUTPUT_AMOUNT',
     'Too little received', // Curve/Balancer slippage
