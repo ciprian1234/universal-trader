@@ -688,7 +688,7 @@ export class FlashArbitrageHandler {
     const validOpportunities: ArbitrageOpportunity[] = [];
     const invalidOpportunities: ArbitrageOpportunity[] = [];
     const errorOpportunities: ArbitrageOpportunity[] = [];
-    const blacklistPoolIds = new Set<string>();
+    const blacklistPoolIds = new Map<string, string>();
 
     try {
       // 1. build multicall3 input from valid opportunities
@@ -703,7 +703,7 @@ export class FlashArbitrageHandler {
       }
 
       // 2. execute multicall3
-      const callResults = await this.blockchain.executeMulticall3(calls, 20);
+      const callResults = await this.blockchain.executeMulticall3(calls, 50);
 
       // 3. Collect decoded results per opportunity
       // NOTE: simulateTrade always reverts with SimulationSuccess/SimulationError custom error
@@ -734,16 +734,6 @@ export class FlashArbitrageHandler {
               const stepIndex = Number(innerError.args[0] as bigint);
               const stepReasonBytes = innerError.args[1] as string;
 
-              // Optionally decode the inner-inner reason (pool's actual error)
-              // if (stepReasonBytes && stepReasonBytes !== '0x') {
-              //   try {
-              //     const poolParsed = this.CONTRACT_INTERFACE.parseError(stepReasonBytes);
-              //     poolError = poolParsed?.name ?? `selector: ${stepReasonBytes.slice(0, 10)}`;
-              //   } catch {
-              //     poolError = `raw: ${stepReasonBytes.slice(0, 100)}`;
-              //   }
-              // }
-
               const failedStep = opportunity.steps[stepIndex];
               const ctx = {
                 opportunityId: opportunity.id,
@@ -752,14 +742,19 @@ export class FlashArbitrageHandler {
                 stepReasonBytes,
               };
 
-              if (stepReasonBytes === '0x') {
-                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}`, { ...ctx });
+              const classification = this.classifySwapError(stepReasonBytes);
+              if (classification.blacklist) {
+                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}, blacklisting`, {
+                  ...ctx,
+                  reason: classification.message,
+                });
                 errorOpportunities.push(opportunity);
-                blacklistPoolIds.add(failedStep.pool.id);
-                // NOTE: add to blacklist only in this case => otherwise it might be a custom error like invalid amount, or slippage to high, etc...
-                // error code examples: 0xbe8b8507 0x90bfb865
+                if (!blacklistPoolIds.get(failedStep.pool.id)) blacklistPoolIds.set(failedStep.pool.id, classification.message);
               } else {
-                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex} with reason`, { ...ctx });
+                this.logger.warn(`Simulation for ${opportunity.id} failed at step ${stepIndex}, not blacklisting`, {
+                  ...ctx,
+                  reason: classification.message,
+                });
                 invalidOpportunities.push(opportunity); // mark as invalid to sync pools data and re-evaluate
               }
             } else if (innerError?.name === 'LoanRepaymentNotMet' || innerError?.name === 'MinProfitNotMet') {
@@ -792,6 +787,54 @@ export class FlashArbitrageHandler {
     }
 
     return { validOpportunities, invalidOpportunities, errorOpportunities, blacklistPoolIds };
+  }
+
+  // These errors mean the OPPORTUNITY is bad, not the pool
+  // Pool is healthy — amounts just didn't work out this time
+  private readonly TRANSIENT_ERROR_STRINGS = [
+    'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT',
+    'INSUFFICIENT_OUTPUT_AMOUNT',
+    'Too little received', // Curve/Balancer slippage
+    'Slippage too high',
+    'EXCESSIVE_INPUT_AMOUNT', // V2 exact-out
+    // 'UniswapV2: K', // can be transient due to upstream phantom pool producing huge amounts
+  ];
+
+  // Custom error selectors for permanent incompatibilities
+  TRANSIENT_CUSTOM_SELECTORS = new Set([
+    '0xbe8b8507', // swap amount out too low (UniswapV3)
+  ]);
+
+  /**
+   * Classify a SwapStepFailed reason into:
+   * - 'blacklist': pool is permanently broken or incompatible — blacklist it
+   * - 'invalid': pool is fine, the opportunity math/amounts don't work — retry after resync
+   */
+  private classifySwapError(stepReasonBytes: string): { blacklist: boolean; message: string } {
+    // Empty revert = OOG, require(false), broken pool
+    if (stepReasonBytes === '0x') return { blacklist: true, message: 'empty revert' }; // treat as blacklist to avoid OOG loops, but log reason for analysis
+
+    // Standard string revert: 0x08c379a0 + abi.encode(string)
+    if (stepReasonBytes.startsWith('0x08c379a0')) {
+      let message: string;
+      try {
+        message = this.abiCoder.decode(['string'], '0x' + stepReasonBytes.slice(10))[0] as string;
+        if (this.TRANSIENT_ERROR_STRINGS.some((p) => message.includes(p))) return { blacklist: false, message };
+      } catch {
+        // can't decode => unknown, blacklist to be safe
+        return { blacklist: true, message: `unable to decode: ${stepReasonBytes}` };
+      }
+      // Unknown string error (tax token, access control, etc.) => blacklist
+      return { blacklist: true, message: `unknown string error: ${message}` };
+    }
+
+    // Custom error: check selector
+    const selector = stepReasonBytes.slice(0, 10);
+    if (this.TRANSIENT_CUSTOM_SELECTORS.has(selector))
+      return { blacklist: false, message: `transient custom error: ${stepReasonBytes}` };
+
+    // All other custom errors (0xbe8b8507, 0x03fff018, etc.) — treat as blacklisted to be safe, but log reason for analysis
+    return { blacklist: true, message: `unknown custom error: ${stepReasonBytes}` };
   }
 
   /**

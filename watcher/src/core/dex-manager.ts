@@ -240,14 +240,15 @@ export class DexManager {
     this.logger.info(`${printPool(pool)}`, { ...data });
   }
 
-  blacklistPools(poolIds: Set<string>): void {
+  blacklistPools(poolIds: Map<string, string>): void {
     const blacklistedPools: DexPoolState[] = [];
-    for (const poolId of poolIds) {
+    for (const [poolId, reason] of poolIds) {
       const pool = this.pools.get(poolId);
       if (!pool) continue;
       pool.isBlacklisted = true;
+      pool.error = `blacklisted due to simulation error: ${reason}`;
       blacklistedPools.push(pool);
-      this.logger.warn(`⚠️ Blacklisting pool due to simulation error: ${printPool(pool)}`);
+      this.logger.warn(`⚠️ Blacklisting pool ${printPool(pool)} due to simulation error: ${reason}`);
     }
 
     // EMIT: pool-state-upsert-batch for blacklisted pools silently (without triggering opportunity search, because we know these pools will cause errors)

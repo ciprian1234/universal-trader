@@ -7,7 +7,7 @@ import type { ChainConfig } from '@/config/models';
 import { Blockchain } from '@/core/blockchain';
 import { CacheService } from '@/utils/cache-service';
 import { EventBus } from '@/core/event-bus';
-import { logger, safeStringify } from '@/utils';
+import { logger, printPool, safeStringify } from '@/utils';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;
 const cache = new CacheService(platformConfig.chainId);
@@ -31,42 +31,45 @@ async function main() {
   const blacklistedPools = [];
   for (const pool of pools) {
     if (pool.state.isBlacklisted) {
-      // logger.info(`Pool ${pool.state.id} with pair ${pool.pairId} is already blacklisted, skipping`);
+      logger.info(`Pool ${printPool(pool.state)} is blacklisted, skipping`);
       blacklistedCount++;
 
-      if (pool.state.totalLiquidityUSD > 0) blacklistedPools.push(pool);
+      // whitelisting (uncomment if needed)
+      // logger.info(`Unblacklisting pool ${pool.state.id} with pair ${pool.pairId} since it is already blacklisted`);
+      // pool.state.isBlacklisted = false;
+      // pool.state.error = undefined;
+      // await db.upsertPool(pool.state, pool.source, true);
       continue;
     }
 
     if (pool.pairId === 'ETH:WETH' || pool.pairId === 'WETH:ETH') {
       logger.info(`Blacklisting pool ${pool.state.id} with pair ${pool.pairId}`);
       pool.state.isBlacklisted = true;
-      // await db.upsertPool(pool.state, pool.source, true);
+      pool.state.error = 'blacklisted due to known WETH/ETH pair issues';
+      await db.upsertPool(pool.state, pool.source, true);
       count++;
+      // continue;
     }
 
     const { token0, token1, key } = pool.state.tokenPair;
     if (token0.symbol === 'ETH' && token0.symbol === token1.symbol) {
-      logger.info(
-        `Pool ${pool.state.id} has identical token symbols (${token0.symbol}), skipping blacklisting to avoid false positives`,
-        // {
-        //   token0,
-        //   token1,
-        //   key,
-        //   liquidityUSD: pool.state.totalLiquidityUSD,
-        //   p0to1: pool.state.spotPrice0to1,
-        //   p1to0: pool.state.spotPrice1to0,
-        // },
-      );
+      logger.info(`Pool ${pool.state.id} has identical token symbols (${token0.symbol}), blacklisting pool`);
       pool.state.isBlacklisted = true;
-      // await db.upsertPool(pool.state, pool.source, true);
+      pool.state.error = `blacklisted due to identical ${key} symbols`;
+      await db.upsertPool(pool.state, pool.source, true);
       count++;
+      // continue;
     }
+
+    // if (pool.state.isBlacklisted) {
+    //   blacklistedCount++;
+    //   logger.info(`Pool ${printPool(pool.state)} is blacklisted, reason: ${pool.state.error}`);
+    // }
   }
 
   // store blacklisted pools in a json file for reference
-  const fs = await import('fs/promises');
-  await fs.writeFile('./blacklisted-pools.json', safeStringify(blacklistedPools, 2));
+  // const fs = await import('fs/promises');
+  // await fs.writeFile('./blacklisted-pools.json', safeStringify(blacklistedPools, 2));
 
   logger.info(`Blacklisted ${count} pools with WETH/ETH pair of ${pools.length} total pools`);
   logger.info(`Total blacklisted pools: ${blacklistedCount}`);
