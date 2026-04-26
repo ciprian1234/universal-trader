@@ -809,6 +809,7 @@ export class FlashArbitrageHandler {
   TRANSIENT_CUSTOM_SELECTORS = new Set([
     '0xbe8b8507', // swap amount out too low (UniswapV3)
     '0x79db9840', // zeroAmountRequired() — same as "AS" but in V3 forks
+    '0x03fff018', // invalid ticks range
   ]);
 
   /**
