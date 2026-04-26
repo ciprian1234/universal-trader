@@ -791,15 +791,18 @@ export class FlashArbitrageHandler {
 
   // These errors mean the OPPORTUNITY is bad, not the pool
   // Pool is healthy — amounts just didn't work out this time
-  private readonly TRANSIENT_ERROR_STRINGS = [
-    'AS', // Uniswap V3 amountSpecified==0 check; upstream step produced 0 tokens
-    'Transfer amount must be greater than zero',
-    'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT',
-    'INSUFFICIENT_OUTPUT_AMOUNT',
-    'Too little received', // Curve/Balancer slippage
-    'Slippage too high',
-    'EXCESSIVE_INPUT_AMOUNT', // V2 exact-out
+  private readonly ALLOWED_TRANSIENT_ERROR_STRINGS = [
+    'AS', // amountSpecified==0 check; upstream step produced 0 tokens
     // 'UniswapV2: K', // can be transient due to upstream phantom pool producing huge amounts
+  ];
+
+  private readonly ALLOWED_TRANSIENT_ERROR_SUBSTRINGS = [
+    'INSUFFICIENT_OUTPUT_AMOUNT',
+    'AMMOUNT OUT TOO LOW',
+    'Transfer amount must be greater than zero',
+    'Too little received',
+    'Slippage too high',
+    'EXCESSIVE_INPUT_AMOUNT',
   ];
 
   // Custom error selectors for permanent incompatibilities
@@ -822,7 +825,10 @@ export class FlashArbitrageHandler {
       let message: string;
       try {
         message = this.abiCoder.decode(['string'], '0x' + stepReasonBytes.slice(10))[0] as string;
-        if (this.TRANSIENT_ERROR_STRINGS.some((p) => message.toLowerCase() === p.toLowerCase())) {
+        if (this.ALLOWED_TRANSIENT_ERROR_STRINGS.some((p) => message.toLowerCase() === p.toLowerCase())) {
+          return { blacklist: false, message };
+        }
+        if (this.ALLOWED_TRANSIENT_ERROR_SUBSTRINGS.some((p) => message.toLowerCase().includes(p.toLowerCase()))) {
           return { blacklist: false, message };
         }
       } catch {
