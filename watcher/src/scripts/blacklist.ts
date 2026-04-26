@@ -37,7 +37,7 @@ async function main() {
       // whitelisting (uncomment if needed)
       // logger.info(`Unblacklisting pool ${pool.state.id} with pair ${pool.pairId} since it is already blacklisted`);
       // pool.state.isBlacklisted = false;
-      // pool.state.error = undefined;
+      // pool.state.error = null;
       // await db.upsertPool(pool.state, pool.source, true);
       continue;
     }
