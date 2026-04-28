@@ -1,13 +1,11 @@
 import type { ChainConfig } from '@/config/models';
 import { createLogger, type Logger } from '@/utils';
-import type { CacheService } from '@/utils/cache-service';
 import { ethers } from 'ethers';
 import { MULTICALL3_ABI, MULTICALL3_ADDRESS } from './chain/abi';
 import type { EventBus } from './event-bus';
 
 type BlockchainInput = {
   chainConfig: ChainConfig;
-  cache: CacheService;
   eventBus: EventBus;
 };
 
@@ -29,7 +27,6 @@ export class Blockchain {
   provider: ethers.Provider;
   multicall3: ethers.Contract;
 
-  private readonly cache: CacheService;
   private readonly eventBus: EventBus;
   private readonly contracts: Map<string, ethers.Contract> = new Map();
 
@@ -55,7 +52,6 @@ export class Blockchain {
     this.logger = createLogger(`[${input.chainConfig.name}.Blockchain]`);
     this.chainConfig = input.chainConfig;
     this.chainId = input.chainConfig.chainId;
-    this.cache = input.cache;
     this.eventBus = input.eventBus;
 
     // init blockchain provider either WS or HTTP
@@ -236,20 +232,10 @@ export class Blockchain {
           });
         }
 
-        // Return wrapped function with caching
+        // Return wrapped function
         return async (...args: any[]) => {
-          const cacheKey = this.getCacheKey(target.target.toString(), prop, args);
-
-          //
-          const cached = this.cache.get(cacheKey);
-          if (cached !== null) {
-            return cached;
-          }
-
-          // Call original method (with throttling as well if no cache hit)
-          const result = await this.throttledCall(() => original.apply(target, args)); // Execute original method immediately
-          this.cache.set(cacheKey, result); // Cache the result
-          return result;
+          // Call original method (with throttling
+          return await this.throttledCall(() => original.apply(target, args)); // Execute original method immediately
         };
       },
     });
@@ -347,10 +333,6 @@ export class Blockchain {
 
   async waitForTransaction(txHash: string, confirmations?: number, timeout?: number) {
     return this.provider.waitForTransaction(txHash, confirmations, timeout);
-  }
-
-  private getCacheKey(address: string, method: string, args: any[]): string {
-    return `contract:${address.toLowerCase()}:${method}:${JSON.stringify(args)}`;
   }
 
   /**

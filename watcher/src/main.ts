@@ -6,7 +6,6 @@ import { startApiServer } from './api-server/index..ts';
 import { logger } from './utils';
 import type { ChainConfig } from './config/models.ts';
 import { WorkerDb } from './db';
-import { CacheService } from './utils/cache-service.ts';
 import { EventBus } from './core/event-bus.ts';
 import { Blockchain } from './core/blockchain.ts';
 import { TokenManager } from './core/token-manager.ts';
@@ -58,7 +57,6 @@ async function main() {
 export class DexArbitrageApp {
   private readonly chainConfig: ChainConfig;
   private readonly db: WorkerDb;
-  private readonly cache: CacheService;
   private readonly eventBus: EventBus;
 
   private readonly blockchain: Blockchain;
@@ -79,14 +77,11 @@ export class DexArbitrageApp {
     if (!this.chainConfig) throw new Error('Chain configuration for "ethereum" not found in appConfig');
     logger.info(`🌐 Initializing DEX Arbitrage App on chain ${this.chainConfig.name}`);
 
-    // init cache
-    this.cache = new CacheService(this.chainConfig.chainId);
-
     // init database
     this.db = new WorkerDb(this.chainConfig.databaseUrl, this.chainConfig.chainId);
 
     this.eventBus = new EventBus(); // create event bus
-    this.blockchain = new Blockchain({ chainConfig: this.chainConfig, cache: this.cache, eventBus: this.eventBus }); // create blockchain provider
+    this.blockchain = new Blockchain({ chainConfig: this.chainConfig, eventBus: this.eventBus }); // create blockchain provider
 
     // create token manager
     this.tokenManager = new TokenManager({
@@ -173,8 +168,6 @@ export class DexArbitrageApp {
   // 🚀 MAIN APPLICATION FLOW
   // ================================================================================================
   async start(): Promise<void> {
-    await this.cache.load();
-
     // await this.db.reset(); // for testing only, reset db on startup
     await this.db.createTables();
 
@@ -344,10 +337,7 @@ export class DexArbitrageApp {
       // clear stats display interval
       if (this.displayStatsIntervalId) clearInterval(this.displayStatsIntervalId);
 
-      logger.info('💾 Saving cache to disk...');
-      await this.cache.save(); // do not force save if cache is not dirty
       await this.dexManager.syncRegisteredPoolsToStorage();
-
       // await this.flashArbitrageHandler.shutdown();
 
       // Cleanup GasManager
