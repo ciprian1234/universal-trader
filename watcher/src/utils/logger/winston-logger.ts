@@ -80,11 +80,11 @@ const errorFileRotateTransport = new DailyRotateFile({
 });
 
 // exception and rejection handlers
-const exceptionOrRejectionTransport = new winston.transports.File({
-  filename: path.join(logsDir, 'exceptions_or_rejections.log'),
-  format: fileFormat,
-  level: 'debug',
-});
+// const exceptionOrRejectionTransport = new winston.transports.File({
+//   filename: path.join(logsDir, 'exceptions_or_rejections.log'),
+//   format: fileFormat,
+//   level: 'debug',
+// });
 
 // ===============================================================
 // Logger instance
@@ -98,9 +98,10 @@ export const logger = winston.createLogger({
   levels,
   transports,
 
-  // Handle uncaught exceptions and rejections
-  exceptionHandlers: [exceptionOrRejectionTransport],
-  rejectionHandlers: [exceptionOrRejectionTransport],
+  // unhandled exceptions and rejections are managed in main.ts
+  // to allow selective suppression of benign provider teardown errors
+  // rejectionHandlers: [exceptionOrRejectionTransport],
+  // exceptionHandlers: [exceptionOrRejectionTransport],
 });
 
 // Create child logger with context

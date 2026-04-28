@@ -505,6 +505,6 @@ export class BlockManager {
     // Reset state data
     this.currentBlock = { number: 0, receivedTimestamp: 0 };
     this.eventBuffer = [];
-    this.logger.info('🛑 Cleanup executed');
+    this.logger.info('Cleanup completed');
   }
 }

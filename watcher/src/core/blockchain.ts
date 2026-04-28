@@ -26,8 +26,8 @@ export class Blockchain {
   private readonly logger: Logger;
   private readonly chainConfig: ChainConfig;
   readonly chainId: number;
-  readonly provider: ethers.Provider;
-  readonly multicall3: ethers.Contract;
+  provider: ethers.Provider;
+  multicall3: ethers.Contract;
 
   private readonly cache: CacheService;
   private readonly eventBus: EventBus;
@@ -39,7 +39,6 @@ export class Blockchain {
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly HEALTH_CHECK_INTERVAL = 15000; // Check every 15 seconds
   private readonly CONNECTION_TIMEOUT = 30000; // Alert after 30 seconds without blocks
-  private isConnected = true;
 
   // rate limiter configuration
   private rateLimiter = {
@@ -60,26 +59,61 @@ export class Blockchain {
     this.eventBus = input.eventBus;
 
     // init blockchain provider either WS or HTTP
+    this.provider = this.initProvider();
+
+    // init multicall3 contract for batch calls
+    this.multicall3 = this.initContract(MULTICALL3_ADDRESS, MULTICALL3_ABI);
+
+    // Monitor provider websocket connection
+    if (process.env.NODE_ENV === 'production') this.setupConnectionMonitoring();
+  }
+
+  /* Init provider */
+  initProvider() {
+    // init blockchain provider either WS or HTTP
+    let provider: ethers.Provider;
     const providerURL = this.chainConfig.providerRpcUrl;
     if (!providerURL) throw new Error(`Provider RPC URL is required for chain ${this.chainConfig.name}`);
     if (providerURL.startsWith('http')) {
       this.logger.info(`🌐 Initializing HTTP provider for ${this.chainConfig.name} (${this.chainId})`);
-      this.provider = new ethers.JsonRpcProvider(providerURL, this.chainId, { staticNetwork: true });
+      provider = new ethers.JsonRpcProvider(providerURL, this.chainId, { staticNetwork: true });
     } else if (providerURL.startsWith('ws')) {
       this.logger.info(`🌐 Initializing WebSocket provider for ${this.chainConfig.name} (${this.chainId})`);
-      this.provider = new ethers.WebSocketProvider(providerURL, this.chainId, { staticNetwork: true });
+      provider = new ethers.WebSocketProvider(providerURL, this.chainId, { staticNetwork: true });
     } else throw new Error(`Unsupported provider URL: ${providerURL}`);
 
     // Log low-level WebSocket events
-    this.provider.on('error', (error: Error) => {
+    provider.on('error', (error: Error) => {
       this.logger.error(`❌ WebSocket error`, error);
     });
 
-    // Monitor provider websocket connection
+    return provider;
+  }
+
+  async reconnect(): Promise<void> {
+    // Rebuild contracts map with new provider
+    const entries = Array.from(this.contracts.entries()).map(([, c]) => ({
+      address: c.target as string,
+      iface: c.interface,
+    }));
+    this.contracts.clear();
+
+    // destroy old provider and cleanup listeners
+    await this.cleanup();
+
+    // New provider
+    this.provider = this.initProvider();
+
+    // Re-create all contracts (including multicall3)
+    this.logger.info(`🔄 Re-initializing ${entries.length} contracts with new provider`);
+    for (const { address, iface } of entries) this.initContract(address, iface);
+    this.multicall3 = this.contracts.get(MULTICALL3_ADDRESS.toLowerCase())!;
+
+    // Reset connection state & restart monitoring
+    this.lastBlockTime = Date.now();
     if (process.env.NODE_ENV === 'production') this.setupConnectionMonitoring();
 
-    // init multicall3 contract for batch calls
-    this.multicall3 = this.initContract(MULTICALL3_ADDRESS, MULTICALL3_ABI);
+    this.logger.info('✅ Provider reconnected');
   }
 
   /**
@@ -94,12 +128,6 @@ export class Blockchain {
       this.lastBlockTime = now;
       this.lastBlockNumber = blockNumber;
 
-      // Log connection status changes
-      if (!this.isConnected) {
-        this.logger.info(`✅ WebSocket connection restored (block ${blockNumber})`);
-        this.isConnected = true;
-      }
-
       // Log if blocks are delayed
       if (timeSinceLastBlock > 20000) this.logger.warn(`⏱️ Delayed block: ${timeSinceLastBlock}ms since last block`);
       this.logger.debug(`💓 Block ${blockNumber} (${timeSinceLastBlock}ms since last)`);
@@ -108,26 +136,15 @@ export class Blockchain {
     // ✅ Periodic health check
     this.healthCheckInterval = setInterval(() => {
       const timeSinceLastBlock = Date.now() - this.lastBlockTime;
-
       if (timeSinceLastBlock > this.CONNECTION_TIMEOUT) {
-        this.logger.warn(`⚠️  No blocks received for ${timeSinceLastBlock}ms`);
+        this.logger.error(`💀 Connection dead for ${timeSinceLastBlock / 1000} seconds`);
 
-        if (this.isConnected) {
-          this.logger.error('❌ WebSocket connection lost!');
-          this.isConnected = false;
+        // clear interval before emiting connection-lost event
+        if (this.healthCheckInterval) {
+          clearInterval(this.healthCheckInterval);
+          this.healthCheckInterval = null;
         }
-
-        // if connection its lost for more than 40 seconds, exit process to allow restart
-        if (timeSinceLastBlock > 40000) {
-          this.logger.error('💀 Connection dead for 40 seconds');
-
-          // clear interval before emiting connection-lost event
-          if (this.healthCheckInterval) {
-            clearInterval(this.healthCheckInterval);
-            this.healthCheckInterval = null;
-          }
-          this.eventBus.emitApplicationEvent({ name: 'connection-lost', data: { blockNumber: this.lastBlockNumber } });
-        }
+        this.eventBus.emitApplicationEvent({ name: 'connection-lost', data: { blockNumber: this.lastBlockNumber } });
       }
     }, this.HEALTH_CHECK_INTERVAL);
 
@@ -152,7 +169,7 @@ export class Blockchain {
   /**
    * INIT CONTRACT: Create and cache contract instance
    */
-  initContract(address: string, abi: ethers.InterfaceAbi): ethers.Contract {
+  initContract(address: string, abi: ethers.InterfaceAbi | ethers.Interface): ethers.Contract {
     const key = address.toLowerCase();
     if (this.contracts.has(key)) return this.contracts.get(key)!;
 

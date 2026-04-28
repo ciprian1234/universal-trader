@@ -250,10 +250,7 @@ export class DexArbitrageApp {
     // "application-event" routing
     this.eventBus.onApplicationEvent(async (payload) => {
       if (payload.name === 'connection-lost') {
-        const msg = `Connection lost at block ${payload.data.blockNumber}`;
-        logger.error(`${msg} - stopping worker gracefully before exit...`);
-        await this.stop();
-        process.exit(2); // exit with error code after stopping the application
+        await this.reconnect(payload.data.blockNumber);
       } else {
         this.arbitrageOrchestrator.handleApplicationEvent(payload);
       }
@@ -305,6 +302,39 @@ export class DexArbitrageApp {
     });
   }
 
+  private async reconnect(fromBlock: number): Promise<void> {
+    const MAX_RETRIES = 5;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        logger.info(`🔄 Reconnect attempt ${attempt}/${MAX_RETRIES} from block ${fromBlock}`);
+        this.blockManager.cleanup(); // clear timers/buffer
+        await this.blockchain.reconnect(); // new WS provider + rebuilt contracts
+        await this.blockManager.init(); // set currentBlock to latest block from new provider
+
+        // Backfill the gap
+        const currentBlock = this.blockManager.getCurrentBlockNumber();
+        logger.info(`Connection lost at ${fromBlock}, current block: ${currentBlock}`);
+        if (currentBlock > fromBlock) {
+          logger.info(`⏳ Backfilling ${currentBlock - fromBlock} blocks...`);
+          await this.blockManager.backfillBlockEvents(fromBlock + 1, currentBlock);
+        }
+
+        // re-register 'block' listener on new provider
+        this.blockManager.listenBlockEvents();
+
+        logger.info('✅ Reconnected successfully, resuming real-time processing');
+        return; // exit the retry loop on success
+      } catch (error) {
+        logger.error(`❌ Reconnect attempt ${attempt} failed:`, { error });
+        if (attempt === MAX_RETRIES) {
+          await this.stop();
+          process.exit(2);
+        }
+        await new Promise((r) => setTimeout(r, 5000 * attempt)); // exponential backoff
+      }
+    }
+  }
+
   async stop(): Promise<void> {
     try {
       logger.info('🛑 Stopping DEX Arbitrage Application...');
@@ -354,6 +384,25 @@ export class DexArbitrageApp {
     logger.info(`=======================================================================`);
   }
 }
+
+// Catch unhandled rejections from ethers.js WebSocket internals (TimeoutError on dead connections)
+// These escape try/catch because ethers schedules them as micro-tasks after provider.destroy()
+// NOTE: Winston's rejectionHandlers was removed to prevent it from calling process.exit(1) before this handler.
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  // Suppress known benign errors from dead WebSocket teardown
+  if (message.includes('timed out') || message.includes('connection closed') || message.includes('WebSocket was closed')) {
+    logger.warn(`⚠️ Suppressed unhandled rejection (provider teardown): ${message}`);
+    return;
+  }
+  logger.error('Uncaught rejection:', { error: reason });
+  process.exit(2);
+});
+
+process.on('uncaughtException', (error: Error) => {
+  logger.error(`Uncaught exception: `, { error });
+  process.exit(3);
+});
 
 // async function main(): Promise<void> {
 //   // const workerManager = new WorkerManager({ eventBus });
