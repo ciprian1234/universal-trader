@@ -88,7 +88,7 @@ export class DexAdapter {
     this.logger.info(`📦 Cached ${dbPools.length} stored pools from DB`);
   }
 
-  async loadPoolsFromStorageCache(): Promise<DexPoolState[]> {
+  async loadPoolsFromStorageCache(fresh: boolean): Promise<DexPoolState[]> {
     // const poolIdsOnDevelopment: string[] = [
     //   '1:0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc', //uniswap-v2 USDC-WETH
     //   '1:0x2cbe14bd5598bd30ee769cad3ef42a280501955b', // uniswap-v3 USDC-WETH 0.3% fee tier
@@ -107,7 +107,7 @@ export class DexAdapter {
         this.tokenManager.ensureTokenRegistered(storedPool.tokenPair.token0.address, 'address'),
         this.tokenManager.ensureTokenRegistered(storedPool.tokenPair.token1.address, 'address'),
       ]);
-      pools.push(storedPool);
+      pools.push(fresh ? this.initPoolFromStorage(storedPool, undefined) : storedPool);
     }
     return pools;
   }
@@ -584,7 +584,7 @@ export class DexAdapter {
   //
   // derive USD prices and calculate total liquidityUSD for a pool
   //
-  private deriveTokenPricesAndLiquidity(pool: DexPoolState): void {
+  deriveTokenPricesAndLiquidity(pool: DexPoolState): void {
     // derive USD prices and calculate total liquidityUSD
     try {
       this.priceOracle.deriveFromPool(pool);

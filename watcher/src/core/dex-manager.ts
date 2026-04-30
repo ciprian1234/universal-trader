@@ -61,7 +61,7 @@ export class DexManager {
 
   async registerStoredPools(fresh: boolean): Promise<DexPoolState[]> {
     // 1. init pools
-    const pools = await this.dexAdapter.loadPoolsFromStorageCache();
+    const pools = await this.dexAdapter.loadPoolsFromStorageCache(fresh);
     for (const pool of pools) {
       // if pool already registered => skip (this may happen if event for poll arrived while we are loading from storage)
       if (this.pools.has(pool.id)) continue;
