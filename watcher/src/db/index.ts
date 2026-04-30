@@ -2,11 +2,22 @@ import { SQL } from 'bun';
 import type { DexPoolState } from '@/shared/data-model/layer1';
 import type { TokenOnChain } from '@/shared/data-model/token';
 import { createLogger } from '@/utils';
-import type { ArbitrageOpportunity } from '../../../core/interfaces';
+import type { ArbitrageOpportunity } from '@/core/interfaces';
 
 // ════════════════════════════════════════════════════════════
 // DB TYPES — static data only, no dynamic fields
 // ════════════════════════════════════════════════════════════
+
+export interface ConfigData {
+  syncedBlockNumber: number;
+}
+
+export interface ConfigEntry {
+  key: string;
+  value: ConfigData;
+  createdAt?: number;
+  updatedAt?: number;
+}
 
 export interface StoredToken extends TokenOnChain {
   source: 'config' | 'coingecko' | 'introspected';
@@ -58,6 +69,16 @@ export class WorkerDb {
   // ================================================================================================
   async createTables(): Promise<void> {
     try {
+      // create 'config' table
+      await this.sql`
+      CREATE TABLE IF NOT EXISTS config (
+        "key"                TEXT      PRIMARY KEY,
+        "value"              JSONB     NOT NULL,
+        "createdAt"          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt"          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+
       // Create 'tokens' table
       await this.sql`
       CREATE TABLE IF NOT EXISTS tokens (
@@ -114,6 +135,30 @@ export class WorkerDb {
     // await this.sql`CREATE INDEX IF NOT EXISTS idx_pools_venue  ON pools  (venueName)`;
     // await this.sql`CREATE INDEX IF NOT EXISTS idx_pools_pair   ON pools  (pairId)`;
     this.logger.info('✅ DB schema ready');
+  }
+
+  // ================================================================================================
+  // CONFIG KEY-VALUE STORE
+  // ================================================================================================
+  async getConfig(key: string = 'config'): Promise<ConfigEntry | null> {
+    const row = await this.sql`SELECT * FROM config WHERE "key" = ${key}`;
+    if (row.length === 0) return null;
+    return {
+      key: row[0].key,
+      value: row[0].value,
+      createdAt: row[0].createdAt,
+      updatedAt: row[0].updatedAt,
+    };
+  }
+
+  async setConfig(value: ConfigData, key = 'config'): Promise<void> {
+    await this.sql`
+      INSERT INTO config ("key", "value")
+      VALUES (${key}, ${serializeObject(value)})
+      ON CONFLICT ("key") DO UPDATE SET
+        "value" = EXCLUDED."value",
+        "updatedAt" = CURRENT_TIMESTAMP
+    `;
   }
 
   // ================================================================================================
@@ -181,6 +226,36 @@ export class WorkerDb {
         "source" = EXCLUDED."source",
         "updatedAt" = CURRENT_TIMESTAMP
     `;
+  }
+
+  async upsertPoolsBulk(entries: { pool: DexPoolState; source: StoredPool['source']; isEnabled: boolean }[]): Promise<void> {
+    if (entries.length === 0) return;
+    const BATCH_SIZE = 1000;
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const batch = entries.slice(i, i + BATCH_SIZE);
+      const rows = batch.map(({ pool, source, isEnabled }) => ({
+        id: pool.id,
+        error: pool.error ?? null,
+        chainId: pool.venue.chainId,
+        venueName: pool.venue.name,
+        tokenPairKey: pool.tokenPair.key,
+        feeBps: pool.feeBps,
+        pairId: pool.pairId,
+        state: serializeObject(pool),
+        source,
+        isEnabled,
+      }));
+      await this.sql`
+      INSERT INTO pools ${this.sql(rows, 'id', 'error', 'chainId', 'venueName', 'tokenPairKey', 'feeBps', 'pairId', 'state', 'source', 'isEnabled')}
+      ON CONFLICT ("id") DO UPDATE SET
+        "error"     = EXCLUDED."error",
+        "venueName" = EXCLUDED."venueName",
+        "state"     = EXCLUDED."state",
+        "isEnabled" = EXCLUDED."isEnabled",
+        "source"    = EXCLUDED."source",
+        "updatedAt" = CURRENT_TIMESTAMP
+    `;
+    }
   }
 
   async updatePoolIsEnabled(poolId: string, isEnabled: boolean): Promise<void> {

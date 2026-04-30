@@ -18,6 +18,7 @@ import { GasManager } from './core/gas-manager.ts';
 import { ArbitrageOrchestrator } from './core/arbitrage/arbitrage-orchestrator.ts';
 import { FlashArbitrageHandler } from './core/flash-arbitrage-handler/index.ts';
 import { formatGwei } from './core/helpers';
+import type { DexPoolState } from './shared/data-model/layer1.ts';
 
 // ================================================================================================
 // MAIN ENTRY POINT
@@ -170,6 +171,7 @@ export class DexArbitrageApp {
   async start(): Promise<void> {
     // await this.db.reset(); // for testing only, reset db on startup
     await this.db.createTables();
+    const configEntry = await this.db.getConfig();
 
     // init
     this.setupEventPipeline();
@@ -182,31 +184,34 @@ export class DexArbitrageApp {
     await this.dexManager.init(); // init stored pools cache from DB
     await this.blockManager.init();
 
-    // this.blockManager.listenPoolEvents_depracated();
+    const syncedBlockNumber = configEntry?.value?.syncedBlockNumber || 0;
+    const latestBlockNumber = this.blockManager.getCurrentBlockNumber();
+    const syncDiff = latestBlockNumber - syncedBlockNumber;
+    logger.info(`Last synced block: ${syncedBlockNumber}, current block: ${latestBlockNumber} (diff: ${syncDiff})`);
 
-    // optionally create trading pairs between discovery tokens at startup
-    // await this.tokenPairManager.createTokenPairsBetweenDiscoveryTokens(); // issue: pool events may arrive while this its running
-    // this.tokenPairManager.displayTokenPairs(); // display discovered token pairs after initialization
+    // === PHASE 0: Start listening to new blocks immediately (before syncing pools) to avoid missing events during startup ===
+    this.blockManager.listenBlockEvents();
 
-    // === PHASE 1: Load and sync all pools (no real-time events yet) ===
-    const initBlockNumber = this.blockManager.getCurrentBlockNumber();
-    const pools = await this.dexManager.registerStoredPools(); // init and update all cached pools
+    // === PHASE 1: Load and sync all pools
+    let pools: DexPoolState[] = [];
+    if (syncDiff < 10) {
+      pools = await this.dexManager.registerStoredPools(false); // init pools but without full full chain sync
+      if (syncDiff > 0)
+        await this.blockManager.backfillBlockEvents(syncedBlockNumber + 1, this.blockManager.getCurrentBlockNumber());
+    } else {
+      logger.warn(`⚠️ Block sync difference is bigger (${syncDiff} blocks) than 10 blocks, performing full sync`);
+      pools = await this.dexManager.registerStoredPools(true); // init pools with full chain sync
+    }
+
+    // send pools data to TokenPairManager and ArbitrageOrchestrator to update their internal state before starting to listen to new blocks events
     await this.tokenPairManager.handlePoolsUpsertBatch({ pools, block: this.blockManager.getCurrentBlock() });
-    await this.arbitrageOrchestrator.handlePoolsUpsertBatch({ pools, block: this.blockManager.getCurrentBlock() });
+    await this.arbitrageOrchestrator.handlePoolsUpsertBatch({ pools, block: this.blockManager.getCurrentBlock(), silent: true });
 
     // === PHASE 2: Full scan with ticks ===
     await this.performFullScanForOpportunities();
 
-    // === PHASE 3: Fill missed events during init and full scan ===
-    const currentBlockNumber = await this.blockchain.getBlockNumber();
-    if (currentBlockNumber > initBlockNumber) {
-      await this.blockManager.backfillBlockEvents(initBlockNumber + 1, currentBlockNumber);
-      logger.info(`✅ Backfilled block events from ${initBlockNumber + 1} to ${currentBlockNumber}`);
-    }
-
-    // === PHASE 4: Enable real-time event processing ===
+    // initialization complete, emit application event
     this.eventBus.emitApplicationEvent({ name: 'initialized' });
-    this.blockManager.listenBlockEvents(); // ← NOW start listening
 
     // set interval to display stats every minute
     this.displayStats(); // display initial stats immediately after startup
@@ -331,6 +336,7 @@ export class DexArbitrageApp {
   async stop(): Promise<void> {
     try {
       logger.info('🛑 Stopping DEX Arbitrage Application...');
+      this.db.setConfig({ syncedBlockNumber: this.blockManager.getCurrentBlockNumber() }); // persist latest block number to DB for resuming later
       this.blockManager.cleanup(); // Cleanup BlockManager
       await this.blockchain.cleanup(); // Cleanup Blockchain
 

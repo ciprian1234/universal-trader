@@ -97,17 +97,17 @@ export class DexAdapter {
     // ];
 
     const pools: DexPoolState[] = [];
-    for (const pool of this.storedPools.values()) {
-      // if (!poolIdsOnDevelopment.find((id) => id === pool.id)) continue; // TESTING ONLY - filter only specific pools for development
+    for (const storedPool of this.storedPools.values()) {
+      if (storedPool.isBlacklisted) {
+        this.logger.warn(`⚠️ Skipping initialization of blacklisted pool from storage: ${printPool(storedPool)}`);
+        continue;
+      }
 
-      // if (pool.protocol !== 'v2') continue; // TESTING ONLY
-      // TODO: filter only pools which  are active/reserves are not zero, no errors, etc..
-      const initializedPool = this.initPoolFromStorage(pool, undefined);
       await Promise.all([
-        this.tokenManager.ensureTokenRegistered(initializedPool.tokenPair.token0.address, 'address'),
-        this.tokenManager.ensureTokenRegistered(initializedPool.tokenPair.token1.address, 'address'),
+        this.tokenManager.ensureTokenRegistered(storedPool.tokenPair.token0.address, 'address'),
+        this.tokenManager.ensureTokenRegistered(storedPool.tokenPair.token1.address, 'address'),
       ]);
-      pools.push(initializedPool);
+      pools.push(storedPool);
     }
     return pools;
   }
@@ -277,8 +277,6 @@ export class DexAdapter {
         pool.error = data?.error ?? 'No data returned from multicall3';
         continue;
       }
-
-      const { token0, token1 } = pool.tokenPair;
 
       if (pool.protocol === 'v2' && data.reserves) {
         V2.updatePool(pool, data.reserves);
@@ -608,21 +606,9 @@ export class DexAdapter {
   }
 
   async syncRegisteredPoolsToStorage(registeredPools: Map<string, DexPoolState>): Promise<void> {
-    const PROMISE_BATCH_SIZE = 20;
-
-    const poolEntries = Array.from(registeredPools.entries());
-    for (let i = 0; i < poolEntries.length; i += PROMISE_BATCH_SIZE) {
-      const batch = poolEntries.slice(i, i + PROMISE_BATCH_SIZE);
-      this.logger.info(`Syncing batch of ${batch.length} pools to DB (${i + 1}-${i + batch.length} of ${poolEntries.length})...`);
-      await Promise.all(
-        batch.map(([poolId, pool]) =>
-          this.db
-            .upsertPool(pool, 'sync', true)
-            .catch((e) => this.logger.error(`Failed to sync pool ${printPool(pool)} to DB:`, { error: e })),
-        ),
-      );
-    }
-
+    const entries = Array.from(registeredPools.values()).map((pool) => ({ pool, source: 'sync' as const, isEnabled: true }));
+    this.logger.info(`Syncing ${entries.length} pools to DB...`);
+    await this.db.upsertPoolsBulk(entries).catch((e) => this.logger.error(`Failed to bulk sync pools to DB:`, { error: e }));
     this.logger.info(`✅ Synced ${registeredPools.size} registered pools to DB`);
   }
 
