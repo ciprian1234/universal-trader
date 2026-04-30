@@ -66,6 +66,7 @@ export class DexManager {
       // if pool already registered => skip (this may happen if event for poll arrived while we are loading from storage)
       if (this.pools.has(pool.id)) continue;
       this.pools.set(pool.id, pool);
+      this.dexAdapter.deriveTokenPricesAndLiquidity(pool);
     }
     this.logger.info(`📦 Initialized with ${this.pools.size} registred pools from storage`);
 
