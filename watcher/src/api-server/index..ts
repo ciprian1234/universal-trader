@@ -9,16 +9,16 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createLogger, bigIntReplacer } from '@/utils';
-import type { GlobalDataStore } from '@/core/global-data-store.ts';
-import type { WorkerManager } from '../core/communication/worker-manager.ts';
+import type { DexManager } from '@/core/dex-manager.ts';
+import type { TokenManager } from '@/core/token-manager.ts';
 
 // import type { CrossChainDetector } from '../../orchestrator/cross-chain-detector.ts';
 
-const logger = createLogger('[main.server]');
+const logger = createLogger('[server]');
 
 interface ApiServerInput {
-  store: GlobalDataStore;
-  workerManager: WorkerManager;
+  dexManager: DexManager;
+  tokenManager: TokenManager;
   // crossChainDetector: CrossChainDetector;
 }
 
@@ -45,7 +45,7 @@ export function isPaused(): boolean {
 }
 
 export function createApiServer(input: ApiServerInput): Hono {
-  const { store, workerManager } = input;
+  const { dexManager, tokenManager } = input;
   const app = new Hono();
 
   app.use('*', cors());
@@ -70,52 +70,52 @@ export function createApiServer(input: ApiServerInput): Hono {
   );
 
   // ════════════════════════════════════════════════════════════
-  // HEALTH
+  // PLAYGROUND (for testing commands to workers, etc.)
   // ════════════════════════════════════════════════════════════
   app.get('/playground', async (c) => {
-    try {
-      const response = await workerManager.sendRequest('worker-eth', 'pause', null);
-      return c.json({ response });
-    } catch (error: any) {
-      logger.error('Error sending request to worker:', error);
-      return c.json({ error: error.message }, 500);
-    }
+    // try {
+    //   const response = await workerManager.sendRequest('worker-eth', 'pause', null);
+    //   return c.json({ response });
+    // } catch (error: any) {
+    //   logger.error('Error sending request to worker:', error);
+    //   return c.json({ error: error.message }, 500);
+    // }
   });
 
   // ════════════════════════════════════════════════════════════
   // CONTROL (pause / resume / status)
   // ════════════════════════════════════════════════════════════
 
-  app.post('/control/pause', (c) => {
-    paused = true;
-    workerManager.pauseAll();
-    broadcastEvent('status', { paused: true });
-    logger.info('⏸️  Arbitrage PAUSED');
-    return json(c, { paused: true });
-  });
+  // app.post('/control/pause', (c) => {
+  //   paused = true;
+  //   workerManager.pauseAll();
+  //   broadcastEvent('status', { paused: true });
+  //   logger.info('⏸️  Arbitrage PAUSED');
+  //   return json(c, { paused: true });
+  // });
 
-  app.post('/control/resume', (c) => {
-    paused = false;
-    workerManager.resumeAll();
-    broadcastEvent('status', { paused: false });
-    logger.info('▶️  Arbitrage RESUMED');
-    return json(c, { paused: false });
-  });
+  // app.post('/control/resume', (c) => {
+  //   paused = false;
+  //   workerManager.resumeAll();
+  //   broadcastEvent('status', { paused: false });
+  //   logger.info('▶️  Arbitrage RESUMED');
+  //   return json(c, { paused: false });
+  // });
 
-  app.get('/control/status', (c) =>
-    json(c, {
-      paused,
-      workers: workerManager.getStatus(),
-      // store: store.getStats(),
-    }),
-  );
+  // app.get('/control/status', (c) =>
+  //   json(c, {
+  //     paused,
+  //     workers: workerManager.getStatus(),
+  //     // store: store.getStats(),
+  //   }),
+  // );
 
   // ════════════════════════════════════════════════════════════
   // POOLS — reads directly from PoolStateStore (instant, sync)
   // ════════════════════════════════════════════════════════════
 
   // app.get('/pools', (c) => {
-  //   const chainId = c.req.query('chainId');
+  // const chainId = c.req.query('chainId');
   //   const dex = c.req.query('dex');
   //   const symbol = c.req.query('symbol');
 
@@ -131,35 +131,6 @@ export function createApiServer(input: ApiServerInput): Hono {
   //       (p) => p.tokenPair.token0.symbol === sym || p.tokenPair.token1.symbol === sym,
   //     );
   //   }
-
-  //   // Return lightweight summaries, not full tick data
-  //   const summaries = pools.map((p) => ({
-  //     address: p.address,
-  //     chainId: p.chainId,
-  //     dexName: p.dexName,
-  //     dexType: p.dexType,
-  //     token0: p.tokenPair.token0.symbol,
-  //     token1: p.tokenPair.token1.symbol,
-  //     fee: p.fee,
-  //     liquidityUSD: p.totalLiquidityUSD,
-  //     disabled: p.disabled,
-  //     lastUpdatedBlock: p.lastUpdatedBlock,
-  //     ageMs: Date.now() - p.lastUpdatedAt,
-  //     // Include type-specific data
-  //     ...('reserve0' in p
-  //       ? { reserve0: p.reserve0.toString(), reserve1: p.reserve1.toString() }
-  //       : {}),
-  //     ...('sqrtPriceX96' in p
-  //       ? {
-  //           sqrtPriceX96: p.sqrtPriceX96.toString(),
-  //           tick: p.tick,
-  //           liquidity: p.liquidity.toString(),
-  //         }
-  //       : {}),
-  //     ...('spotPrice0to1' in p
-  //       ? { spotPrice0to1: p.spotPrice0to1, spotPrice1to0: p.spotPrice1to0 }
-  //       : {}),
-  //   }));
 
   //   return json(c, { count: summaries.length, pools: summaries });
   // });
@@ -214,13 +185,13 @@ export function createApiServer(input: ApiServerInput): Hono {
   // WORKERS
   // ════════════════════════════════════════════════════════════
 
-  app.get('/workers', (c) => json(c, workerManager.getStatus()));
+  // app.get('/workers', (c) => json(c, workerManager.getStatus()));
 
-  app.post('/workers/:chainId/refresh', (c) => {
-    const chainId = parseInt(c.req.param('chainId'), 10);
-    workerManager.refreshChain(chainId);
-    return json(c, { refreshing: true, chainId });
-  });
+  // app.post('/workers/:chainId/refresh', (c) => {
+  //   const chainId = parseInt(c.req.param('chainId'), 10);
+  //   workerManager.refreshChain(chainId);
+  //   return json(c, { refreshing: true, chainId });
+  // });
 
   // ════════════════════════════════════════════════════════════
   // CROSS-CHAIN
@@ -258,41 +229,41 @@ export function startApiServer(port: number, deps: ApiServerInput): { server: Re
     port,
     fetch(req, server) {
       // Upgrade WebSocket connections
-      if (req.headers.get('upgrade') === 'websocket') {
-        const success = server.upgrade(req);
-        if (success) return undefined;
-        return new Response('WebSocket upgrade failed', { status: 400 });
-      }
+      // if (req.headers.get('upgrade') === 'websocket') {
+      //   const success = server.upgrade(req);
+      //   if (success) return undefined;
+      //   return new Response('WebSocket upgrade failed', { status: 400 });
+      // }
 
       // Handle HTTP with Hono
       return app.fetch(req);
     },
-    websocket: {
-      open(ws) {
-        wsClients.add(ws);
-        logger.info('🔌 Admin WS client connected');
+    // websocket: {
+    //   open(ws) {
+    //     wsClients.add(ws);
+    //     logger.info('🔌 Admin WS client connected');
 
-        // Send current status on connect
-        ws.send(
-          JSON.stringify(
-            {
-              type: 'snapshot',
-              paused,
-              // poolCount: deps.store.size,
-              workers: deps.workerManager.getStatus(),
-            },
-            bigIntReplacer,
-          ),
-        );
-      },
-      message(_ws, _message) {
-        // Could handle client commands here if needed
-      },
-      close(ws) {
-        wsClients.delete(ws);
-        logger.info('🔌 Admin WS client disconnected');
-      },
-    },
+    //     // Send current status on connect
+    //     ws.send(
+    //       JSON.stringify(
+    //         {
+    //           type: 'snapshot',
+    //           paused,
+    //           // poolCount: deps.store.size,
+    //           workers: deps.workerManager.getStatus(),
+    //         },
+    //         bigIntReplacer,
+    //       ),
+    //     );
+    //   },
+    //   message(_ws, _message) {
+    //     // Could handle client commands here if needed
+    //   },
+    //   close(ws) {
+    //     wsClients.delete(ws);
+    //     logger.info('🔌 Admin WS client disconnected');
+    //   },
+    // },
   });
 
   logger.info(`🖥️  Admin API on http://localhost:${port}`);

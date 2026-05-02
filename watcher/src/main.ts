@@ -173,6 +173,12 @@ export class DexArbitrageApp {
     await this.db.createTables();
     const configEntry = await this.db.getConfig();
 
+    // === Start API Server ===
+    const { server } = startApiServer(appConfig.apiServerPort, {
+      dexManager: this.dexManager,
+      tokenManager: this.tokenManager,
+    });
+
     // init
     this.setupEventPipeline();
     await this.tokenManager.init(); // load tokens from DB and trusted tokens from coingecko
@@ -216,6 +222,11 @@ export class DexArbitrageApp {
     // set interval to display stats every minute
     this.displayStats(); // display initial stats immediately after startup
     this.displayStatsIntervalId = setInterval(() => this.displayStats(), 60_000);
+
+    logger.info('═══════════════════════════════════════════════');
+    logger.info('   Universal Trader — Running');
+    logger.info(`   Admin API: http://localhost:${appConfig.apiServerPort}`);
+    logger.info('═══════════════════════════════════════════════');
   }
 
   async performFullScanForOpportunities() {
