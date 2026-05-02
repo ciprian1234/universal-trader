@@ -114,47 +114,43 @@ export function createApiServer(input: ApiServerInput): Hono {
   // POOLS — reads directly from PoolStateStore (instant, sync)
   // ════════════════════════════════════════════════════════════
 
-  // app.get('/pools', (c) => {
-  // const chainId = c.req.query('chainId');
-  //   const dex = c.req.query('dex');
-  //   const symbol = c.req.query('symbol');
+  app.get('/pools', (c) => {
+    const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
+    const limit = Math.min(200, Math.max(1, parseInt(c.req.query('limit') ?? '50', 10)));
+    const offset = (page - 1) * limit;
 
-  //   let pools = chainId ? store.getByChain(parseInt(chainId, 10)) : store.getActive();
+    const allPools = Array.from(dexManager.getAllPools().values());
+    const pageItems = allPools.slice(offset, offset + limit);
 
-  //   if (dex) {
-  //     pools = pools.filter((p) => p.dexName === dex);
-  //   }
+    return json(c, {
+      total: allPools.length,
+      page,
+      limit,
+      hasMore: offset + limit < allPools.length,
+      pools: pageItems,
+    });
+  });
 
-  //   if (symbol) {
-  //     const sym = symbol.toUpperCase();
-  //     pools = pools.filter(
-  //       (p) => p.tokenPair.token0.symbol === sym || p.tokenPair.token1.symbol === sym,
-  //     );
-  //   }
-
-  //   return json(c, { count: summaries.length, pools: summaries });
+  // app.get('/pools/:address', (c) => {
+  //   // const pool = store.get(c.req.param('address'));
+  //   const pool = null;
+  //   if (!pool) return c.json({ error: 'Pool not found' }, 404);
+  //   return json(c, pool);
   // });
 
-  app.get('/pools/:address', (c) => {
-    // const pool = store.get(c.req.param('address'));
-    const pool = null;
-    if (!pool) return c.json({ error: 'Pool not found' }, 404);
-    return json(c, pool);
-  });
+  // app.post('/pools/:address/disable', (c) => {
+  //   const addr = c.req.param('address');
+  //   // if (!store.setDisabled(addr, true)) return c.json({ error: 'Pool not found' }, 404);
+  //   logger.info(`🚫 Pool ${addr} DISABLED`);
+  //   return json(c, { disabled: true, address: addr });
+  // });
 
-  app.post('/pools/:address/disable', (c) => {
-    const addr = c.req.param('address');
-    // if (!store.setDisabled(addr, true)) return c.json({ error: 'Pool not found' }, 404);
-    logger.info(`🚫 Pool ${addr} DISABLED`);
-    return json(c, { disabled: true, address: addr });
-  });
-
-  app.post('/pools/:address/enable', (c) => {
-    const addr = c.req.param('address');
-    // if (!store.setDisabled(addr, false)) return c.json({ error: 'Pool not found' }, 404);
-    logger.info(`✅ Pool ${addr} ENABLED`);
-    return json(c, { disabled: false, address: addr });
-  });
+  // app.post('/pools/:address/enable', (c) => {
+  //   const addr = c.req.param('address');
+  //   // if (!store.setDisabled(addr, false)) return c.json({ error: 'Pool not found' }, 404);
+  //   logger.info(`✅ Pool ${addr} ENABLED`);
+  //   return json(c, { disabled: false, address: addr });
+  // });
 
   // app.post('/pools/:address/refresh', (c) => {
   //   const addr = c.req.param('address');
