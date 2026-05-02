@@ -16,7 +16,8 @@
     "exec-price-oracle": "bun run ./src/scripts/exec-price-oracle.ts",
     "compute-init-code-hash": "bun run ./src/scripts/compute-init-code-hash.ts",
     "create-wallet": "bun run ./src/scripts/create-wallet.ts",
-    "blacklist": "bun run ./src/scripts/blacklist.ts"
+    "blacklist": "bun run ./src/scripts/blacklist.ts",
+    "check-pool-sync": "bun run ./src/scripts/check-pool-sync.ts"
   },
   "dependencies": {
     "@flashbots/ethers-provider-bundle": "^1.0.0",

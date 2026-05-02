@@ -4,7 +4,6 @@ import type { ChainConfig } from '@/config/models';
 import { logger } from '@/utils';
 import { ethers } from 'ethers';
 import { FLASH_ARBITRAGE_ABI } from '@/core/flash-arbitrage-handler/flash-arbitrage-contract-abi';
-import { CacheService } from '@/utils/cache-service';
 import { WorkerDb } from '@/db';
 import { EventBus } from '@/core/event-bus';
 import { Blockchain } from '@/core/blockchain';
@@ -41,7 +40,6 @@ if (SPAWN_HARDHAT_NODE) chainConfig.providerRpcUrl = HARDHAT_RPC_URL;
 
 // Core app services
 if (!process.env.SCRIPTS_DATABASE_URL) throw new Error('SCRIPTS_DATABASE_URL not set in environment variables');
-const cache = new CacheService(chainConfig.chainId);
 const db = new WorkerDb(process.env.SCRIPTS_DATABASE_URL, chainConfig.chainId);
 const eventBus = new EventBus();
 let blockchain: Blockchain;
@@ -63,7 +61,7 @@ async function main() {
     if (SPAWN_HARDHAT_NODE) await startHardhatFork(foundAtBlock);
 
     // init core app services
-    blockchain = new Blockchain({ chainConfig, cache, eventBus });
+    blockchain = new Blockchain({ chainConfig, eventBus });
     tokenManager = new TokenManager({ chainConfig, blockchain, eventBus, db });
     await tokenManager.init(); // load tokens from DB and trusted tokens from coingecho
     const ethToken = tokenManager.getToken(ethers.ZeroAddress)!;

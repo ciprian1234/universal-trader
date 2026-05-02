@@ -116,7 +116,7 @@ export function createApiServer(input: ApiServerInput): Hono {
 
   app.get('/pools', (c) => {
     const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
-    const limit = Math.min(200, Math.max(1, parseInt(c.req.query('limit') ?? '50', 10)));
+    const limit = Math.max(1, parseInt(c.req.query('limit') ?? '100', 10));
     const offset = (page - 1) * limit;
 
     const allPools = Array.from(dexManager.getAllPools().values());

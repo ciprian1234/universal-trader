@@ -5,19 +5,17 @@ import { WorkerDb } from '@/db';
 import { appConfig } from '../config';
 import type { ChainConfig } from '@/config/models';
 import { Blockchain } from '@/core/blockchain';
-import { CacheService } from '@/utils/cache-service';
 import { EventBus } from '@/core/event-bus';
 import { logger, printPool, safeStringify } from '@/utils';
 
 const platformConfig = appConfig.platforms['ethereum'] as ChainConfig;
-const cache = new CacheService(platformConfig.chainId);
 
 if (!process.env.SCRIPTS_DATABASE_URL) throw new Error('SCRIPTS_DATABASE_URL not set in environment variables');
 const db = new WorkerDb(process.env.SCRIPTS_DATABASE_URL, platformConfig.chainId);
 
 // Core app services
 const eventBus = new EventBus();
-const blockchain = new Blockchain({ chainConfig: platformConfig, cache: cache, eventBus });
+const blockchain = new Blockchain({ chainConfig: platformConfig, eventBus });
 
 // ================================================================================================
 // Main wrapper
