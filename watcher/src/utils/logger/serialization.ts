@@ -10,15 +10,6 @@ export function bigIntReplacer(_key: string, value: unknown): unknown {
   return value;
 }
 
-/** Safe JSON.stringify for logging */
-export function safeStringify_old(obj: unknown, indent?: number): string {
-  try {
-    return JSON.stringify(obj, bigIntReplacer, indent);
-  } catch {
-    return String(obj);
-  }
-}
-
 // ===============================================================
 // 🔧 SAFE JSON STRINGIFY (Handles BigInt, Circular References, Errors)
 // ===============================================================

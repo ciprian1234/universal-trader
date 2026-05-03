@@ -343,7 +343,7 @@ export class WorkerDb {
  * - then we parse the JSON back to get an object with bigints as strings, which can be stored in JSONB column
  * - on deserialization, we convert "123n" strings back to bigints
  */
-function serializeObject<T>(state: T): object {
+export function serializeObject<T>(state: T): object {
   const stringifiedData = JSON.stringify(state, (_, value) => (typeof value === 'bigint' ? `${value.toString()}n` : value));
   const parsedData = JSON.parse(stringifiedData);
   return parsedData;
@@ -353,8 +353,8 @@ function serializeObject<T>(state: T): object {
  * Deserialize object from DB, converting "123n" strings back to bigints
  * to through all fields and convert any string that ends with "n" and is a number to bigint
  */
-const BIGINT_STRING_REGEX = /^\d+n$/;
-function deserializeObject<T>(json: object): T {
+const BIGINT_STRING_REGEX = /^-?\d+n$/;
+export function deserializeObject<T>(json: object): T {
   return JSON.parse(JSON.stringify(json), (_, value) =>
     typeof value === 'string' && BIGINT_STRING_REGEX.test(value) ? BigInt(value.slice(0, -1)) : value,
   );

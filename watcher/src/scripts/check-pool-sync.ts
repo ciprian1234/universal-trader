@@ -12,7 +12,7 @@ import { appendFileSync, writeFileSync } from 'fs';
 import { appConfig } from '@/config';
 import type { ChainConfig } from '@/config/models';
 import { logger } from '@/utils';
-import { WorkerDb } from '@/db';
+import { deserializeObject, WorkerDb } from '@/db';
 import { EventBus } from '@/core/event-bus';
 import { Blockchain } from '@/core/blockchain';
 import { TokenManager } from '@/core/token-manager';
@@ -105,6 +105,8 @@ function diffV3V4(api: DexV3PoolState | DexV4PoolState, chain: DexV3PoolState | 
     diffs.push(`liquidity: api=${api.liquidity} chain=${chain.liquidity} (${pct(api.liquidity, chain.liquidity)} off)`);
 
   // compare ticks
+  // if no api this simply treat as no diff return
+  if (!api.ticks || api.ticks.length === 0) return diffs;
   const apiTicks = (api.ticks ?? []).map((t) => `${t.tick}:${t.liquidityNet}`).join(',');
   const chainTicks = (chain.ticks ?? []).map((t) => `${t.tick}:${t.liquidityNet}`).join(',');
   if (apiTicks !== chainTicks) {
@@ -140,9 +142,7 @@ async function main() {
     if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
     const body = (await res.json()) as { total: number; pools: DexPoolState[] };
     total = body.total;
-    const apiPools = JSON.parse(JSON.stringify(body.pools), (_, v) =>
-      typeof v === 'string' && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v,
-    ) as DexPoolState[];
+    const apiPools = body.pools.map((p) => deserializeObject<DexPoolState>(p));
 
     // empty page means we've gone past the end — stop
     if (apiPools.length === 0) break;
@@ -159,35 +159,25 @@ async function main() {
     for (const chainPool of chainPools) {
       let diff: PoolDiff | null = null;
 
-      if (chainPool.error) {
-        diff = {
-          poolId: chainPool.id,
-          venue: chainPool.venue.name,
-          protocol: chainPool.protocol,
-          pair: chainPool.tokenPair.key,
-          diffs: [`on-chain fetch error: ${chainPool.error}`],
-        };
-      } else {
-        const apiPool = apiPoolMap.get(chainPool.id);
-        if (apiPool) {
-          let diffs: string[] = [];
-          if (chainPool.protocol === 'v2' && apiPool.protocol === 'v2') {
-            diffs = diffV2(apiPool, chainPool);
-          } else if (
-            (chainPool.protocol === 'v3' || chainPool.protocol === 'v4') &&
-            (apiPool.protocol === 'v3' || apiPool.protocol === 'v4')
-          ) {
-            diffs = diffV3V4(apiPool as DexV3PoolState | DexV4PoolState, chainPool as DexV3PoolState | DexV4PoolState);
-          }
-          if (diffs.length > 0) {
-            diff = {
-              poolId: chainPool.id,
-              venue: chainPool.venue.name,
-              protocol: chainPool.protocol,
-              pair: chainPool.tokenPair.key,
-              diffs,
-            };
-          }
+      const apiPool = apiPoolMap.get(chainPool.id);
+      if (apiPool) {
+        let diffs: string[] = [];
+        if (chainPool.protocol === 'v2' && apiPool.protocol === 'v2') {
+          diffs = diffV2(apiPool, chainPool);
+        } else if (
+          (chainPool.protocol === 'v3' || chainPool.protocol === 'v4') &&
+          (apiPool.protocol === 'v3' || apiPool.protocol === 'v4')
+        ) {
+          diffs = diffV3V4(apiPool as DexV3PoolState | DexV4PoolState, chainPool as DexV3PoolState | DexV4PoolState);
+        }
+        if (diffs.length > 0) {
+          diff = {
+            poolId: chainPool.id,
+            venue: chainPool.venue.name,
+            protocol: chainPool.protocol,
+            pair: chainPool.tokenPair.key,
+            diffs,
+          };
         }
       }
 
