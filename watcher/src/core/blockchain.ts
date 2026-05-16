@@ -59,9 +59,6 @@ export class Blockchain {
 
     // init multicall3 contract for batch calls
     this.multicall3 = this.initContract(MULTICALL3_ADDRESS, MULTICALL3_ABI);
-
-    // Monitor provider websocket connection
-    if (process.env.NODE_ENV === 'production') this.setupConnectionMonitoring();
   }
 
   /* Init provider */
@@ -116,7 +113,7 @@ export class Blockchain {
    * 💓 SETUP CONNECTION MONITORING
    * Detect dead connections by monitoring block events
    */
-  private setupConnectionMonitoring(): void {
+  setupConnectionMonitoring(): void {
     // ✅ Monitor block events as connection health indicator
     this.provider.on('block', (blockNumber: number) => {
       const now = Date.now();

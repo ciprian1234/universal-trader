@@ -223,6 +223,9 @@ export class DexArbitrageApp {
     this.displayStats(); // display initial stats immediately after startup
     this.displayStatsIntervalId = setInterval(() => this.displayStats(), 60_000);
 
+    // Monitor provider websocket connection
+    if (process.env.NODE_ENV === 'production') this.blockchain.setupConnectionMonitoring();
+
     logger.info('═══════════════════════════════════════════════');
     logger.info('   Universal Trader — Running');
     logger.info(`   Admin API: http://localhost:${appConfig.apiServerPort}`);
